@@ -35,6 +35,7 @@ export default async function PublicBookingPage({
           name: host.name,
           email: host.email,
           slug: host.slug,
+          timezone: host.timezone,
           avatarUrl: host.avatarUrl,
           brandColor: host.brandColor || "#2563EB",
           welcomeMessage: host.welcomeMessage || "Pick a time that works for you.",

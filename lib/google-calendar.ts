@@ -1,11 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { google } = require("googleapis");
-
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/callback/google`
-);
+import { google } from "googleapis";
 
 export function getCalendarClient(tokens: {
   accessToken?: string | null;
@@ -29,11 +22,17 @@ export interface FreeBusyBlock {
   end: string;
 }
 
+export interface FreeBusyResult {
+  success: boolean;
+  busy: FreeBusyBlock[];
+  error?: string;
+}
+
 export async function fetchGoogleBusyBlocks(
   tokens: { accessToken?: string | null; refreshToken?: string | null },
   timeMin: Date,
   timeMax: Date
-): Promise<FreeBusyBlock[]> {
+): Promise<FreeBusyResult> {
   try {
     const calendar = getCalendarClient(tokens);
     const response = await calendar.freebusy.query({
@@ -45,13 +44,21 @@ export async function fetchGoogleBusyBlocks(
     });
 
     const busy = response.data.calendars?.primary?.busy || [];
-    return busy.map((b: any) => ({
-      start: b.start || "",
-      end: b.end || "",
-    }));
-  } catch (err) {
-    console.error("Error querying Google Calendar FreeBusy:", err);
-    return [];
+    return {
+      success: true,
+      busy: busy.map((b: { start?: string | null; end?: string | null }) => ({
+        start: b.start || "",
+        end: b.end || "",
+      })),
+    };
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error("Error querying Google Calendar FreeBusy:", errorMessage);
+    return {
+      success: false,
+      busy: [],
+      error: errorMessage,
+    };
   }
 }
 
@@ -64,6 +71,14 @@ export interface CreateEventParams {
   guestEmail: string;
   guestName: string;
   timeZone?: string;
+  requestId?: string;
+}
+
+export interface CreateEventResult {
+  success: boolean;
+  eventId?: string;
+  meetLink?: string;
+  error?: string;
 }
 
 export async function createGoogleMeetEvent({
@@ -75,10 +90,11 @@ export async function createGoogleMeetEvent({
   guestEmail,
   guestName,
   timeZone = "UTC",
-}: CreateEventParams): Promise<{ eventId?: string; meetLink?: string }> {
+  requestId,
+}: CreateEventParams): Promise<CreateEventResult> {
   try {
     const calendar = getCalendarClient(tokens);
-    const requestId = `morrow-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const reqId = requestId || `morrow-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     const event = await calendar.events.insert({
       calendarId: "primary",
@@ -98,7 +114,7 @@ export async function createGoogleMeetEvent({
         attendees: [{ email: guestEmail, displayName: guestName }],
         conferenceData: {
           createRequest: {
-            requestId,
+            requestId: reqId,
             conferenceSolutionKey: {
               type: "hangoutsMeet",
             },
@@ -109,16 +125,23 @@ export async function createGoogleMeetEvent({
 
     const meetLink =
       event.data.hangoutLink ||
-      event.data.conferenceData?.entryPoints?.find((ep: any) => ep.entryPointType === "video")?.uri ||
+      event.data.conferenceData?.entryPoints?.find(
+        (ep: { entryPointType?: string | null; uri?: string | null }) => ep.entryPointType === "video"
+      )?.uri ||
       undefined;
 
     return {
+      success: true,
       eventId: event.data.id || undefined,
       meetLink,
     };
-  } catch (err) {
-    console.error("Failed to create Google Calendar event with Meet:", err);
-    return {};
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error("Failed to create Google Calendar event with Meet:", errorMessage);
+    return {
+      success: false,
+      error: errorMessage,
+    };
   }
 }
 
@@ -134,8 +157,9 @@ export async function cancelGoogleCalendarEvent(
       sendUpdates: "all",
     });
     return true;
-  } catch (err) {
-    console.error("Failed to cancel Google Calendar event:", err);
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error("Failed to cancel Google Calendar event:", errorMessage);
     return false;
   }
 }

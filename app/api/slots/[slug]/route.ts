@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { users, eventTypes, availability, availabilityOverrides, bookings } from "@/db/schema";
-import { eq, and, ne } from "drizzle-orm";
+import { eq, and, ne, gte, lte } from "drizzle-orm";
 import { fetchGoogleBusyBlocks } from "@/lib/google-calendar";
+import { generateAvailableSlots } from "@/lib/scheduling/slot-generator";
+import {
+  resolveTimezone,
+  getStartOfLocalDay,
+  getEndOfLocalDay,
+} from "@/lib/scheduling/timezone";
 
 export async function GET(
   req: NextRequest,
@@ -12,13 +18,18 @@ export async function GET(
     const { slug } = await params;
     const url = new URL(req.url);
     const dateParam = url.searchParams.get("date"); // YYYY-MM-DD
-    const durationParam = url.searchParams.get("duration"); // e.g. 15, 30, 45, 60
+    const eventTypeIdParam = url.searchParams.get("eventTypeId");
+    const timezoneParam = url.searchParams.get("timezone");
+    const durationParam = url.searchParams.get("duration"); // Legacy fallback
 
     if (!dateParam) {
-      return NextResponse.json({ error: "Missing date parameter (YYYY-MM-DD)" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing required date parameter (YYYY-MM-DD)" },
+        { status: 400 }
+      );
     }
 
-    // 1. Find user by slug
+    // 1. Find host by slug
     const host = await db.query.users.findFirst({
       where: eq(users.slug, slug),
     });
@@ -27,110 +38,166 @@ export async function GET(
       return NextResponse.json({ error: "Host not found" }, { status: 404 });
     }
 
-    // 2. Parse date
-    const [year, month, day] = dateParam.split("-").map(Number);
-    const requestedDate = new Date(Date.UTC(year, month - 1, day));
-    const dayOfWeek = requestedDate.getUTCDay(); // 0 = Sun, 1 = Mon ...
-
-    // 3. Check for date overrides
-    const override = await db.query.availabilityOverrides.findFirst({
-      where: and(
-        eq(availabilityOverrides.userId, host.id),
-        eq(availabilityOverrides.date, dateParam)
-      ),
-    });
-
-    if (override?.isBlocked) {
-      return NextResponse.json({ slots: [], message: "Host is unavailable on this date" });
+    // 2. Resolve target event type
+    let targetEventType;
+    if (eventTypeIdParam) {
+      targetEventType = await db.query.eventTypes.findFirst({
+        where: and(
+          eq(eventTypes.id, eventTypeIdParam),
+          eq(eventTypes.userId, host.id)
+        ),
+      });
+    } else if (durationParam) {
+      // Backward compatibility: match active event by duration
+      targetEventType = await db.query.eventTypes.findFirst({
+        where: and(
+          eq(eventTypes.userId, host.id),
+          eq(eventTypes.durationMins, parseInt(durationParam, 10)),
+          eq(eventTypes.isActive, true)
+        ),
+      });
     }
 
-    // 4. Get standard hours
-    const hostHours = await db.query.availability.findFirst({
-      where: and(
-        eq(availability.userId, host.id),
-        eq(availability.dayOfWeek, dayOfWeek)
-      ),
-    });
-
-    if ((!hostHours || !hostHours.isEnabled) && !override) {
-      return NextResponse.json({ slots: [], message: "No availability on this day of week" });
+    // Fallback to first active event type for the host if not specified
+    if (!targetEventType) {
+      targetEventType = await db.query.eventTypes.findFirst({
+        where: and(
+          eq(eventTypes.userId, host.id),
+          eq(eventTypes.isActive, true)
+        ),
+      });
     }
 
-    const startStr = override?.startTime || hostHours?.startTime || "09:00";
-    const endStr = override?.endTime || hostHours?.endTime || "17:00";
+    if (!targetEventType) {
+      return NextResponse.json(
+        { error: "No active event type found for this host" },
+        { status: 404 }
+      );
+    }
 
-    const [startHour, startMinute] = startStr.split(":").map(Number);
-    const [endHour, endMinute] = endStr.split(":").map(Number);
+    const guestTimezone = resolveTimezone(timezoneParam, host.timezone || "UTC");
+    const hostTimezone = resolveTimezone(host.timezone, "UTC");
 
-    const slotDuration = durationParam ? parseInt(durationParam, 10) : 30;
+    // 3. Bounded database query: calculate UTC window for the requested date in guest timezone
+    let guestDayStartUtc: Date;
+    let guestDayEndUtc: Date;
+    try {
+      guestDayStartUtc = getStartOfLocalDay(dateParam, guestTimezone);
+      guestDayEndUtc = getEndOfLocalDay(dateParam, guestTimezone);
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid date format. Expected YYYY-MM-DD" },
+        { status: 400 }
+      );
+    }
 
-    // 5. Build start and end of working day in UTC
-    const windowStart = new Date(Date.UTC(year, month - 1, day, startHour, startMinute, 0));
-    const windowEnd = new Date(Date.UTC(year, month - 1, day, endHour, endMinute, 0));
+    // Expand query window by 24h on each side to safely cover all host timezone variations & buffers
+    const windowStart = new Date(guestDayStartUtc.getTime() - 24 * 60 * 60 * 1000);
+    const windowEnd = new Date(guestDayEndUtc.getTime() + 24 * 60 * 60 * 1000);
 
-    // 6. Fetch existing bookings on this day for the host
-    const existingBookings = await db.query.bookings.findMany({
-      where: and(
-        eq(bookings.hostId, host.id),
-        ne(bookings.status, "cancelled")
-      ),
-    });
+    const [weeklyRecords, overrideRecords, boundedBookings] = await Promise.all([
+      db.query.availability.findMany({
+        where: eq(availability.userId, host.id),
+      }),
+      db.query.availabilityOverrides.findMany({
+        where: eq(availabilityOverrides.userId, host.id),
+      }),
+      db.query.bookings.findMany({
+        where: and(
+          eq(bookings.hostId, host.id),
+          ne(bookings.status, "cancelled"),
+          gte(bookings.bufferEndTime, windowStart),
+          lte(bookings.bufferStartTime, windowEnd)
+        ),
+      }),
+    ]);
 
-    // Filter to this day's bookings
-    const dayBookings = existingBookings.filter((b) => {
-      const bDate = b.startTime.toISOString().split("T")[0];
-      return bDate === dateParam;
-    });
+    // 4. External Google Calendar Busy Blocks
+    let calendarBusyBlocks: Array<{ start: Date; end: Date }> = [];
+    let calendarCheckFailed = false;
 
-    // 7. Fetch Google Calendar busy blocks if tokens exist
-    let googleBusy: Array<{ start: string; end: string }> = [];
     if (host.googleAccessToken || host.googleRefreshToken) {
-      googleBusy = await fetchGoogleBusyBlocks(
+      const gcalRes = await fetchGoogleBusyBlocks(
         { accessToken: host.googleAccessToken, refreshToken: host.googleRefreshToken },
         windowStart,
         windowEnd
       );
+
+      if (!gcalRes.success) {
+        calendarCheckFailed = true;
+      } else {
+        calendarBusyBlocks = gcalRes.busy.map((b) => ({
+          start: new Date(b.start),
+          end: new Date(b.end),
+        }));
+      }
     }
 
-    // 8. Generate potential slots
-    const availableSlots: string[] = [];
-    let currentSlot = new Date(windowStart);
+    // 5. Generate slots using the authoritative engine
+    const slotResult = generateAvailableSlots({
+      host: {
+        id: host.id,
+        name: host.name,
+        email: host.email,
+        slug: host.slug,
+        timezone: hostTimezone,
+        bufferMins: host.bufferMins,
+        minNoticeHours: host.minNoticeHours,
+        maxBookingDays: host.maxBookingDays,
+      },
+      eventType: {
+        id: targetEventType.id,
+        userId: targetEventType.userId,
+        title: targetEventType.title,
+        slug: targetEventType.slug,
+        durationMins: targetEventType.durationMins,
+        description: targetEventType.description,
+        locationType: targetEventType.locationType,
+        locationUrl: targetEventType.locationUrl,
+        isActive: targetEventType.isActive,
+        bufferBeforeMins: targetEventType.bufferBeforeMins,
+        bufferAfterMins: targetEventType.bufferAfterMins,
+        minNoticeHours: targetEventType.minNoticeHours,
+        maxPerDay: targetEventType.maxPerDay,
+        requiresApproval: targetEventType.requiresApproval,
+      },
+      requestedDate: dateParam,
+      guestTimezone,
+      weeklyAvailability: weeklyRecords.map((w) => ({
+        dayOfWeek: w.dayOfWeek,
+        startTime: w.startTime,
+        endTime: w.endTime,
+        isEnabled: w.isEnabled,
+      })),
+      overrides: overrideRecords.map((o) => ({
+        date: o.date,
+        isBlocked: o.isBlocked,
+        startTime: o.startTime,
+        endTime: o.endTime,
+        reason: o.reason,
+      })),
+      existingBookings: boundedBookings.map((b) => ({
+        id: b.id,
+        startTime: b.startTime,
+        endTime: b.endTime,
+        bufferStartTime: b.bufferStartTime,
+        bufferEndTime: b.bufferEndTime,
+        status: b.status,
+      })),
+      calendarBusyBlocks,
+      calendarCheckFailed,
+      gridIntervalMins: 15,
+    });
 
-    while (currentSlot.getTime() + slotDuration * 60 * 1000 <= windowEnd.getTime()) {
-      const slotEnd = new Date(currentSlot.getTime() + slotDuration * 60 * 1000);
-
-      // Check conflict with existing bookings
-      const bookingConflict = dayBookings.some((b) => {
-        return (
-          (currentSlot >= b.startTime && currentSlot < b.endTime) ||
-          (slotEnd > b.startTime && slotEnd <= b.endTime) ||
-          (currentSlot <= b.startTime && slotEnd >= b.endTime)
-        );
-      });
-
-      // Check conflict with Google Calendar busy blocks
-      const googleConflict = googleBusy.some((block) => {
-        const bStart = new Date(block.start);
-        const bEnd = new Date(block.end);
-        return (
-          (currentSlot >= bStart && currentSlot < bEnd) ||
-          (slotEnd > bStart && slotEnd <= bEnd) ||
-          (currentSlot <= bStart && slotEnd >= bEnd)
-        );
-      });
-
-      if (!bookingConflict && !googleConflict) {
-        // Format to 12-hour time: "09:30 AM"
-        const hours = currentSlot.getUTCHours();
-        const minutes = currentSlot.getUTCMinutes();
-        const ampm = hours >= 12 ? "PM" : "AM";
-        const formattedHour = hours % 12 === 0 ? 12 : hours % 12;
-        const formattedMinute = minutes < 10 ? `0${minutes}` : `${minutes}`;
-        availableSlots.push(`${formattedHour < 10 ? "0" : ""}${formattedHour}:${formattedMinute} ${ampm}`);
-      }
-
-      // Step forward by slotDuration
-      currentSlot = new Date(currentSlot.getTime() + slotDuration * 60 * 1000);
+    if (slotResult.calendarError) {
+      return NextResponse.json(
+        {
+          error: "External calendar availability could not be verified. Please try again later.",
+          calendarError: true,
+          slots: [],
+        },
+        { status: 503 }
+      );
     }
 
     return NextResponse.json({
@@ -141,12 +208,18 @@ export async function GET(
         avatarUrl: host.avatarUrl,
         timezone: host.timezone,
       },
+      eventType: {
+        id: targetEventType.id,
+        title: targetEventType.title,
+        duration: targetEventType.durationMins,
+      },
       date: dateParam,
-      duration: slotDuration,
-      slots: availableSlots,
+      timezone: guestTimezone,
+      slots: slotResult.slots,
     });
-  } catch (error) {
-    console.error("Error computing available slots:", error);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    console.error("Error computing available slots:", message);
     return NextResponse.json({ error: "Failed to compute slots" }, { status: 500 });
   }
 }

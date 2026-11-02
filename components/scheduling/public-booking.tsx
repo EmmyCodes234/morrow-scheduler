@@ -32,6 +32,7 @@ export interface PublicHost {
   name: string;
   email: string;
   slug: string;
+  timezone?: string | null;
   avatarUrl?: string | null;
   brandColor?: string | null;
   welcomeMessage?: string | null;
@@ -62,10 +63,17 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
     description: "Discuss opportunities and align on priorities.",
   };
 
+  const [guestTimezone] = useState<string>(() => {
+    try {
+      return getLocalTimeZone();
+    } catch {
+      return "UTC";
+    }
+  });
+
   const [selectedEvent, setSelectedEvent] = useState<PublicEventType>(defaultEvent);
-  const [duration, setDuration] = useState<number>(defaultEvent.duration || 30);
   const [selectedDate, setSelectedDate] = useState<CalendarDate>(() => today(getLocalTimeZone()));
-  const [minDate, setMinDate] = useState<CalendarDate>(() => today(getLocalTimeZone()));
+  const [minDate] = useState<CalendarDate>(() => today(getLocalTimeZone()));
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [step, setStep] = useState<"slot" | "intake" | "confirmed">("slot");
 
@@ -77,6 +85,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
     afternoon: [],
   });
   const [loadingSlots, setLoadingSlots] = useState<boolean>(false);
+  const [slotsError, setSlotsError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -88,6 +97,13 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
   const [copiedLink, setCopiedLink] = useState(false);
   const [confirmedMeetLink, setConfirmedMeetLink] = useState<string>("");
   const [isBooking, setIsBooking] = useState(false);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState<string>(() => {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    return `req-${Date.now()}`;
+  });
 
   const hostInitials = host?.name
     ? host.name
@@ -99,13 +115,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
         .toUpperCase()
     : "H";
 
-  useEffect(() => {
-    const currentToday = today(getLocalTimeZone());
-    setSelectedDate(currentToday);
-    setMinDate(currentToday);
-  }, []);
-
-  // Fetch live conflict-free slots whenever date or duration changes
+  // Fetch live conflict-free slots whenever date, event type, or guest timezone changes
   useEffect(() => {
     if (!host?.slug || !selectedDate) return;
 
@@ -114,16 +124,43 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
     const day = String(selectedDate.day).padStart(2, "0");
     const dateStr = `${year}-${month}-${day}`;
 
-    setLoadingSlots(true);
-    fetch(`/api/slots/${host.slug}?date=${dateStr}&duration=${duration}`)
-      .then((res) => res.json())
-      .then((data) => {
+    let isMounted = true;
+    queueMicrotask(() => {
+      if (isMounted) {
+        setLoadingSlots(true);
+        setSlotsError(null);
+      }
+    });
+
+    const params = new URLSearchParams({
+      date: dateStr,
+      eventTypeId: selectedEvent.id,
+      timezone: guestTimezone,
+    });
+
+    fetch(`/api/slots/${host.slug}?${params.toString()}`)
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!isMounted) return;
+
+        if (!res.ok || data.calendarError) {
+          setSlotsError(data.error || "Unable to check slot availability. Please try again.");
+          setAvailableSlots({ morning: [], afternoon: [] });
+          setLoadingSlots(false);
+          return;
+        }
+
         if (data && data.slots && Array.isArray(data.slots)) {
           const morning: string[] = [];
           const afternoon: string[] = [];
 
           data.slots.forEach((slot: string) => {
-            if (slot.includes("AM") || slot.startsWith("12:00 PM") === false && slot.includes("12:") === false && (slot.startsWith("09:") || slot.startsWith("10:") || slot.startsWith("11:"))) {
+            if (
+              slot.includes("AM") ||
+              (slot.startsWith("12:00 PM") === false &&
+                slot.includes("12:") === false &&
+                (slot.startsWith("09:") || slot.startsWith("10:") || slot.startsWith("11:")))
+            ) {
               morning.push(slot);
             } else {
               afternoon.push(slot);
@@ -131,31 +168,42 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
           });
 
           setAvailableSlots({ morning, afternoon });
+        } else {
+          setAvailableSlots({ morning: [], afternoon: [] });
         }
         setLoadingSlots(false);
       })
       .catch((err) => {
+        if (!isMounted) return;
         console.error("Error fetching live slots:", err);
+        setSlotsError("Could not load available times. Please check your connection.");
         setLoadingSlots(false);
       });
-  }, [host?.slug, selectedDate, duration]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [host?.slug, selectedDate, selectedEvent.id, guestTimezone]);
 
   const handleSlotPick = (slot: string) => {
     setSelectedSlot(slot);
+    setBookingError(null);
     setStep("intake");
   };
 
   const handleSelectEvent = (event: PublicEventType) => {
     setSelectedEvent(event);
-    setDuration(event.duration);
     setSelectedSlot(null);
+    setBookingError(null);
   };
 
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name || !form.email || !selectedSlot) return;
+    if (!form.name.trim() || !form.email.trim() || !selectedSlot) return;
 
     setIsBooking(true);
+    setBookingError(null);
+
     try {
       const year = selectedDate.year;
       const month = String(selectedDate.month).padStart(2, "0");
@@ -166,26 +214,36 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          eventTypeId: selectedEvent.id,
           date: dateStr,
           time: selectedSlot,
-          duration,
-          guestName: form.name,
-          guestEmail: form.email,
-          guestNotes: form.notes,
+          guestName: form.name.trim(),
+          guestEmail: form.email.trim(),
+          guestTimezone,
+          guestNotes: form.notes.trim() || undefined,
+          additionalGuests: form.guests.trim() || undefined,
+          idempotencyKey,
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.success) {
         if (data.booking?.meetLink) {
           setConfirmedMeetLink(data.booking.meetLink);
         }
+        setBookingError(null);
+        setStep("confirmed");
+      } else {
+        // Honest error handling - never display confirmation on failure
+        const errorMsg = data.error || "Unable to complete booking. Please select another time or retry.";
+        setBookingError(errorMsg);
       }
     } catch (err) {
       console.error("Booking error:", err);
+      setBookingError("Network connection error. Your booking was not confirmed. Please retry.");
     } finally {
       setIsBooking(false);
-      setStep("confirmed");
     }
   };
 
@@ -219,7 +277,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
           <div className="w-full rounded-2xl border border-border-button-default bg-background-secondary-default p-5 text-left flex flex-col gap-3.5 mb-8">
             <div className="flex items-center justify-between">
               <span className="text-title-3-semibold text-text-primary">{selectedEvent.title}</span>
-              <Chip color="blue" variant="bold">{duration} mins</Chip>
+              <Chip color="blue" variant="bold">{selectedEvent.duration} mins</Chip>
             </div>
 
             <div className="flex items-center gap-2.5 text-body-medium text-text-secondary">
@@ -230,6 +288,11 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
             <div className="flex items-center gap-2.5 text-body-medium text-text-secondary">
               <HugeClock className="size-4 shrink-0 text-foreground-icon-secondary" />
               <span>{selectedSlot}</span>
+            </div>
+
+            <div className="flex items-center gap-2.5 text-body-2-regular text-text-tertiary">
+              <HugeGlobe className="size-4 shrink-0 text-foreground-icon-secondary" />
+              <span>{guestTimezone}</span>
             </div>
 
             {confirmedMeetLink && (
@@ -260,6 +323,11 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
             onClick={() => {
               setStep("slot");
               setSelectedSlot(null);
+              setBookingError(null);
+              // Fresh idempotency key for next booking
+              if (typeof crypto !== "undefined" && crypto.randomUUID) {
+                setIdempotencyKey(crypto.randomUUID());
+              }
             }}
             className="mt-2 text-body-medium text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
           >
@@ -302,7 +370,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                 </div>
                 <div className="flex items-center gap-2 text-body-2-regular text-text-secondary">
                   <HugeGlobe className="size-4 shrink-0 text-foreground-icon-secondary" />
-                  <span>Auto-detect timezone</span>
+                  <span>{guestTimezone}</span>
                 </div>
               </div>
 
@@ -359,11 +427,14 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                     bare
                     aria-label="Select date"
                     value={selectedDate}
-                    onChange={(newDate: any) => {
-                      setSelectedDate(newDate);
-                      setSelectedSlot(null);
+                    onChange={(newDate: CalendarDate | null) => {
+                      if (newDate) {
+                        setSelectedDate(newDate);
+                        setSelectedSlot(null);
+                        setBookingError(null);
+                      }
                     }}
-                    minValue={minDate as any}
+                    minValue={minDate}
                   />
                 </div>
 
@@ -386,6 +457,20 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                   <div className="py-12 flex flex-col items-center justify-center gap-2 text-text-secondary">
                     <div className="size-6 rounded-full border-2 border-accent-500 border-t-transparent animate-spin" />
                     <span className="text-body-2-regular">Syncing calendar...</span>
+                  </div>
+                ) : slotsError ? (
+                  <div className="py-8 px-2 flex flex-col items-center justify-center gap-3 text-center">
+                    <p className="text-body-2-regular text-text-error-primary">{slotsError}</p>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => {
+                        // Re-trigger slot fetch by resetting selectedDate to itself
+                        setSelectedDate(new CalendarDate(selectedDate.year, selectedDate.month, selectedDate.day));
+                      }}
+                    >
+                      Retry
+                    </Button>
                   </div>
                 ) : availableSlots.morning.length === 0 && availableSlots.afternoon.length === 0 ? (
                   <div className="py-12 text-center text-body-2-regular text-text-tertiary">
@@ -467,7 +552,10 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setStep("slot")}
+                    onClick={() => {
+                      setStep("slot");
+                      setBookingError(null);
+                    }}
                     className="p-1.5 rounded-lg border border-border-button-default hover:bg-background-secondary-default text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
                   >
                     <HugeArrowLeft className="size-4" />
@@ -475,10 +563,26 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                   <div>
                     <h2 className="text-title-2-medium text-text-primary">Enter your details</h2>
                     <p className="text-body-2-regular text-text-secondary">
-                      {formattedDate} at {selectedSlot} ({duration} mins)
+                      {formattedDate} at {selectedSlot} ({selectedEvent.duration} mins)
                     </p>
                   </div>
                 </div>
+
+                {bookingError && (
+                  <div className="p-3.5 rounded-xl border border-border-error-default bg-status-danger-background text-text-error-primary text-body-2-regular flex items-start justify-between gap-2.5">
+                    <div>
+                      <p className="font-semibold">Unable to complete booking</p>
+                      <p className="mt-0.5">{bookingError}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setBookingError(null)}
+                      className="text-text-error-primary hover:opacity-75 cursor-pointer text-caption-1-semibold shrink-0"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-4">
                   <Input
@@ -519,7 +623,14 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
               </div>
 
               <div className="flex items-center justify-between pt-4 border-t border-border-button-default max-w-lg">
-                <Button variant="secondary" onClick={() => setStep("slot")}>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setStep("slot");
+                    setBookingError(null);
+                  }}
+                  disabled={isBooking}
+                >
                   Change slot
                 </Button>
                 <Button type="submit" leadingIcon={HugeCheckIn} disabled={isBooking}>

@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "build:cloudflare": "opennextjs-cloudflare build",
@@ -17,6 +18,7 @@
     "@hugeicons/core-free-icons": "^4.4.0",
     "@hugeicons/react": "^1.1.10",
     "@internationalized/date": "3.12.4",
+    "@js-temporal/polyfill": "^0.5.1",
     "@neondatabase/serverless": "^1.2.0",
     "@remixicon/react": "^4.9.0",
     "dotenv": "^18.0.9",
@@ -33,7 +35,7 @@
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.20.15",
     "@tailwindcss/turbopack": "^4",
-    "@types/node": "^20",
+    "@types/node": "^20.19.43",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.11",
@@ -41,6 +43,7 @@
     "eslint-config-next": "16.4.4",
     "tailwindcss": "^4",
     "typescript": "^5",
+    "vitest": "^5.1.0",
     "wrangler": "^4.156.1"
   }
 }
