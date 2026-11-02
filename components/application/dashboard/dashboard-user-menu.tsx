@@ -17,6 +17,7 @@ import {
   HugeCheck,
   HugeArrowRight,
 } from "@/components/icons/hugeicons";
+import { MorrowIcon } from "@/components/brand/morrow-logo";
 import { cx } from "@/utils/cx";
 
 function Collapsible({ collapsed, children }: { collapsed: boolean; children: ReactNode }) {
@@ -83,12 +84,7 @@ export function DashboardUserMenu({
           collapsed && "w-9 justify-center gap-0 before:-inset-x-[3px]",
         )}
       >
-        <div className={cx(
-          "size-8 rounded-xl bg-accent-500 text-white flex items-center justify-center font-bold text-headline-medium shadow-2xs shrink-0",
-          avatarClassName
-        )}>
-          M
-        </div>
+        <MorrowIcon size={32} className={avatarClassName} />
         <Collapsible collapsed={collapsed}>
           <span className="flex items-center gap-0.5">
             <span className="text-body-medium font-medium whitespace-nowrap text-text-primary">

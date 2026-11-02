@@ -7,6 +7,7 @@ import { Input } from "@/components/base/input/input";
 import { Divider } from "@/components/base/divider/divider";
 import { SocialButton } from "@/components/base/social-button/social-button";
 import { HugeMail, HugeArrowRight, HugeCheck } from "@/components/icons/hugeicons";
+import { MorrowLogo } from "@/components/brand/morrow-logo";
 
 export interface LoginViewProps {
   onSuccess?: () => void;
@@ -30,9 +31,7 @@ export function LoginView({ onSuccess, onGoToOnboarding }: LoginViewProps) {
     <div className="w-full max-w-md mx-auto rounded-3xl border border-border-button-default bg-background-primary-default p-8 sm:p-10 shadow-sm flex flex-col gap-6">
       {/* BRAND & HEADER */}
       <div className="flex flex-col items-center text-center gap-2">
-        <div className="size-11 rounded-2xl bg-accent-500 text-white flex items-center justify-center font-bold text-headline-medium shadow-xs mb-2">
-          M
-        </div>
+        <MorrowLogo size={40} variant="icon" className="mb-2 shadow-sm" />
         <h1 className="text-title-2-medium text-text-primary">Sign in to Morrow</h1>
         <p className="text-body-regular text-text-secondary">
           Tomorrow starts here. Connect your calendar and get booked.

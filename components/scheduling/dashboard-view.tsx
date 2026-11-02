@@ -33,6 +33,7 @@ import { NewEventModal, type EventFormData } from "@/components/scheduling/modal
 import { RescheduleModal } from "@/components/scheduling/modals/reschedule-modal";
 import { ZoomModal } from "@/components/scheduling/modals/zoom-modal";
 import { GCalModal } from "@/components/scheduling/modals/gcal-modal";
+import { MorrowLogo } from "@/components/brand/morrow-logo";
 
 interface EventTypeItem {
   id: string;
@@ -543,10 +544,7 @@ export function DashboardView({
           >
             <HugeSidebar className="size-5" />
           </button>
-          <div className="size-8 rounded-xl bg-accent-500 text-white flex items-center justify-center font-bold text-headline-medium shadow-2xs">
-            M
-          </div>
-          <span className="text-headline-semibold text-text-primary">Morrow</span>
+          <MorrowLogo size={28} />
         </div>
 
         <Avatar size="sm" initials={user.initials} color="blue" />

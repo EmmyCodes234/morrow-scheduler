@@ -25,6 +25,7 @@ import {
   HugeVerified,
   HugeCopy,
 } from "@/components/icons/hugeicons";
+import { MorrowLogo } from "@/components/brand/morrow-logo";
 
 export interface PublicHost {
   id: string;
@@ -529,6 +530,19 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
           )}
         </div>
       )}
+
+      {/* Powered by Morrow Branding Footer */}
+      <div className="flex items-center justify-center pt-2 pb-4">
+        <a
+          href="/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border-button-default bg-background-primary-default text-text-secondary hover:text-text-primary text-caption-1-semibold transition-colors shadow-2xs"
+        >
+          <span>Powered by</span>
+          <MorrowLogo size={16} variant="full" />
+        </a>
+      </div>
     </div>
   );
 }

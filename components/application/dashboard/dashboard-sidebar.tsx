@@ -27,6 +27,7 @@ import {
   HugeContacts,
 } from "@/components/icons/hugeicons";
 import { SettingsModal } from "@/components/application/settings/settings-modal";
+import { SupportModal } from "@/components/application/support/support-modal";
 import { ThemeToggle } from "@/components/application/theme/theme-toggle";
 import { Badge } from "@/components/base/badges/badge";
 import { CloseButton } from "@/components/base/buttons/close-button";
@@ -251,6 +252,7 @@ export function DashboardSidebar({
   const localize = useTemplateCopy();
   const [collapsedState, setCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
   const [suppressUserHover, setSuppressUserHover] = useState(false);
   const [searchActive, setSearchActive] = useState(false);
   const [query, setQuery] = useState("");
@@ -542,7 +544,12 @@ export function DashboardSidebar({
         {/* Secondary nav */}
         <nav className="flex w-full flex-col gap-1">
           {matches("Support") && (
-            <NavItem icon={HugeSupport} label="Support" collapsed={collapsed} />
+            <NavItem
+              icon={HugeSupport}
+              label="Support"
+              collapsed={collapsed}
+              onClick={() => setSupportOpen(true)}
+            />
           )}
           {matches("Settings") && (
             <NavItem
@@ -571,6 +578,12 @@ export function DashboardSidebar({
         onClose={() => setSettingsOpen(false)}
         user={user}
         planArtSrc="/templates/settings-plan-art.png"
+      />
+
+      <SupportModal
+        isOpen={supportOpen}
+        onClose={() => setSupportOpen(false)}
+        user={user}
       />
     </aside>
   ));
