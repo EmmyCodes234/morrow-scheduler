@@ -4,6 +4,18 @@ import { db } from "@/db";
 import { availability, users } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 
+function to24Hour(timeStr?: string, fallback: string = "09:00"): string {
+  if (!timeStr) return fallback;
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!match) return timeStr;
+  let hour = parseInt(match[1], 10);
+  const min = match[2];
+  const ampm = match[3]?.toUpperCase();
+  if (ampm === "PM" && hour < 12) hour += 12;
+  if (ampm === "AM" && hour === 12) hour = 0;
+  return `${hour.toString().padStart(2, "0")}:${min}`;
+}
+
 export async function GET() {
   try {
     const session = await auth();
@@ -71,8 +83,8 @@ export async function POST(req: NextRequest) {
         days.map((d: any) => ({
           userId: host.id,
           dayOfWeek: Number(d.dayOfWeek),
-          startTime: d.startTime || "09:00",
-          endTime: d.endTime || "17:00",
+          startTime: to24Hour(d.startTime, "09:00"),
+          endTime: to24Hour(d.endTime, "17:00"),
           isEnabled: Boolean(d.isEnabled),
         }))
       );
