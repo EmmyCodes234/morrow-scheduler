@@ -129,11 +129,13 @@ export const bookings = pgTable(
     guestTimezone: text("guest_timezone").notNull().default("UTC"),
     meetLink: text("meet_link"),
     gcalEventId: text("gcal_event_id"),
-    status: text("status").notNull().default("confirmed"), // confirmed, cancelled, completed, no_show
+    status: text("status").notNull().default("confirmed"), // confirmed, pending, cancelled, rejected, completed, no_show
     guestNotes: text("guest_notes"),
     hostNotes: text("host_notes"),
     additionalGuests: text("additional_guests"),
     idempotencyKey: text("idempotency_key"),
+    requestHash: text("request_hash"),
+    calendarSyncStatus: text("calendar_sync_status").notNull().default("not_applicable"),
     customAnswers: jsonb("custom_answers").$type<Record<string, unknown>>().default({}),
     cancelToken: text("cancel_token").notNull().unique(),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
@@ -146,7 +148,7 @@ export const bookings = pgTable(
     index("bookings_start_time_idx").on(table.startTime),
     index("bookings_buffer_time_idx").on(table.hostId, table.bufferStartTime, table.bufferEndTime),
     uniqueIndex("bookings_cancel_token_idx").on(table.cancelToken),
-    uniqueIndex("bookings_idempotency_key_idx").on(table.idempotencyKey),
+    uniqueIndex("bookings_host_idempotency_idx").on(table.hostId, table.idempotencyKey),
   ]
 );
 

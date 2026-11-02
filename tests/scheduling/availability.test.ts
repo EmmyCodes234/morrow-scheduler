@@ -126,6 +126,99 @@ describe("Availability and Slot Generation Engine", () => {
     expect(result.slots).toContain("11:45 AM");
   });
 
+  it("treats pending approval bookings as reserving their slot", () => {
+    // An unapproved, pending booking at 14:00 - 14:30 must block the slot
+    const now = new Date("2026-11-04T06:00:00.000Z");
+    const existingBookings = [
+      {
+        id: "b-pending",
+        startTime: new Date("2026-11-04T14:00:00.000Z"),
+        endTime: new Date("2026-11-04T14:30:00.000Z"),
+        bufferStartTime: new Date("2026-11-04T14:00:00.000Z"),
+        bufferEndTime: new Date("2026-11-04T14:40:00.000Z"),
+        status: "pending",
+      },
+    ];
+
+    const result = generateAvailableSlots({
+      host,
+      eventType,
+      requestedDate: "2026-11-04",
+      guestTimezone: "Europe/London",
+      weeklyAvailability,
+      overrides: [],
+      existingBookings,
+      calendarBusyBlocks: [],
+      now,
+    });
+
+    expect(result.slots).not.toContain("02:00 PM");
+    expect(result.slots).not.toContain("02:15 PM");
+    expect(result.slots).not.toContain("02:30 PM");
+  });
+
+  it("applies buffer intervals against external Google Calendar busy blocks", () => {
+    // External busy block from 13:00 to 14:00 UTC
+    // Event type bufferAfterMins is 10 mins, duration is 30 mins
+    const now = new Date("2026-11-04T06:00:00.000Z");
+    const result = generateAvailableSlots({
+      host,
+      eventType: {
+        ...eventType,
+        bufferBeforeMins: 15, // 15 mins before
+        bufferAfterMins: 15, // 15 mins after
+      },
+      requestedDate: "2026-11-04",
+      guestTimezone: "Europe/London",
+      weeklyAvailability,
+      overrides: [],
+      existingBookings: [],
+      calendarBusyBlocks: [
+        {
+          start: new Date("2026-11-04T13:00:00.000Z"),
+          end: new Date("2026-11-04T14:00:00.000Z"),
+        },
+      ],
+      now,
+    });
+
+    // Slot 12:30 PM would end at 13:00 PM, but bufferAfter (15m) ends at 13:15 PM -> overlaps busy block
+    expect(result.slots).not.toContain("12:30 PM");
+    expect(result.slots).not.toContain("01:00 PM");
+    expect(result.slots).not.toContain("01:30 PM");
+    // Slot 02:00 PM starts at 14:00 PM, but bufferBefore (15m) starts at 13:45 PM -> overlaps busy block!
+    expect(result.slots).not.toContain("02:00 PM");
+    // Slot 02:15 PM: buffer starts at 14:00 PM >= 14:00 PM -> allowed!
+    expect(result.slots).toContain("02:15 PM");
+  });
+
+  it("deduplicates wall-clock times during Daylight Saving Time (DST) fallback", () => {
+    // 2026-11-01 in America/New_York is the DST fallback day (clocks turn back at 2:00 AM)
+    const hostNy: HostScheduleConfig = {
+      ...host,
+      timezone: "America/New_York",
+    };
+    const now = new Date("2026-11-01T04:00:00.000Z");
+
+    const result = generateAvailableSlots({
+      host: hostNy,
+      eventType,
+      requestedDate: "2026-11-01",
+      guestTimezone: "America/New_York",
+      weeklyAvailability: [
+        { dayOfWeek: 0, startTime: "00:00", endTime: "04:00", isEnabled: true },
+      ],
+      overrides: [],
+      existingBookings: [],
+      calendarBusyBlocks: [],
+      now,
+    });
+
+    // Check for duplicate slot strings
+    const uniqueSlots = new Set(result.slots);
+    expect(result.slots.length).toBe(uniqueSlots.size);
+  });
+
   it("respects availability overrides (blocking a date)", () => {
     const now = new Date("2026-11-04T06:00:00.000Z");
     const result = generateAvailableSlots({
@@ -212,16 +305,19 @@ describe("Availability and Slot Generation Engine", () => {
     expect(result.slots).toEqual([]);
   });
 
-  it("respects eventType maxPerDay limit", () => {
+  it("respects eventType maxPerDay limit strictly scoped to the event type", () => {
     const limitedEventType: EventTypeConfig = {
       ...eventType,
+      id: "evt-target",
       maxPerDay: 2,
     };
 
     const now = new Date("2026-11-04T06:00:00.000Z");
-    const existingBookings = [
+    // 2 bookings belonging to a DIFFERENT event type should NOT block this event type
+    const otherBookings = [
       {
-        id: "b1",
+        id: "b-other-1",
+        eventTypeId: "evt-different",
         startTime: new Date("2026-11-04T09:00:00.000Z"),
         endTime: new Date("2026-11-04T09:30:00.000Z"),
         bufferStartTime: new Date("2026-11-04T09:00:00.000Z"),
@@ -229,7 +325,8 @@ describe("Availability and Slot Generation Engine", () => {
         status: "confirmed",
       },
       {
-        id: "b2",
+        id: "b-other-2",
+        eventTypeId: "evt-different",
         startTime: new Date("2026-11-04T10:00:00.000Z"),
         endTime: new Date("2026-11-04T10:30:00.000Z"),
         bufferStartTime: new Date("2026-11-04T10:00:00.000Z"),
@@ -238,18 +335,54 @@ describe("Availability and Slot Generation Engine", () => {
       },
     ];
 
-    const result = generateAvailableSlots({
+    const resultAllowed = generateAvailableSlots({
       host,
       eventType: limitedEventType,
       requestedDate: "2026-11-04",
       guestTimezone: "Europe/London",
       weeklyAvailability,
       overrides: [],
-      existingBookings,
+      existingBookings: otherBookings,
       calendarBusyBlocks: [],
       now,
     });
 
-    expect(result.slots).toEqual([]);
+    expect(resultAllowed.slots.length).toBeGreaterThan(0);
+
+    // 2 bookings belonging to THIS event type should block the day
+    const matchingBookings = [
+      {
+        id: "b1",
+        eventTypeId: "evt-target",
+        startTime: new Date("2026-11-04T09:00:00.000Z"),
+        endTime: new Date("2026-11-04T09:30:00.000Z"),
+        bufferStartTime: new Date("2026-11-04T09:00:00.000Z"),
+        bufferEndTime: new Date("2026-11-04T09:40:00.000Z"),
+        status: "confirmed",
+      },
+      {
+        id: "b2",
+        eventTypeId: "evt-target",
+        startTime: new Date("2026-11-04T10:00:00.000Z"),
+        endTime: new Date("2026-11-04T10:30:00.000Z"),
+        bufferStartTime: new Date("2026-11-04T10:00:00.000Z"),
+        bufferEndTime: new Date("2026-11-04T10:40:00.000Z"),
+        status: "confirmed",
+      },
+    ];
+
+    const resultBlocked = generateAvailableSlots({
+      host,
+      eventType: limitedEventType,
+      requestedDate: "2026-11-04",
+      guestTimezone: "Europe/London",
+      weeklyAvailability,
+      overrides: [],
+      existingBookings: matchingBookings,
+      calendarBusyBlocks: [],
+      now,
+    });
+
+    expect(resultBlocked.slots).toEqual([]);
   });
 });

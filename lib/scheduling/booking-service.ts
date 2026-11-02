@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { db } from "@/db";
 import { users, eventTypes, bookings, contacts, availability, availabilityOverrides } from "@/db/schema";
 import { eq, and, ne, gte, lte } from "drizzle-orm";
-import { BookingRequestInput } from "./types";
+import { BookingRequestInput, BookingStatus, CalendarSyncStatus } from "./types";
 import { validateBookingRequest } from "./validation";
 import {
   localWallClockToUtcDate,
@@ -11,7 +11,7 @@ import {
 } from "./timezone";
 import {
   fetchGoogleBusyBlocks,
-  createGoogleMeetEvent,
+  createGoogleCalendarEvent,
 } from "@/lib/google-calendar";
 import { sendBookingConfirmationEmail } from "@/lib/email";
 
@@ -29,7 +29,12 @@ export interface BookingResponse {
     meetLink?: string;
     cancelToken: string;
     eventType: string;
+    status: BookingStatus;
+    requiresApproval?: boolean;
     calendarSynced?: boolean;
+    calendarSyncStatus?: CalendarSyncStatus;
+    locationType?: string;
+    locationUrl?: string;
   };
 }
 
@@ -71,7 +76,7 @@ export async function processBooking(
   if (!eventType) {
     return {
       success: false,
-      status: 400,
+      status: 404,
       error: "Requested event type does not exist or does not belong to this host.",
       errorCode: "NOT_FOUND",
     };
@@ -86,36 +91,7 @@ export async function processBooking(
     };
   }
 
-  // 3. Handle Idempotency / Retry
-  const idempotencyKey = input.idempotencyKey?.trim() || null;
-  if (idempotencyKey) {
-    const existing = await db.query.bookings.findFirst({
-      where: eq(bookings.idempotencyKey, idempotencyKey),
-      with: {
-        eventType: true,
-      },
-    });
-
-    if (existing && existing.status !== "cancelled") {
-      return {
-        success: true,
-        status: 200,
-        booking: {
-          id: existing.id,
-          guestName: existing.guestName,
-          guestEmail: existing.guestEmail,
-          startTime: existing.startTime.toISOString(),
-          endTime: existing.endTime.toISOString(),
-          meetLink: existing.meetLink || undefined,
-          cancelToken: existing.cancelToken,
-          eventType: existing.eventType?.title || eventType.title,
-          calendarSynced: Boolean(existing.gcalEventId),
-        },
-      };
-    }
-  }
-
-  // 4. Derive timestamps & boundaries authoritatively
+  // 3. Derive timestamps & boundaries authoritatively
   const guestTimezone = resolveTimezone(input.guestTimezone, host.timezone || "UTC");
   const hostTimezone = resolveTimezone(host.timezone, "UTC");
 
@@ -146,34 +122,94 @@ export async function processBooking(
     proposedEndTime.getTime() + bufferAfterMins * 60 * 1000
   );
 
+  // 4. Stable payload fingerprinting and host-scoped idempotency lookup
+  const normalizedGuestEmail = input.guestEmail.trim().toLowerCase();
+  const payloadFingerprint = `${eventType.id}:${normalizedGuestEmail}:${proposedStartTime.toISOString()}:${proposedEndTime.toISOString()}`;
+  const requestHash = crypto.createHash("sha256").update(payloadFingerprint).digest("hex");
+
+  const idempotencyKey = input.idempotencyKey?.trim() || null;
+  if (idempotencyKey) {
+    const existing = await db.query.bookings.findFirst({
+      where: and(
+        eq(bookings.hostId, host.id),
+        eq(bookings.idempotencyKey, idempotencyKey)
+      ),
+      with: {
+        eventType: true,
+      },
+    });
+
+    if (existing && existing.status !== "cancelled" && existing.status !== "rejected") {
+      // Check if the payload matches the original request
+      const isMatchingPayload =
+        existing.requestHash === requestHash &&
+        existing.guestEmail.toLowerCase() === normalizedGuestEmail;
+
+      if (!isMatchingPayload) {
+        return {
+          success: false,
+          status: 409,
+          error: "Idempotency key has already been used for a different booking request with this host.",
+          errorCode: "CONFLICT",
+        };
+      }
+
+      // Return the original booking idempotently
+      const existingStatus = existing.status as BookingStatus;
+      const isSynced = existing.calendarSyncStatus === "synced" || Boolean(existing.gcalEventId);
+      const syncStatus = (existing.calendarSyncStatus as CalendarSyncStatus) || (isSynced ? "synced" : "not_applicable");
+
+      return {
+        success: true,
+        status: 200,
+        booking: {
+          id: existing.id,
+          guestName: existing.guestName,
+          guestEmail: existing.guestEmail,
+          startTime: existing.startTime.toISOString(),
+          endTime: existing.endTime.toISOString(),
+          meetLink: existing.meetLink || undefined,
+          cancelToken: existing.cancelToken,
+          eventType: existing.eventType?.title || eventType.title,
+          status: existingStatus,
+          requiresApproval: existingStatus === "pending",
+          calendarSynced: isSynced,
+          calendarSyncStatus: syncStatus,
+          locationType: existing.eventType?.locationType || host.defaultLocationType || "google_meet",
+          locationUrl: existing.eventType?.locationUrl || undefined,
+        },
+      };
+    }
+  }
+
   // 5. Bounded database queries
-  // Query 24 hours around the proposed time for availability, overrides, and bookings
   const queryWindowStart = new Date(proposedBufferStartTime.getTime() - 24 * 60 * 60 * 1000);
   const queryWindowEnd = new Date(proposedBufferEndTime.getTime() + 24 * 60 * 60 * 1000);
 
-  const hostWeekly = await db.query.availability.findMany({
-    where: eq(availability.userId, host.id),
-  });
+  const [hostWeekly, hostOverrides, boundedBookings] = await Promise.all([
+    db.query.availability.findMany({
+      where: eq(availability.userId, host.id),
+    }),
+    db.query.availabilityOverrides.findMany({
+      where: and(
+        eq(availabilityOverrides.userId, host.id),
+        eq(
+          availabilityOverrides.date,
+          getDateStringInTimezone(proposedStartTime, hostTimezone)
+        )
+      ),
+    }),
+    db.query.bookings.findMany({
+      where: and(
+        eq(bookings.hostId, host.id),
+        ne(bookings.status, "cancelled"),
+        gte(bookings.bufferEndTime, queryWindowStart),
+        lte(bookings.bufferStartTime, queryWindowEnd)
+      ),
+    }),
+  ]);
 
-  const hostDateStr = getDateStringInTimezone(proposedStartTime, hostTimezone);
-  const hostOverrides = await db.query.availabilityOverrides.findMany({
-    where: and(
-      eq(availabilityOverrides.userId, host.id),
-      eq(availabilityOverrides.date, hostDateStr)
-    ),
-  });
-
-  // Bounded query for existing non-cancelled bookings
-  const boundedBookings = await db.query.bookings.findMany({
-    where: and(
-      eq(bookings.hostId, host.id),
-      ne(bookings.status, "cancelled"),
-      gte(bookings.bufferEndTime, queryWindowStart),
-      lte(bookings.bufferStartTime, queryWindowEnd)
-    ),
-  });
-
-  // 6. Google Calendar Free/Busy verification
+  // 6. External Google Calendar Free/Busy verification
   let calendarBusyBlocks: Array<{ start: Date; end: Date }> = [];
   let calendarCheckFailed = false;
 
@@ -242,6 +278,7 @@ export async function processBooking(
     })),
     existingBookings: boundedBookings.map((b) => ({
       id: b.id,
+      eventTypeId: b.eventTypeId,
       startTime: b.startTime,
       endTime: b.endTime,
       bufferStartTime: b.bufferStartTime,
@@ -270,13 +307,32 @@ export async function processBooking(
     };
   }
 
-  // 8. Atomic Database Reservation
+  // 8. Determine initial status and location configuration
+  const requiresApproval = Boolean(eventType.requiresApproval);
+  const initialStatus: BookingStatus = requiresApproval ? "pending" : "confirmed";
+
+  // Location resolution hierarchy: eventType -> host default -> google_meet
+  const locationType = eventType.locationType || host.defaultLocationType || "google_meet";
+  const locationUrl =
+    eventType.locationUrl ||
+    (locationType === "zoom" ? host.zoomMeetingUrl : undefined) ||
+    undefined;
+
+  // 9. Atomic Database Reservation
+  // Pending bookings reserve their slot in the DB exclusion constraint to prevent double bookings
   const cancelToken = crypto.randomBytes(24).toString("hex");
   const additionalGuestsStr = input.additionalGuests
     ? Array.isArray(input.additionalGuests)
       ? input.additionalGuests.join(", ")
       : input.additionalGuests
     : null;
+
+  let initialCalendarSyncStatus: CalendarSyncStatus = "not_applicable";
+  if (requiresApproval) {
+    initialCalendarSyncStatus = "pending";
+  } else if (host.googleAccessToken || host.googleRefreshToken) {
+    initialCalendarSyncStatus = "pending";
+  }
 
   let newBooking;
   try {
@@ -286,7 +342,7 @@ export async function processBooking(
         eventTypeId: eventType.id,
         hostId: host.id,
         guestName: input.guestName.trim(),
-        guestEmail: input.guestEmail.trim().toLowerCase(),
+        guestEmail: normalizedGuestEmail,
         startTime: proposedStartTime,
         endTime: proposedEndTime,
         bufferStartTime: proposedBufferStartTime,
@@ -295,8 +351,10 @@ export async function processBooking(
         guestNotes: input.guestNotes?.trim() || null,
         additionalGuests: additionalGuestsStr,
         idempotencyKey,
+        requestHash,
         customAnswers: input.customAnswers || {},
-        status: "confirmed",
+        status: initialStatus,
+        calendarSyncStatus: initialCalendarSyncStatus,
         cancelToken,
       })
       .returning();
@@ -328,64 +386,82 @@ export async function processBooking(
     };
   }
 
-  // 9. Calendar Integration (Google Meet or Zoom)
-  let meetLink: string | undefined = undefined;
+  // 10. Calendar Synchronization Lifecycle
+  let meetLink: string | undefined = locationType === "zoom" || locationType === "custom" ? locationUrl : undefined;
   let gcalEventId: string | undefined = undefined;
   let calendarSynced = false;
+  let finalCalendarSyncStatus: CalendarSyncStatus = initialCalendarSyncStatus;
 
-  const isZoom = host.defaultLocationType === "zoom" && Boolean(host.zoomMeetingUrl);
-  if (isZoom) {
-    meetLink = host.zoomMeetingUrl || undefined;
-  }
-
-  if (host.googleAccessToken || host.googleRefreshToken) {
+  // For pending bookings: do not create external calendar event yet (will sync upon host approval)
+  if (requiresApproval) {
+    finalCalendarSyncStatus = "pending";
+    calendarSynced = false;
+  } else if (host.googleAccessToken || host.googleRefreshToken) {
     try {
-      const gcalResult = await createGoogleMeetEvent({
+      const gcalResult = await createGoogleCalendarEvent({
         tokens: {
           accessToken: host.googleAccessToken,
           refreshToken: host.googleRefreshToken,
         },
         summary: `${eventType.title} with ${input.guestName.trim()}`,
-        description: `Scheduled via Morrow\n\nGuest: ${input.guestName.trim()} (${input.guestEmail.trim()})\nNotes: ${input.guestNotes || "None"}`,
+        description: `Scheduled via Morrow\n\nGuest: ${input.guestName.trim()} (${normalizedGuestEmail})\nNotes: ${input.guestNotes || "None"}`,
         startTime: proposedStartTime,
         endTime: proposedEndTime,
-        guestEmail: input.guestEmail.trim().toLowerCase(),
+        guestEmail: normalizedGuestEmail,
         guestName: input.guestName.trim(),
         timeZone: host.timezone || "UTC",
+        locationType,
+        locationUrl,
         requestId: `morrow-booking-${newBooking.id}`,
       });
 
       if (gcalResult.success && gcalResult.eventId) {
         gcalEventId = gcalResult.eventId;
         calendarSynced = true;
-        if (!isZoom && gcalResult.meetLink) {
+        finalCalendarSyncStatus = "synced";
+        if (locationType === "google_meet" && gcalResult.meetLink) {
           meetLink = gcalResult.meetLink;
         }
+      } else {
+        finalCalendarSyncStatus = "failed";
+        calendarSynced = false;
+        console.warn("[Calendar Sync] Failed to sync booking with Google Calendar:", gcalResult.error);
       }
     } catch (gcalErr) {
-      console.error("Error creating Google Calendar event:", gcalErr);
+      finalCalendarSyncStatus = "failed";
+      calendarSynced = false;
+      console.error("[Calendar Sync] Unexpected error creating Google Calendar event:", gcalErr);
     }
 
-    // Persist real meeting URL and calendar ID if created
-    if (meetLink || gcalEventId) {
-      await db
-        .update(bookings)
-        .set({ meetLink, gcalEventId })
-        .where(eq(bookings.id, newBooking.id));
-    }
-  } else if (isZoom && meetLink) {
+    // Persist final calendar sync status and links
     await db
       .update(bookings)
-      .set({ meetLink })
+      .set({
+        meetLink: meetLink || null,
+        gcalEventId: gcalEventId || null,
+        calendarSyncStatus: finalCalendarSyncStatus,
+      })
       .where(eq(bookings.id, newBooking.id));
+  } else {
+    finalCalendarSyncStatus = "not_applicable";
+    calendarSynced = false;
+    if (meetLink) {
+      await db
+        .update(bookings)
+        .set({
+          meetLink,
+          calendarSyncStatus: finalCalendarSyncStatus,
+        })
+        .where(eq(bookings.id, newBooking.id));
+    }
   }
 
-  // 10. Upsert Contact
+  // 11. Upsert Contact
   try {
     const existingContact = await db.query.contacts.findFirst({
       where: and(
         eq(contacts.userId, host.id),
-        eq(contacts.email, input.guestEmail.trim().toLowerCase())
+        eq(contacts.email, normalizedGuestEmail)
       ),
     });
 
@@ -402,7 +478,7 @@ export async function processBooking(
     } else {
       await db.insert(contacts).values({
         userId: host.id,
-        email: input.guestEmail.trim().toLowerCase(),
+        email: normalizedGuestEmail,
         name: input.guestName.trim(),
         totalBookings: 1,
         lastBookingAt: new Date(),
@@ -412,9 +488,9 @@ export async function processBooking(
     console.error("Error upserting contact:", contactErr);
   }
 
-  // 11. Dispatch confirmation email (non-blocking)
+  // 12. Dispatch confirmation / notification email (non-blocking)
   sendBookingConfirmationEmail({
-    toEmail: input.guestEmail.trim().toLowerCase(),
+    toEmail: normalizedGuestEmail,
     guestName: input.guestName.trim(),
     hostName: host.name,
     hostEmail: host.email,
@@ -422,7 +498,11 @@ export async function processBooking(
     dateStr: input.date,
     timeStr: input.time,
     durationMins,
-    meetLink, // Honest meet link: undefined if failed, never fake URL
+    status: initialStatus,
+    calendarSynced,
+    locationType,
+    locationUrl,
+    meetLink,
     guestNotes: input.guestNotes,
     cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/cancel/${cancelToken}`,
   }).catch((err) => console.error("Error sending guest confirmation email:", err));
@@ -439,7 +519,12 @@ export async function processBooking(
       meetLink,
       cancelToken,
       eventType: eventType.title,
+      status: initialStatus,
+      requiresApproval,
       calendarSynced,
+      calendarSyncStatus: finalCalendarSyncStatus,
+      locationType,
+      locationUrl,
     },
   };
 }

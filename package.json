@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "db:migrate": "node scripts/migrate.mjs",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "build:cloudflare": "opennextjs-cloudflare build",

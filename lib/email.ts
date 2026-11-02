@@ -13,6 +13,10 @@ export interface BookingEmailPayload {
   dateStr: string;
   timeStr: string;
   durationMins: number;
+  status?: string;
+  calendarSynced?: boolean;
+  locationType?: string;
+  locationUrl?: string;
   meetLink?: string;
   guestNotes?: string;
   cancelUrl?: string;
@@ -25,6 +29,8 @@ export async function sendBookingConfirmationEmail(payload: BookingEmailPayload)
     return false;
   }
 
+  const isPending = payload.status === "pending";
+
   const html = buildGuestConfirmationEmail({
     guestName: payload.guestName,
     hostName: payload.hostName,
@@ -32,9 +38,17 @@ export async function sendBookingConfirmationEmail(payload: BookingEmailPayload)
     dateStr: payload.dateStr,
     timeStr: payload.timeStr,
     durationMins: payload.durationMins,
+    status: payload.status,
+    calendarSynced: payload.calendarSynced,
+    locationType: payload.locationType,
+    locationUrl: payload.locationUrl,
     meetLink: payload.meetLink,
     cancelUrl: payload.cancelUrl,
   });
+
+  const subject = isPending
+    ? `Booking Request Received: ${payload.eventTitle} with ${payload.hostName}`
+    : `Confirmed: ${payload.eventTitle} with ${payload.hostName}`;
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -46,7 +60,7 @@ export async function sendBookingConfirmationEmail(payload: BookingEmailPayload)
       body: JSON.stringify({
         from: "Morrow <notifications@usemorrow.xyz>",
         to: [payload.toEmail],
-        subject: `Confirmed: ${payload.eventTitle} with ${payload.hostName}`,
+        subject,
         html,
       }),
     });
@@ -75,6 +89,8 @@ async function sendHostNotificationEmail(payload: BookingEmailPayload): Promise<
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey || !payload.hostEmail) return false;
 
+  const isPending = payload.status === "pending";
+
   const html = buildHostBookingNotificationEmail({
     hostName: payload.hostName,
     guestName: payload.guestName,
@@ -83,10 +99,17 @@ async function sendHostNotificationEmail(payload: BookingEmailPayload): Promise<
     dateStr: payload.dateStr,
     timeStr: payload.timeStr,
     durationMins: payload.durationMins,
+    status: payload.status,
     guestNotes: payload.guestNotes,
+    locationType: payload.locationType,
+    locationUrl: payload.locationUrl,
     meetLink: payload.meetLink,
     dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/dashboard`,
   });
+
+  const subject = isPending
+    ? `Booking Request: ${payload.guestName} requested ${payload.eventTitle}`
+    : `New Meeting: ${payload.guestName} booked ${payload.eventTitle}`;
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -98,7 +121,7 @@ async function sendHostNotificationEmail(payload: BookingEmailPayload): Promise<
       body: JSON.stringify({
         from: "Morrow <notifications@usemorrow.xyz>",
         to: [payload.hostEmail],
-        subject: `New Meeting: ${payload.guestName} booked ${payload.eventTitle}`,
+        subject,
         html,
       }),
     });

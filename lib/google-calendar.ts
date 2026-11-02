@@ -71,6 +71,8 @@ export interface CreateEventParams {
   guestEmail: string;
   guestName: string;
   timeZone?: string;
+  locationType?: string; // "google_meet" | "zoom" | "in_person" | "phone" | "custom"
+  locationUrl?: string | null;
   requestId?: string;
 }
 
@@ -78,10 +80,11 @@ export interface CreateEventResult {
   success: boolean;
   eventId?: string;
   meetLink?: string;
+  location?: string;
   error?: string;
 }
 
-export async function createGoogleMeetEvent({
+export async function createGoogleCalendarEvent({
   tokens,
   summary,
   description,
@@ -90,60 +93,84 @@ export async function createGoogleMeetEvent({
   guestEmail,
   guestName,
   timeZone = "UTC",
+  locationType = "google_meet",
+  locationUrl,
   requestId,
 }: CreateEventParams): Promise<CreateEventResult> {
   try {
     const calendar = getCalendarClient(tokens);
     const reqId = requestId || `morrow-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-    const event = await calendar.events.insert({
-      calendarId: "primary",
-      conferenceDataVersion: 1,
-      sendUpdates: "all",
-      requestBody: {
-        summary,
-        description,
-        start: {
-          dateTime: startTime.toISOString(),
-          timeZone,
-        },
-        end: {
-          dateTime: endTime.toISOString(),
-          timeZone,
-        },
-        attendees: [{ email: guestEmail, displayName: guestName }],
-        conferenceData: {
-          createRequest: {
-            requestId: reqId,
-            conferenceSolutionKey: {
-              type: "hangoutsMeet",
-            },
+    const isGoogleMeet = locationType === "google_meet";
+    const resolvedLocation = isGoogleMeet ? undefined : locationUrl || undefined;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const requestBody: Record<string, any> = {
+      summary,
+      description,
+      start: {
+        dateTime: startTime.toISOString(),
+        timeZone,
+      },
+      end: {
+        dateTime: endTime.toISOString(),
+        timeZone,
+      },
+      attendees: [{ email: guestEmail, displayName: guestName }],
+    };
+
+    if (resolvedLocation) {
+      requestBody.location = resolvedLocation;
+    }
+
+    if (isGoogleMeet) {
+      requestBody.conferenceData = {
+        createRequest: {
+          requestId: reqId,
+          conferenceSolutionKey: {
+            type: "hangoutsMeet",
           },
         },
-      },
+      };
+    }
+
+    const event = await calendar.events.insert({
+      calendarId: "primary",
+      conferenceDataVersion: isGoogleMeet ? 1 : 0,
+      sendUpdates: "all",
+      requestBody,
     });
 
-    const meetLink =
-      event.data.hangoutLink ||
-      event.data.conferenceData?.entryPoints?.find(
-        (ep: { entryPointType?: string | null; uri?: string | null }) => ep.entryPointType === "video"
-      )?.uri ||
-      undefined;
+    let meetLink: string | undefined = undefined;
+    if (isGoogleMeet) {
+      meetLink =
+        event.data.hangoutLink ||
+        event.data.conferenceData?.entryPoints?.find(
+          (ep: { entryPointType?: string | null; uri?: string | null }) => ep.entryPointType === "video"
+        )?.uri ||
+        undefined;
+    } else {
+      meetLink = locationUrl || undefined;
+    }
 
     return {
       success: true,
       eventId: event.data.id || undefined,
       meetLink,
+      location: resolvedLocation || meetLink,
     };
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error("Failed to create Google Calendar event with Meet:", errorMessage);
+    console.error("Failed to create Google Calendar event:", errorMessage);
     return {
       success: false,
       error: errorMessage,
     };
   }
 }
+
+// Backward-compatible alias
+export const createGoogleMeetEvent = createGoogleCalendarEvent;
 
 export async function cancelGoogleCalendarEvent(
   tokens: { accessToken?: string | null; refreshToken?: string | null },

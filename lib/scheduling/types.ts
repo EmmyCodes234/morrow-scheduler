@@ -1,3 +1,17 @@
+export type BookingStatus =
+  | "confirmed"
+  | "pending"
+  | "cancelled"
+  | "rejected"
+  | "completed"
+  | "no_show";
+
+export type CalendarSyncStatus =
+  | "not_applicable"
+  | "synced"
+  | "failed"
+  | "pending";
+
 export interface HostScheduleConfig {
   id: string;
   name: string;
@@ -20,7 +34,7 @@ export interface EventTypeConfig {
   slug: string;
   durationMins: number;
   description?: string | null;
-  locationType: string;
+  locationType: string; // "google_meet" | "zoom" | "in_person" | "phone" | "custom"
   locationUrl?: string | null;
   isActive: boolean;
   bufferBeforeMins: number;
@@ -47,6 +61,7 @@ export interface DateOverride {
 
 export interface ExistingBookingInterval {
   id: string;
+  eventTypeId?: string;
   startTime: Date;
   endTime: Date;
   bufferStartTime: Date;
@@ -95,7 +110,17 @@ export interface BookingRequestInput {
 export interface BookingValidationResult {
   isValid: boolean;
   error?: string;
-  errorCode?: "NOT_FOUND" | "INACTIVE" | "INVALID_INPUT" | "PAST_APPOINTMENT" | "MIN_NOTICE" | "MAX_HORIZON" | "MAX_PER_DAY" | "UNAVAILABLE" | "CONFLICT" | "CALENDAR_ERROR";
+  errorCode?:
+    | "NOT_FOUND"
+    | "INACTIVE"
+    | "INVALID_INPUT"
+    | "PAST_APPOINTMENT"
+    | "MIN_NOTICE"
+    | "MAX_HORIZON"
+    | "MAX_PER_DAY"
+    | "UNAVAILABLE"
+    | "CONFLICT"
+    | "CALENDAR_ERROR";
   startTime?: Date;
   endTime?: Date;
   bufferStartTime?: Date;

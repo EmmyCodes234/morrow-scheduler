@@ -16,7 +16,8 @@ import {
   intervalsOverlap,
 } from "./timezone";
 
-const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+const EMAIL_REGEX =
+  /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
 export function validateGuestDetails(input: {
   guestName?: string | null;
@@ -248,10 +249,12 @@ export function validateBookingRequest({
     };
   }
 
-  // 9. Check eventType.maxPerDay limits
+  // 9. Check eventType.maxPerDay limits specifically for this event type
   if (eventType.maxPerDay && eventType.maxPerDay > 0) {
     const bookingsOnHostDay = existingBookings.filter((b) => {
-      if (b.status === "cancelled") return false;
+      if (b.status === "cancelled" || b.status === "rejected") return false;
+      // Filter strictly by eventTypeId if present on the booking interval
+      if (b.eventTypeId && b.eventTypeId !== eventType.id) return false;
       const bHostDate = getDateStringInTimezone(b.startTime, hostTimezone);
       return bHostDate === hostDateStr;
     });
@@ -265,12 +268,11 @@ export function validateBookingRequest({
     }
   }
 
-  // 10. Check conflicts with existing bookings (including buffers!)
+  // 10. Check conflicts with existing bookings (both confirmed and pending reserve the slot)
   for (const b of existingBookings) {
-    if (b.status === "cancelled") continue;
+    if (b.status === "cancelled" || b.status === "rejected") continue;
 
     // Both the existing booking and the new booking have their own buffer zones
-    // Overlap between [bufferStartTime, bufferEndTime) and [b.bufferStartTime, b.bufferEndTime)
     if (
       intervalsOverlap(
         bufferStartTime,
@@ -296,11 +298,12 @@ export function validateBookingRequest({
     };
   }
 
+  // Check buffer interval against external calendar busy blocks consistently
   for (const block of calendarBusyBlocks) {
-    if (intervalsOverlap(startTime, endTime, block.start, block.end)) {
+    if (intervalsOverlap(bufferStartTime, bufferEndTime, block.start, block.end)) {
       return {
         isValid: false,
-        error: "This time slot conflicts with a busy period on the host's calendar.",
+        error: "This time slot conflicts with an event or buffer on the host's calendar.",
         errorCode: "CONFLICT",
       };
     }

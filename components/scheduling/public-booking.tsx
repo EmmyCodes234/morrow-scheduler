@@ -36,6 +36,7 @@ export interface PublicHost {
   avatarUrl?: string | null;
   brandColor?: string | null;
   welcomeMessage?: string | null;
+  defaultLocationType?: string | null;
 }
 
 export interface PublicEventType {
@@ -46,6 +47,7 @@ export interface PublicEventType {
   description?: string;
   location?: string;
   active?: boolean;
+  requiresApproval?: boolean;
 }
 
 export interface PublicBookingViewProps {
@@ -96,6 +98,12 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [confirmedMeetLink, setConfirmedMeetLink] = useState<string>("");
+  const [confirmedBooking, setConfirmedBooking] = useState<{
+    id?: string;
+    status?: string;
+    requiresApproval?: boolean;
+    meetLink?: string;
+  } | null>(null);
   const [isBooking, setIsBooking] = useState(false);
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() => {
@@ -232,6 +240,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
         if (data.booking?.meetLink) {
           setConfirmedMeetLink(data.booking.meetLink);
         }
+        setConfirmedBooking(data.booking || null);
         setBookingError(null);
         setStep("confirmed");
       } else {
@@ -260,24 +269,58 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
       )
     : "";
 
+  const isPendingApproval =
+    confirmedBooking?.status === "pending" || confirmedBooking?.requiresApproval === true;
+
+  const eventLocationLabel =
+    selectedEvent.location === "zoom"
+      ? "Zoom Meeting"
+      : selectedEvent.location === "in_person"
+      ? "In-Person Meeting"
+      : selectedEvent.location === "phone"
+      ? "Phone Call"
+      : "Google Meet";
+
   return (
     <div className="w-full max-w-5xl mx-auto rounded-3xl border border-border-button-default bg-background-primary-default shadow-sm overflow-hidden">
       {step === "confirmed" ? (
-        /* CONFIRMATION SUCCESS VIEW */
+        /* CONFIRMATION / SUBMISSION VIEW */
         <div className="p-8 sm:p-14 flex flex-col items-center text-center max-w-lg mx-auto">
-          <div className="size-16 rounded-full bg-status-lime-background flex items-center justify-center text-status-lime-text mb-6">
-            <HugeCheck className="size-8" />
-          </div>
+          {isPendingApproval ? (
+            <div className="size-16 rounded-full bg-status-amber-background flex items-center justify-center text-status-amber-text mb-6">
+              <HugeClock className="size-8" />
+            </div>
+          ) : (
+            <div className="size-16 rounded-full bg-status-lime-background flex items-center justify-center text-status-lime-text mb-6">
+              <HugeCheck className="size-8" />
+            </div>
+          )}
 
-          <h2 className="text-title-1-medium text-text-primary mb-2">You are scheduled</h2>
+          <h2 className="text-title-1-medium text-text-primary mb-2">
+            {isPendingApproval ? "Booking request submitted" : "You are scheduled"}
+          </h2>
           <p className="text-body-regular text-text-secondary mb-8">
-            An invite has been sent to <span className="font-medium text-text-primary">{form.email}</span> and the host.
+            {isPendingApproval ? (
+              <>
+                This event requires host approval. We&apos;ve notified the host and you will receive an email at{" "}
+                <span className="font-medium text-text-primary">{form.email}</span> once approved.
+              </>
+            ) : (
+              <>
+                An invite has been sent to{" "}
+                <span className="font-medium text-text-primary">{form.email}</span> and the host.
+              </>
+            )}
           </p>
 
           <div className="w-full rounded-2xl border border-border-button-default bg-background-secondary-default p-5 text-left flex flex-col gap-3.5 mb-8">
             <div className="flex items-center justify-between">
               <span className="text-title-3-semibold text-text-primary">{selectedEvent.title}</span>
-              <Chip color="blue" variant="bold">{selectedEvent.duration} mins</Chip>
+              {isPendingApproval ? (
+                <Chip color="orange" variant="bold">Pending Approval</Chip>
+              ) : (
+                <Chip color="blue" variant="bold">{selectedEvent.duration} mins</Chip>
+              )}
             </div>
 
             <div className="flex items-center gap-2.5 text-body-medium text-text-secondary">
@@ -295,7 +338,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
               <span>{guestTimezone}</span>
             </div>
 
-            {confirmedMeetLink && (
+            {!isPendingApproval && confirmedMeetLink && (
               <div className="flex items-center justify-between pt-2 border-t border-border-button-default">
                 <a
                   href={confirmedMeetLink}
@@ -304,7 +347,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                   className="flex items-center gap-2.5 text-body-medium text-accent-500 hover:underline font-medium"
                 >
                   <HugeVideo className="size-4 shrink-0 text-accent-500" />
-                  <span>Join Google Meet</span>
+                  <span>Join Meeting</span>
                 </a>
                 <Button
                   variant="secondary"
@@ -324,6 +367,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
               setStep("slot");
               setSelectedSlot(null);
               setBookingError(null);
+              setConfirmedBooking(null);
               // Fresh idempotency key for next booking
               if (typeof crypto !== "undefined" && crypto.randomUUID) {
                 setIdempotencyKey(crypto.randomUUID());
@@ -366,7 +410,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2 text-body-2-regular text-text-secondary">
                   <HugeVideo className="size-4 shrink-0 text-foreground-icon-secondary" />
-                  <span>Google Meet</span>
+                  <span>{eventLocationLabel}</span>
                 </div>
                 <div className="flex items-center gap-2 text-body-2-regular text-text-secondary">
                   <HugeGlobe className="size-4 shrink-0 text-foreground-icon-secondary" />

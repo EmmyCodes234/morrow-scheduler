@@ -84,23 +84,21 @@ export function generateAvailableSlots({
   const minAllowedSlotTime = new Date(now.getTime() + minNoticeHours * 60 * 60 * 1000);
 
   // Identify all host calendar dates that could overlap the guest's requested calendar day
-  // Since timezones can differ by up to 26 hours globally (-12 to +14),
-  // we inspect the host date at guestDayStartUtc and guestDayEndUtc
   const hostDatesSet = new Set<string>();
   hostDatesSet.add(getDateStringInTimezone(guestDayStartUtc, hostTz));
   hostDatesSet.add(getDateStringInTimezone(guestDayEndUtc, hostTz));
 
-  // Also check midpoint to cover full span
   const midpoint = new Date((guestDayStartUtc.getTime() + guestDayEndUtc.getTime()) / 2);
   hostDatesSet.add(getDateStringInTimezone(midpoint, hostTz));
 
-  const candidateSlotsMap = new Map<number, TimeSlot>();
+  const candidateSlotsList: TimeSlot[] = [];
 
   for (const hostDateStr of hostDatesSet) {
-    // Check max bookings per day for this host date
+    // Check max bookings per day specifically for this event type
     if (eventType.maxPerDay && eventType.maxPerDay > 0) {
       const bookingsOnHostDay = existingBookings.filter((b) => {
-        if (b.status === "cancelled") return false;
+        if (b.status === "cancelled" || b.status === "rejected") return false;
+        if (b.eventTypeId && b.eventTypeId !== eventType.id) return false;
         const bHostDate = getDateStringInTimezone(b.startTime, hostTz);
         return bHostDate === hostDateStr;
       });
@@ -123,7 +121,6 @@ export function generateAvailableSlots({
       workStartStr = dateOverride.startTime;
       workEndStr = dateOverride.endTime;
     } else {
-      // Find host day of week
       const hostDayStartUtc = getStartOfLocalDay(hostDateStr, hostTz);
       const hostDayOfWeek = getDayOfWeekInTimezone(hostDayStartUtc, hostTz);
       const regularSchedule = weeklyAvailability.find(
@@ -154,25 +151,32 @@ export function generateAvailableSlots({
       const slotGuestDate = getDateStringInTimezone(currentSlotUtc, guestTz);
       if (slotGuestDate === requestedDate) {
         // Must satisfy minimum notice and be in the future
-        if (currentSlotUtc.getTime() >= minAllowedSlotTime.getTime() && currentSlotUtc.getTime() > now.getTime()) {
-          const slotBufferStartUtc = new Date(currentSlotUtc.getTime() - bufferBeforeMins * 60 * 1000);
-          const slotBufferEndUtc = new Date(slotEndUtc.getTime() + bufferAfterMins * 60 * 1000);
+        if (
+          currentSlotUtc.getTime() >= minAllowedSlotTime.getTime() &&
+          currentSlotUtc.getTime() > now.getTime()
+        ) {
+          const slotBufferStartUtc = new Date(
+            currentSlotUtc.getTime() - bufferBeforeMins * 60 * 1000
+          );
+          const slotBufferEndUtc = new Date(
+            slotEndUtc.getTime() + bufferAfterMins * 60 * 1000
+          );
 
-          // Check conflict with existing bookings (including buffers)
+          // Check conflict with existing bookings (both confirmed and pending reserve slots)
           const hasBookingConflict = existingBookings.some((b) => {
-            if (b.status === "cancelled") return false;
+            if (b.status === "cancelled" || b.status === "rejected") return false;
             const bBufStart = b.bufferStartTime || b.startTime;
             const bBufEnd = b.bufferEndTime || b.endTime;
             return intervalsOverlap(slotBufferStartUtc, slotBufferEndUtc, bBufStart, bBufEnd);
           });
 
-          // Check conflict with Google Calendar busy blocks
+          // Check conflict with Google Calendar busy blocks (consistent buffer interval semantics)
           const hasCalendarConflict = calendarBusyBlocks.some((block) => {
-            return intervalsOverlap(currentSlotUtc, slotEndUtc, block.start, block.end);
+            return intervalsOverlap(slotBufferStartUtc, slotBufferEndUtc, block.start, block.end);
           });
 
           if (!hasBookingConflict && !hasCalendarConflict) {
-            candidateSlotsMap.set(currentSlotUtc.getTime(), {
+            candidateSlotsList.push({
               time: formatTime12(currentSlotUtc, guestTz),
               startTime: currentSlotUtc,
               endTime: slotEndUtc,
@@ -186,12 +190,24 @@ export function generateAvailableSlots({
   }
 
   // Sort slots chronologically
-  const sortedSlots = Array.from(candidateSlotsMap.values()).sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime()
-  );
+  candidateSlotsList.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
+  // Daylight-saving ambiguity resolution:
+  // If daylight saving fallback creates duplicate wall-clock time strings (e.g. two "01:30 AM" slots),
+  // exclude ambiguous duplicates so guests never see two indistinguishable options that resolve
+  // to the same wall-clock submission.
+  const seenWallClockTimes = new Set<string>();
+  const unambiguousSlots: TimeSlot[] = [];
+
+  for (const slot of candidateSlotsList) {
+    if (!seenWallClockTimes.has(slot.time)) {
+      seenWallClockTimes.add(slot.time);
+      unambiguousSlots.push(slot);
+    }
+  }
 
   return {
-    slots: sortedSlots.map((s) => s.time),
-    slotsDetail: sortedSlots,
+    slots: unambiguousSlots.map((s) => s.time),
+    slotsDetail: unambiguousSlots,
   };
 }

@@ -139,6 +139,50 @@ export function renderBoardUIEmailLayout(opts: EmailBaseOptions): string {
   `;
 }
 
+function resolveLocationDisplay(opts: {
+  locationType?: string;
+  locationUrl?: string;
+  meetLink?: string;
+}): { label: string; detail: string; ctaUrl?: string } | null {
+  const locType = opts.locationType || (opts.meetLink?.includes("zoom") ? "zoom" : opts.meetLink ? "google_meet" : undefined);
+  const targetUrl = opts.locationUrl || opts.meetLink;
+
+  if (locType === "zoom") {
+    return {
+      label: "Zoom Meeting",
+      detail: targetUrl || "Link will be shared by host",
+      ctaUrl: targetUrl,
+    };
+  }
+  if (locType === "google_meet") {
+    return {
+      label: "Google Meet",
+      detail: targetUrl || "Link will be shared before meeting",
+      ctaUrl: targetUrl,
+    };
+  }
+  if (locType === "phone") {
+    return {
+      label: "Phone Call",
+      detail: targetUrl || "Host will initiate contact at scheduled time",
+    };
+  }
+  if (locType === "in_person") {
+    return {
+      label: "In-Person Meeting",
+      detail: targetUrl || "Address provided by host",
+    };
+  }
+  if (locType === "custom" || targetUrl) {
+    return {
+      label: "Location",
+      detail: targetUrl || "Details provided by host",
+      ctaUrl: targetUrl?.startsWith("http") ? targetUrl : undefined,
+    };
+  }
+  return null;
+}
+
 /**
  * Guest Booking Confirmation Email
  */
@@ -149,11 +193,19 @@ export function buildGuestConfirmationEmail(data: {
   dateStr: string;
   timeStr: string;
   durationMins: number;
+  status?: string;
+  calendarSynced?: boolean;
+  locationType?: string;
+  locationUrl?: string;
   meetLink?: string;
   cancelUrl?: string;
 }): string {
-  const isZoom = data.meetLink && data.meetLink.includes("zoom");
-  const providerLabel = isZoom ? "Zoom Meeting" : "Google Meet";
+  const isPending = data.status === "pending";
+  const locationInfo = resolveLocationDisplay({
+    locationType: data.locationType,
+    locationUrl: data.locationUrl,
+    meetLink: data.meetLink,
+  });
 
   const content = `
     <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px; margin-bottom: 20px;">
@@ -177,11 +229,19 @@ export function buildGuestConfirmationEmail(data: {
             <strong style="color: #0F172A;">Host:</strong> ${data.hostName}
           </td>
         </tr>
-        ${data.meetLink ? `
+        ${locationInfo ? `
           <tr>
-            <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📹</td>
+            <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📍</td>
             <td style="padding-bottom: 6px;">
-              <strong style="color: #0F172A;">Video Call:</strong> ${providerLabel}
+              <strong style="color: #0F172A;">${locationInfo.label}:</strong> ${locationInfo.detail}
+            </td>
+          </tr>
+        ` : ""}
+        ${isPending ? `
+          <tr>
+            <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">⏳</td>
+            <td style="padding-bottom: 6px;">
+              <strong style="color: #B45309;">Status:</strong> Pending host approval
             </td>
           </tr>
         ` : ""}
@@ -189,16 +249,34 @@ export function buildGuestConfirmationEmail(data: {
     </div>
   `;
 
+  if (isPending) {
+    return renderBoardUIEmailLayout({
+      previewText: `Request Received: ${data.eventTitle} with ${data.hostName}`,
+      badgeText: "Pending Approval",
+      badgeVariant: "blue",
+      headline: "Booking Request Received",
+      subheadline: `Hi ${data.guestName}, your request for ${data.eventTitle} with ${data.hostName} has been submitted. This event requires host approval. You will receive an update once the host reviews your request.`,
+      contentHtml: content,
+      footerLinks: data.cancelUrl ? [
+        { label: "Cancel Request", url: data.cancelUrl },
+      ] : undefined,
+    });
+  }
+
+  const calendarSubtext = data.calendarSynced
+    ? `A calendar invitation has been added to your schedule.`
+    : `Please mark your calendar for the scheduled time.`;
+
   return renderBoardUIEmailLayout({
     previewText: `Confirmed: ${data.eventTitle} with ${data.hostName}`,
     badgeText: "Confirmed",
     badgeVariant: "lime",
     headline: "You're scheduled!",
-    subheadline: `Hi ${data.guestName}, your meeting with ${data.hostName} is confirmed. A calendar invitation has been added to your schedule.`,
+    subheadline: `Hi ${data.guestName}, your meeting with ${data.hostName} is confirmed. ${calendarSubtext}`,
     contentHtml: content,
-    primaryCta: data.meetLink ? {
-      label: `Join ${providerLabel}`,
-      url: data.meetLink,
+    primaryCta: locationInfo?.ctaUrl ? {
+      label: `Join ${locationInfo.label}`,
+      url: locationInfo.ctaUrl,
     } : undefined,
     footerLinks: data.cancelUrl ? [
       { label: "Reschedule or Cancel", url: data.cancelUrl },
@@ -207,7 +285,7 @@ export function buildGuestConfirmationEmail(data: {
 }
 
 /**
- * Host Notification Email (when a guest books)
+ * Host Notification Email (when a guest books or requests approval)
  */
 export function buildHostBookingNotificationEmail(data: {
   hostName: string;
@@ -217,10 +295,20 @@ export function buildHostBookingNotificationEmail(data: {
   dateStr: string;
   timeStr: string;
   durationMins: number;
+  status?: string;
   guestNotes?: string;
+  locationType?: string;
+  locationUrl?: string;
   meetLink?: string;
   dashboardUrl: string;
 }): string {
+  const isPending = data.status === "pending";
+  const locationInfo = resolveLocationDisplay({
+    locationType: data.locationType,
+    locationUrl: data.locationUrl,
+    meetLink: data.meetLink,
+  });
+
   const content = `
     <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px; margin-bottom: 20px;">
       <div style="margin-bottom: 14px;">
@@ -243,6 +331,14 @@ export function buildHostBookingNotificationEmail(data: {
             <strong style="color: #0F172A;">Guest:</strong> ${data.guestName} (<a href="mailto:${data.guestEmail}" style="color: #2563EB; text-decoration: none;">${data.guestEmail}</a>)
           </td>
         </tr>
+        ${locationInfo ? `
+          <tr>
+            <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📍</td>
+            <td style="padding-bottom: 6px;">
+              <strong style="color: #0F172A;">${locationInfo.label}:</strong> ${locationInfo.detail}
+            </td>
+          </tr>
+        ` : ""}
         ${data.guestNotes ? `
           <tr>
             <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📝</td>
@@ -254,6 +350,21 @@ export function buildHostBookingNotificationEmail(data: {
       </table>
     </div>
   `;
+
+  if (isPending) {
+    return renderBoardUIEmailLayout({
+      previewText: `Action Required: ${data.guestName} requested ${data.eventTitle}`,
+      badgeText: "Requires Approval",
+      badgeVariant: "blue",
+      headline: "New booking request",
+      subheadline: `Hi ${data.hostName}, ${data.guestName} has requested a ${data.eventTitle} with you. Please review and approve or reject this booking in your dashboard.`,
+      contentHtml: content,
+      primaryCta: {
+        label: "Review Request in Dashboard",
+        url: data.dashboardUrl,
+      },
+    });
+  }
 
   return renderBoardUIEmailLayout({
     previewText: `New Booking: ${data.guestName} booked ${data.eventTitle}`,

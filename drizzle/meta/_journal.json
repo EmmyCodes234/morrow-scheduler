@@ -8,6 +8,13 @@
       "when": 1793651836880,
       "tag": "0000_massive_songbird",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793653091493,
+      "tag": "0001_sturdy_sebastian_shaw",
+      "breakpoints": true
     }
   ]
 }

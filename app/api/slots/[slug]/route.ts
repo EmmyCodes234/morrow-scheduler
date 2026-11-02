@@ -38,7 +38,7 @@ export async function GET(
       return NextResponse.json({ error: "Host not found" }, { status: 404 });
     }
 
-    // 2. Resolve target event type
+    // 2. Strict event type resolution
     let targetEventType;
     if (eventTypeIdParam) {
       targetEventType = await db.query.eventTypes.findFirst({
@@ -47,6 +47,20 @@ export async function GET(
           eq(eventTypes.userId, host.id)
         ),
       });
+
+      if (!targetEventType) {
+        return NextResponse.json(
+          { error: "Event type not found or does not belong to this host" },
+          { status: 404 }
+        );
+      }
+
+      if (!targetEventType.isActive) {
+        return NextResponse.json(
+          { error: "This event type is currently inactive" },
+          { status: 400 }
+        );
+      }
     } else if (durationParam) {
       // Backward compatibility: match active event by duration
       targetEventType = await db.query.eventTypes.findFirst({
@@ -56,10 +70,18 @@ export async function GET(
           eq(eventTypes.isActive, true)
         ),
       });
-    }
 
-    // Fallback to first active event type for the host if not specified
-    if (!targetEventType) {
+      if (!targetEventType) {
+        // Fallback to first active event type for the host
+        targetEventType = await db.query.eventTypes.findFirst({
+          where: and(
+            eq(eventTypes.userId, host.id),
+            eq(eventTypes.isActive, true)
+          ),
+        });
+      }
+    } else {
+      // Fallback to first active event type for the host if not specified
       targetEventType = await db.query.eventTypes.findFirst({
         where: and(
           eq(eventTypes.userId, host.id),
@@ -178,6 +200,7 @@ export async function GET(
       })),
       existingBookings: boundedBookings.map((b) => ({
         id: b.id,
+        eventTypeId: b.eventTypeId,
         startTime: b.startTime,
         endTime: b.endTime,
         bufferStartTime: b.bufferStartTime,
