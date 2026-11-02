@@ -268,3 +268,47 @@ export function buildHostBookingNotificationEmail(data: {
     },
   });
 }
+
+/**
+ * One-Time Password (OTP) Verification Email
+ */
+export function buildOtpEmail(data: {
+  otpCode: string;
+  email: string;
+}): string {
+  // Format code with a middle space: e.g. "482 910"
+  const formattedCode =
+    data.otpCode.length === 6
+      ? `${data.otpCode.slice(0, 3)} ${data.otpCode.slice(3)}`
+      : data.otpCode;
+
+  const content = `
+    <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 16px; padding: 28px 20px; text-align: center; margin: 24px 0 20px 0;">
+      <div style="font-size: 13px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px;">
+        Your Verification Code
+      </div>
+      <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 36px; font-weight: 700; color: #0F172A; letter-spacing: 0.18em; line-height: 1.1; margin-bottom: 12px;">
+        ${formattedCode}
+      </div>
+      <div style="font-size: 13px; color: #64748B;">
+        Expires in <strong style="color: #0F172A;">10 minutes</strong>
+      </div>
+    </div>
+
+    <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 12px 0;">
+      We received a request to sign in to your Morrow account using <strong style="color: #0F172A;">${data.email}</strong>.
+    </p>
+    <p style="font-size: 13px; color: #94A3B8; line-height: 1.5; margin: 0;">
+      If you did not request this code, no action is required and your account remains safe.
+    </p>
+  `;
+
+  return renderBoardUIEmailLayout({
+    previewText: `${data.otpCode} is your Morrow verification code`,
+    badgeText: "Security Verification",
+    badgeVariant: "blue",
+    headline: "Verify your email",
+    subheadline: "Use the 6-digit code below to securely authenticate with Morrow.",
+    contentHtml: content,
+  });
+}

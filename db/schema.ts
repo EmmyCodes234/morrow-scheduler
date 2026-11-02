@@ -165,6 +165,20 @@ export const contacts = pgTable(
   ]
 );
 
+export const verificationTokens = pgTable(
+  "verification_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: text("email").notNull(),
+    token: text("token").notNull(), // 6-digit OTP code
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("verification_tokens_email_idx").on(table.email),
+  ]
+);
+
 // RELATIONS
 export const usersRelations = relations(users, ({ many }) => ({
   eventTypes: many(eventTypes),
@@ -232,3 +246,6 @@ export type NewBooking = typeof bookings.$inferInsert;
 
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
+
+export type VerificationToken = typeof verificationTokens.$inferSelect;
+export type NewVerificationToken = typeof verificationTokens.$inferInsert;

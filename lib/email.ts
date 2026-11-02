@@ -1,6 +1,7 @@
 import {
   buildGuestConfirmationEmail,
   buildHostBookingNotificationEmail,
+  buildOtpEmail,
 } from "./email-templates";
 
 export interface BookingEmailPayload {
@@ -104,6 +105,51 @@ async function sendHostNotificationEmail(payload: BookingEmailPayload): Promise<
     return res.ok;
   } catch (err) {
     console.error("[Email] Failed to send host notification:", err);
+    return false;
+  }
+}
+
+/**
+ * Send an OTP code to an email address for authentication / login / registration.
+ */
+export async function sendOtpEmail(email: string, otpCode: string): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
+    console.log("[Email] Resend API key not configured, skipping OTP email:", email);
+    return false;
+  }
+
+  const html = buildOtpEmail({
+    otpCode,
+    email,
+  });
+
+  const fromEmail = process.env.RESEND_AUTH_FROM_EMAIL || "Morrow Security <auth@usemorrow.xyz>";
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromEmail,
+        to: [email],
+        subject: `${otpCode} is your Morrow verification code`,
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error("[Email] Resend API error sending OTP:", err);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("[Email] Failed to send OTP email:", err);
     return false;
   }
 }
