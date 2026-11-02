@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import crypto from "crypto";
+import { isSameDatabase } from "@/lib/database/url-safety";
 
 /**
  * Genuine PostgreSQL Concurrency & GiST Exclusion Constraint Integration Tests
@@ -48,8 +49,8 @@ describeIntegration("Real PostgreSQL Concurrency & GiST Exclusion Constraints", 
     if (process.env.NODE_ENV === "production") {
       throw new Error("Refusing to run destructive concurrency integration tests in production environment!");
     }
-    if (testDbUrl === process.env.DATABASE_URL) {
-      throw new Error("Refusing to run tests: TEST_DATABASE_URL cannot be the same as DATABASE_URL (production database)!");
+    if (isSameDatabase(testDbUrl, process.env.DATABASE_URL)) {
+      throw new Error("Refusing to run tests: TEST_DATABASE_URL points to the same database instance as DATABASE_URL (production database)!");
     }
 
     rawSql = neon(testDbUrl!);

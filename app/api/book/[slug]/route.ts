@@ -1,25 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processBooking } from "@/lib/scheduling/booking-service";
+import { parseJsonRequest } from "@/lib/http/parse-json";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
+  // 1. Separate JSON parsing to distinguish malformed client inputs (400) from server errors (500)
+  const parsed = await parseJsonRequest(req);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error, errorCode: parsed.errorCode },
+      { status: parsed.status }
+    );
+  }
+
+  const body = parsed.data;
+
   try {
     const { slug } = await params;
-    const body = await req.json();
 
     const result = await processBooking(slug, {
-      eventTypeId: body.eventTypeId,
-      date: body.date,
-      time: body.time,
-      guestName: body.guestName,
-      guestEmail: body.guestEmail,
-      guestTimezone: body.guestTimezone,
-      guestNotes: body.guestNotes,
-      additionalGuests: body.additionalGuests,
-      customAnswers: body.customAnswers,
-      idempotencyKey: body.idempotencyKey,
+      eventTypeId: body.eventTypeId as string,
+      date: body.date as string,
+      time: body.time as string,
+      guestName: body.guestName as string,
+      guestEmail: body.guestEmail as string,
+      guestTimezone: body.guestTimezone as string | undefined,
+      guestNotes: body.guestNotes as string | undefined,
+      additionalGuests: body.additionalGuests as string | string[] | undefined,
+      customAnswers: body.customAnswers as Record<string, unknown> | undefined,
+      idempotencyKey: body.idempotencyKey as string | undefined,
     });
 
     if (!result.success) {

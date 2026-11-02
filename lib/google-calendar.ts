@@ -238,6 +238,7 @@ export interface PatchEventTimeParams {
   timeZone?: string;
   summary?: string;
   description?: string;
+  status?: string; // e.g. "confirmed" to restore a cancelled event
 }
 
 export async function patchGoogleCalendarEventTime({
@@ -248,11 +249,17 @@ export async function patchGoogleCalendarEventTime({
   timeZone = "UTC",
   summary,
   description,
+  status,
 }: PatchEventTimeParams): Promise<{ success: boolean; eventId?: string; meetLink?: string; error?: string }> {
   try {
     const calendar = getCalendarClient(tokens);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const requestBody: Record<string, any> = {
+    const requestBody: {
+      start: { dateTime: string; timeZone: string };
+      end: { dateTime: string; timeZone: string };
+      summary?: string;
+      description?: string;
+      status?: string;
+    } = {
       start: {
         dateTime: startTime.toISOString(),
         timeZone,
@@ -264,6 +271,7 @@ export async function patchGoogleCalendarEventTime({
     };
     if (summary) requestBody.summary = summary;
     if (description) requestBody.description = description;
+    if (status) requestBody.status = status;
 
     const response = await calendar.events.patch({
       calendarId: "primary",
@@ -292,6 +300,40 @@ export async function patchGoogleCalendarEventTime({
       error: errorMessage,
     };
   }
+}
+
+export interface GoogleCalendarEventLike {
+  id?: string | null;
+  status?: string | null;
+  attendees?: Array<{ email?: string | null }> | null;
+  description?: string | null;
+  summary?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * Validates whether an existing Google Calendar event belongs to the specified booking
+ * by checking attendees and event description.
+ */
+export function isGoogleEventMatchingBooking(
+  event: GoogleCalendarEventLike | null | undefined,
+  booking: { id: string; guestEmail: string }
+): boolean {
+  if (!event || typeof event !== "object") return false;
+
+  const normalizedGuestEmail = booking.guestEmail.toLowerCase().trim();
+  const attendees = Array.isArray(event.attendees) ? event.attendees : [];
+  const hasAttendee = attendees.some(
+    (att) => att && typeof att.email === "string" && att.email.toLowerCase().trim() === normalizedGuestEmail
+  );
+
+  const description = typeof event.description === "string" ? event.description : "";
+  const hasBookingRef =
+    description.includes(booking.id) ||
+    description.includes(normalizedGuestEmail) ||
+    description.includes("Scheduled via Morrow");
+
+  return hasAttendee || hasBookingRef;
 }
 
 export async function cancelGoogleCalendarEvent(

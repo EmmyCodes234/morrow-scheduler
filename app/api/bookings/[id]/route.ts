@@ -11,21 +11,29 @@ import {
   fetchGoogleBusyBlocks,
 } from "@/lib/google-calendar";
 import {
-  sendBookingApprovalEmail,
-  sendBookingRejectionEmail,
-} from "@/lib/email";
-import {
   getDateStringInTimezone,
   formatTime12,
   resolveTimezone,
 } from "@/lib/scheduling/timezone";
 import { validateBookingRequest } from "@/lib/scheduling/validation";
 import { resolveEffectiveLocation } from "@/lib/scheduling/location";
+import { parseJsonRequest } from "@/lib/http/parse-json";
+import { dispatchDurableBookingNotification, type DurableNotificationPayload } from "@/lib/scheduling/notification-service";
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // 1. Safe JSON parsing: catch JSON syntax errors (400) and reject null / array payloads
+  const parsed = await parseJsonRequest(req);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error, errorCode: parsed.errorCode },
+      { status: parsed.status }
+    );
+  }
+  const body = parsed.data;
+
   try {
     const session = await auth();
 
@@ -42,7 +50,6 @@ export async function PATCH(
     }
 
     const { id } = await params;
-    const body = await req.json();
 
     const existing = await db.query.bookings.findFirst({
       where: and(eq(bookings.id, id), eq(bookings.hostId, host.id)),
@@ -57,20 +64,57 @@ export async function PATCH(
 
     const hostTimezone = resolveTimezone(host.timezone, "UTC");
 
-    // 1. Action: Manual Calendar Sync Recovery
+    // 2. Action: Manual Calendar Sync Recovery
     if (body.action === "retry_sync") {
       const syncResult = await reconcileBookingCalendarSync(existing.id, host.id);
       const updated = await db.query.bookings.findFirst({
         where: eq(bookings.id, id),
+        with: { eventType: true },
       });
+
+      if (!syncResult.success || !syncResult.calendarSynced) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: syncResult.error || "Calendar synchronization failed.",
+            booking: updated || existing,
+            syncResult,
+          },
+          { status: 502 }
+        );
+      }
+
       return NextResponse.json({ success: true, booking: updated, syncResult });
     }
 
-    // 2. Action: Status Transitions
+    // 3. Action: Manual Notification Outbox Retry
+    if (body.action === "retry_notification") {
+      const notifyResult = await dispatchDurableBookingNotification(existing.id);
+      const updated = await db.query.bookings.findFirst({
+        where: eq(bookings.id, id),
+        with: { eventType: true },
+      });
+
+      if (!notifyResult.success) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: notifyResult.error || "Notification delivery failed.",
+            booking: updated || existing,
+            notifyResult,
+          },
+          { status: 502 }
+        );
+      }
+
+      return NextResponse.json({ success: true, booking: updated, notifyResult });
+    }
+
+    // 4. Action: Status Transitions
     if (body.status !== undefined) {
       const requestedStatus = body.status;
 
-      // Pending -> Confirmed (Approval Workflow)
+      // Pending -> Confirmed (Approval Workflow with Durable Notification Outbox)
       if (requestedStatus === "confirmed") {
         if (existing.status === "confirmed") {
           // Idempotent retry: already confirmed
@@ -83,11 +127,35 @@ export async function PATCH(
           );
         }
 
-        // Conditional atomic update: only transitions if status is STILL 'pending'
+        const effectiveLocation = resolveEffectiveLocation({
+          eventType: existing.eventType,
+          host,
+        });
+
+        const notificationPayload: DurableNotificationPayload = {
+          toEmail: existing.guestEmail,
+          guestName: existing.guestName,
+          hostName: host.name,
+          hostEmail: host.email,
+          eventTitle: existing.eventType?.title || "Meeting",
+          dateStr: getDateStringInTimezone(existing.startTime, hostTimezone),
+          timeStr: formatTime12(existing.startTime, hostTimezone),
+          durationMins: existing.eventType?.durationMins || 30,
+          locationType: effectiveLocation.locationType,
+          locationUrl: effectiveLocation.locationUrl,
+          cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/cancel/${existing.cancelToken}`,
+        };
+
+        // Atomic conditional update: transitions status AND stores notification intent in one atomic statement
         const [transitionWon] = await db
           .update(bookings)
           .set({
             status: "confirmed",
+            notificationType: "approval",
+            notificationStatus: "pending",
+            notificationAttempts: 0,
+            notificationLastError: null,
+            notificationPayload,
             updatedAt: new Date(),
           })
           .where(
@@ -119,39 +187,29 @@ export async function PATCH(
         }
 
         // Synchronize with external calendar only once for winning transition
-        await reconcileBookingCalendarSync(existing.id, host.id);
+        const syncResult = await reconcileBookingCalendarSync(existing.id, host.id);
+
+        if (syncResult.meetLink) {
+          notificationPayload.meetLink = syncResult.meetLink;
+          notificationPayload.calendarSynced = syncResult.calendarSynced;
+          await db
+            .update(bookings)
+            .set({ notificationPayload })
+            .where(eq(bookings.id, id));
+        }
+
+        // Dispatch durable notification outside the DB transaction
+        await dispatchDurableBookingNotification(existing.id);
 
         const updated = await db.query.bookings.findFirst({
           where: eq(bookings.id, id),
           with: { eventType: true },
         });
 
-        const effectiveLocation = resolveEffectiveLocation({
-          eventType: existing.eventType,
-          host,
-        });
-
-        // Notify guest that booking was approved
-        sendBookingApprovalEmail({
-          toEmail: existing.guestEmail,
-          guestName: existing.guestName,
-          hostName: host.name,
-          hostEmail: host.email,
-          eventTitle: existing.eventType?.title || "Meeting",
-          dateStr: getDateStringInTimezone(existing.startTime, hostTimezone),
-          timeStr: formatTime12(existing.startTime, hostTimezone),
-          durationMins: existing.eventType?.durationMins || 30,
-          calendarSynced: updated?.calendarSyncStatus === "synced",
-          locationType: effectiveLocation.locationType,
-          locationUrl: effectiveLocation.locationUrl,
-          meetLink: updated?.meetLink || undefined,
-          cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/cancel/${existing.cancelToken}`,
-        }).catch((err) => console.error("Error sending approval email:", err));
-
         return NextResponse.json({ success: true, booking: updated });
       }
 
-      // Pending -> Rejected (Rejection Workflow)
+      // Pending -> Rejected (Rejection Workflow with Durable Notification Outbox)
       if (requestedStatus === "rejected") {
         if (existing.status === "rejected") {
           // Idempotent retry: already rejected
@@ -164,11 +222,27 @@ export async function PATCH(
           );
         }
 
-        // Conditional atomic update: only transitions if status is STILL 'pending'
+        const notificationPayload: DurableNotificationPayload = {
+          toEmail: existing.guestEmail,
+          guestName: existing.guestName,
+          hostName: host.name,
+          eventTitle: existing.eventType?.title || "Meeting",
+          dateStr: getDateStringInTimezone(existing.startTime, hostTimezone),
+          timeStr: formatTime12(existing.startTime, hostTimezone),
+          reason: typeof body.reason === "string" ? body.reason : undefined,
+          bookingUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/${host.slug}`,
+        };
+
+        // Atomic conditional update: transitions status AND stores rejection notification intent in one statement
         const [transitionWon] = await db
           .update(bookings)
           .set({
             status: "rejected",
+            notificationType: "rejection",
+            notificationStatus: "pending",
+            notificationAttempts: 0,
+            notificationLastError: null,
+            notificationPayload,
             updatedAt: new Date(),
           })
           .where(
@@ -197,19 +271,15 @@ export async function PATCH(
           );
         }
 
-        // Notify guest of rejection only once for winning transition
-        sendBookingRejectionEmail({
-          toEmail: existing.guestEmail,
-          guestName: existing.guestName,
-          hostName: host.name,
-          eventTitle: existing.eventType?.title || "Meeting",
-          dateStr: getDateStringInTimezone(existing.startTime, hostTimezone),
-          timeStr: formatTime12(existing.startTime, hostTimezone),
-          reason: typeof body.reason === "string" ? body.reason : undefined,
-          bookingUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/${host.slug}`,
-        }).catch((err) => console.error("Error sending rejection email:", err));
+        // Dispatch durable rejection notification outside the DB transaction
+        await dispatchDurableBookingNotification(existing.id);
 
-        return NextResponse.json({ success: true, booking: transitionWon });
+        const updated = await db.query.bookings.findFirst({
+          where: eq(bookings.id, id),
+          with: { eventType: true },
+        });
+
+        return NextResponse.json({ success: true, booking: updated || transitionWon });
       }
 
       // Confirmed -> Cancelled (Cancellation Workflow)
@@ -262,7 +332,7 @@ export async function PATCH(
       );
     }
 
-    // 3. Action: Rescheduling / Updating Appointment Time with Full Buffer Recalculation
+    // 5. Action: Rescheduling / Updating Appointment Time with Full Buffer Recalculation
     if (body.startTime !== undefined) {
       if (existing.status === "cancelled" || existing.status === "rejected") {
         return NextResponse.json(
@@ -271,7 +341,7 @@ export async function PATCH(
         );
       }
 
-      const newStartTime = new Date(body.startTime);
+      const newStartTime = new Date(body.startTime as string);
       if (isNaN(newStartTime.getTime())) {
         return NextResponse.json({ error: "Invalid startTime date string." }, { status: 400 });
       }
@@ -426,11 +496,11 @@ export async function PATCH(
       }
     }
 
-    // 4. Action: Host Notes update
+    // 6. Action: Host Notes update
     if (body.hostNotes !== undefined) {
       const [updated] = await db
         .update(bookings)
-        .set({ hostNotes: body.hostNotes, updatedAt: new Date() })
+        .set({ hostNotes: body.hostNotes as string, updatedAt: new Date() })
         .where(eq(bookings.id, id))
         .returning();
 

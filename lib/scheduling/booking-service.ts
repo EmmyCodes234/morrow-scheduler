@@ -16,6 +16,7 @@ import {
   patchGoogleCalendarEventTime,
   generateGcalEventId,
   generateGcalConferenceRequestId,
+  isGoogleEventMatchingBooking,
 } from "@/lib/google-calendar";
 import { sendBookingConfirmationEmail } from "@/lib/email";
 import { resolveEffectiveLocation } from "./location";
@@ -273,8 +274,29 @@ export async function reconcileBookingCalendarSync(
     // 1. Check if the event already exists on Google Calendar (using targetEventId)
     const existingCheck = await getGoogleCalendarEvent(tokens, targetEventId);
 
+    // 1A. Existing active event found
     if (existingCheck.success && existingCheck.event && existingCheck.event.status !== "cancelled") {
-      // Event exists! Patch event with latest start/end time and details rather than inserting duplicate!
+      const isMatch = isGoogleEventMatchingBooking(existingCheck.event, booking);
+      if (!isMatch) {
+        await db
+          .update(bookings)
+          .set({
+            gcalEventId: targetEventId,
+            calendarSyncStatus: "failed",
+            lastSyncError: "Existing Google Calendar event does not belong to this booking.",
+            updatedAt: new Date(),
+          })
+          .where(eq(bookings.id, booking.id));
+
+        return {
+          success: false,
+          calendarSynced: false,
+          eventId: targetEventId,
+          error: "Existing Google Calendar event does not belong to this booking.",
+        };
+      }
+
+      // Event exists and belongs to this booking! Patch times and details
       const patchRes = await patchGoogleCalendarEventTime({
         tokens,
         eventId: targetEventId,
@@ -282,8 +304,31 @@ export async function reconcileBookingCalendarSync(
         endTime: booking.endTime,
         timeZone: host.timezone || "UTC",
         summary: `${eventType?.title || "Meeting"} with ${booking.guestName}`,
-        description: `Scheduled via Morrow\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
+        description: `Scheduled via Morrow (Booking ID: ${booking.id})\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
       });
+
+      // Crucial: check patch outcome
+      if (!patchRes.success) {
+        // Failed patch: preserve existing event ID and meet link, record failed status
+        await db
+          .update(bookings)
+          .set({
+            gcalEventId: targetEventId,
+            meetLink: booking.meetLink || null,
+            calendarSyncStatus: "failed",
+            lastSyncError: patchRes.error || "Failed to update Google Calendar event time",
+            updatedAt: new Date(),
+          })
+          .where(eq(bookings.id, booking.id));
+
+        return {
+          success: false,
+          calendarSynced: false,
+          eventId: targetEventId,
+          meetLink: booking.meetLink || undefined,
+          error: patchRes.error || "Failed to update Google Calendar event time",
+        };
+      }
 
       const existingMeet =
         existingCheck.event.hangoutLink ||
@@ -316,11 +361,98 @@ export async function reconcileBookingCalendarSync(
       };
     }
 
+    // 1B. Existing event is cancelled on Google Calendar
+    if (existingCheck.success && existingCheck.event && existingCheck.event.status === "cancelled") {
+      const isMatch = isGoogleEventMatchingBooking(existingCheck.event, booking);
+      if (!isMatch) {
+        await db
+          .update(bookings)
+          .set({
+            gcalEventId: targetEventId,
+            calendarSyncStatus: "failed",
+            lastSyncError: "Existing Google Calendar event is cancelled and does not match booking.",
+            updatedAt: new Date(),
+          })
+          .where(eq(bookings.id, booking.id));
+
+        return {
+          success: false,
+          calendarSynced: false,
+          eventId: targetEventId,
+          error: "Existing Google Calendar event is cancelled and does not match booking.",
+        };
+      }
+
+      // Attempt to restore the cancelled event
+      const restoreRes = await patchGoogleCalendarEventTime({
+        tokens,
+        eventId: targetEventId,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        timeZone: host.timezone || "UTC",
+        status: "confirmed",
+        summary: `${eventType?.title || "Meeting"} with ${booking.guestName}`,
+        description: `Scheduled via Morrow (Booking ID: ${booking.id})\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
+      });
+
+      if (!restoreRes.success) {
+        // Never accept a cancelled event as successfully synced if restore fails
+        await db
+          .update(bookings)
+          .set({
+            gcalEventId: targetEventId,
+            meetLink: booking.meetLink || null,
+            calendarSyncStatus: "failed",
+            lastSyncError: restoreRes.error || "Existing Google Calendar event is cancelled and could not be restored.",
+            updatedAt: new Date(),
+          })
+          .where(eq(bookings.id, booking.id));
+
+        return {
+          success: false,
+          calendarSynced: false,
+          eventId: targetEventId,
+          error: restoreRes.error || "Existing Google Calendar event is cancelled and could not be restored.",
+        };
+      }
+
+      const existingMeet =
+        existingCheck.event.hangoutLink ||
+        existingCheck.event.conferenceData?.entryPoints?.find(
+          (ep: { entryPointType?: string | null; uri?: string | null }) => ep.entryPointType === "video"
+        )?.uri ||
+        restoreRes.meetLink ||
+        meetLink;
+
+      if (location.locationType === "google_meet" && existingMeet) {
+        meetLink = existingMeet;
+      }
+
+      await db
+        .update(bookings)
+        .set({
+          gcalEventId: targetEventId,
+          meetLink: meetLink || booking.meetLink || null,
+          calendarSyncStatus: "synced",
+          lastSyncError: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.id, booking.id));
+
+      return {
+        success: true,
+        calendarSynced: true,
+        eventId: targetEventId,
+        meetLink,
+      };
+    }
+
     // 2. If get returned an error that wasn't 404/not-found (e.g. rate limit, auth error)
     if (!existingCheck.success && !existingCheck.notFound) {
       await db
         .update(bookings)
         .set({
+          gcalEventId: targetEventId,
           calendarSyncStatus: "failed",
           lastSyncError: existingCheck.error || "Failed to inspect existing Google Calendar event",
           updatedAt: new Date(),
@@ -330,6 +462,7 @@ export async function reconcileBookingCalendarSync(
       return {
         success: false,
         calendarSynced: false,
+        eventId: targetEventId,
         error: existingCheck.error,
       };
     }
@@ -338,7 +471,7 @@ export async function reconcileBookingCalendarSync(
     const gcalResult = await createGoogleCalendarEvent({
       tokens,
       summary: `${eventType?.title || "Meeting"} with ${booking.guestName}`,
-      description: `Scheduled via Morrow\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
+      description: `Scheduled via Morrow (Booking ID: ${booking.id})\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
       startTime: booking.startTime,
       endTime: booking.endTime,
       guestEmail: booking.guestEmail,
@@ -374,10 +507,38 @@ export async function reconcileBookingCalendarSync(
       };
     }
 
-    // If insertion failed because it already existed (e.g. race condition 409):
+    // 4. Duplicate recovery: If insertion returned 409 because event already exists
     if (gcalResult.isDuplicate) {
       const retryGet = await getGoogleCalendarEvent(tokens, stableEventId);
       if (retryGet.success && retryGet.event) {
+        // Verify that the event is active AND matches this booking
+        const isActive = retryGet.event.status !== "cancelled";
+        const isMatch = isGoogleEventMatchingBooking(retryGet.event, booking);
+
+        if (!isActive || !isMatch) {
+          const errorDetail = !isActive
+            ? "Google Calendar event already exists but is cancelled."
+            : "Google Calendar event identifier collision: existing event does not match booking.";
+
+          await db
+            .update(bookings)
+            .set({
+              gcalEventId: stableEventId,
+              calendarSyncStatus: "failed",
+              lastSyncError: errorDetail,
+              updatedAt: new Date(),
+            })
+            .where(eq(bookings.id, booking.id));
+
+          return {
+            success: false,
+            calendarSynced: false,
+            eventId: stableEventId,
+            error: errorDetail,
+          };
+        }
+
+        // Event is active and verified as belonging to this booking
         const recoveredMeet =
           retryGet.event.hangoutLink ||
           retryGet.event.conferenceData?.entryPoints?.find(
@@ -405,10 +566,11 @@ export async function reconcileBookingCalendarSync(
       }
     }
 
-    // Otherwise record failure, preserving booking and any previously assigned event ID
+    // 5. Otherwise record failure, preserving booking and any previously assigned event ID
     await db
       .update(bookings)
       .set({
+        gcalEventId: booking.gcalEventId || undefined,
         calendarSyncStatus: "failed",
         lastSyncError: gcalResult.error || "Google Calendar event creation failed",
         updatedAt: new Date(),
@@ -418,6 +580,7 @@ export async function reconcileBookingCalendarSync(
     return {
       success: false,
       calendarSynced: false,
+      eventId: booking.gcalEventId || undefined,
       error: gcalResult.error,
     };
   } catch (err) {
