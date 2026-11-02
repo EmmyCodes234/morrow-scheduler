@@ -11,7 +11,7 @@ const config: OpenNextConfig = {
       queue: "dummy",
     },
   },
-  edgeExternals: ["node:crypto"],
+  edgeExternals: ["node:crypto", "styled-jsx"],
   middleware: {
     external: true,
     override: {
