@@ -51,6 +51,7 @@ export function OnboardingView({
   const [duration, setDuration] = useState<number>(30);
   const [calendarConnected, setCalendarConnected] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
 
   // Working Hours State
   const [weekDays, setWeekDays] = useState([
@@ -576,9 +577,31 @@ export function OnboardingView({
                 variant="primary"
                 size="medium"
                 className="w-full justify-center"
-                onClick={onComplete}
+                disabled={isFinishing}
+                onClick={async () => {
+                  setIsFinishing(true);
+                  try {
+                    await fetch("/api/user/onboarding", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        slug,
+                        displayName,
+                        timezone,
+                        weekDays,
+                        eventTitle,
+                        duration,
+                      }),
+                    });
+                  } catch (err) {
+                    console.error("Failed to save onboarding data:", err);
+                  } finally {
+                    setIsFinishing(false);
+                    onComplete?.();
+                  }
+                }}
               >
-                Enter your dashboard
+                {isFinishing ? "Saving profile..." : "Enter your dashboard"}
               </Button>
             </div>
           </motion.div>

@@ -1,27 +1,95 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
-import { HugeVideo, HugeClock, HugeCheck } from "@/components/icons/hugeicons";
+import { Textarea } from "@/components/base/textarea/textarea";
+import { HugeVideo, HugeClock, HugeCheck, HugeDelete } from "@/components/icons/hugeicons";
+
+export interface EventFormData {
+  id?: string;
+  title: string;
+  duration: number;
+  slug: string;
+  description?: string;
+  location?: string;
+}
 
 export interface NewEventModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave?: (event: { title: string; duration: number; slug: string }) => void;
+  event?: EventFormData | null;
+  userSlug?: string;
+  defaultLocation?: string;
+  onSave?: (data: EventFormData) => Promise<void> | void;
+  onDelete?: (id: string) => Promise<void> | void;
 }
 
-export function NewEventModal({ isOpen, onClose, onSave }: NewEventModalProps) {
-  const [title, setTitle] = useState("30 Min Strategy Call");
-  const [duration, setDuration] = useState<number>(30);
-  const [slug, setSlug] = useState("30min");
+export function NewEventModal({
+  isOpen,
+  onClose,
+  event,
+  userSlug = "user",
+  defaultLocation = "Google Meet",
+  onSave,
+  onDelete,
+}: NewEventModalProps) {
+  const isEditing = Boolean(event?.id);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [title, setTitle] = useState(event?.title || "30 Min Strategy Call");
+  const [duration, setDuration] = useState<number>(event?.duration || 30);
+  const [slug, setSlug] = useState(event?.slug || "30min");
+  const [description, setDescription] = useState(event?.description || "");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    if (event) {
+      setTitle(event.title);
+      setDuration(event.duration);
+      setSlug(event.slug);
+      setDescription(event.description || "");
+    } else {
+      setTitle("30 Min Strategy Call");
+      setDuration(30);
+      setSlug("30min");
+      setDescription("");
+    }
+  }, [event, isOpen]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !slug) return;
-    onSave?.({ title, duration, slug });
-    onClose();
+    setIsSubmitting(true);
+    try {
+      await onSave?.({
+        id: event?.id,
+        title: title.trim(),
+        duration,
+        slug: slug.trim(),
+        description: description.trim(),
+      });
+      onClose();
+    } catch (err) {
+      console.error("Failed to save event type:", err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!event?.id) return;
+    if (!confirm("Are you sure you want to delete this event type? This will remove its public booking link.")) return;
+    setIsDeleting(true);
+    try {
+      await onDelete?.(event.id);
+      onClose();
+    } catch (err) {
+      console.error("Failed to delete event type:", err);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -29,8 +97,12 @@ export function NewEventModal({ isOpen, onClose, onSave }: NewEventModalProps) {
       {({ close }) => (
         <>
           <ModalHeader
-            title="Create event type"
-            description="Configure a new scheduling link for your profile."
+            title={isEditing ? "Edit event type" : "Create event type"}
+            description={
+              isEditing
+                ? "Update your meeting duration, title, and public booking link."
+                : "Configure a new scheduling link for your profile."
+            }
           />
 
           <ModalBody>
@@ -40,7 +112,9 @@ export function NewEventModal({ isOpen, onClose, onSave }: NewEventModalProps) {
                 value={title}
                 onChange={(val) => {
                   setTitle(val);
-                  setSlug(val.toLowerCase().replace(/[^a-z0-9]/g, "-"));
+                  if (!isEditing) {
+                    setSlug(val.toLowerCase().replace(/[^a-z0-9]/g, "-"));
+                  }
                 }}
                 placeholder="e.g. 30 Min Strategy Call"
                 isRequired
@@ -73,30 +147,66 @@ export function NewEventModal({ isOpen, onClose, onSave }: NewEventModalProps) {
                   Link slug
                 </span>
                 <div className="flex items-center rounded-xl border border-border-button-default bg-background-secondary-default px-3 py-2 text-body-medium text-text-secondary">
-                  <span className="text-text-tertiary select-none">usemorrow.xyz/alex/</span>
+                  <span className="text-text-tertiary select-none">usemorrow.xyz/{userSlug}/</span>
                   <input
                     type="text"
                     value={slug}
-                    onChange={(e) => setSlug(e.target.value)}
+                    onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
                     className="w-full bg-transparent text-text-primary outline-none font-medium ps-0.5"
+                    required
                   />
                 </div>
               </div>
 
+              <Textarea
+                label="Description (optional)"
+                value={description}
+                onChange={setDescription}
+                placeholder="Brief description shown to guests booking this call."
+                rows={2}
+              />
+
               <div className="flex items-center gap-2.5 p-3.5 rounded-xl border border-border-button-default bg-background-secondary-default text-body-medium text-text-secondary">
                 <HugeVideo className="size-4 shrink-0 text-accent-500" />
-                <span>Location: Google Meet (link added automatically)</span>
+                <span>Location: {defaultLocation} (link added automatically)</span>
               </div>
             </form>
           </ModalBody>
 
           <ModalFooter>
-            <Button variant="secondary" onClick={close}>
-              Cancel
-            </Button>
-            <Button type="submit" form="new-event-form" variant="primary">
-              Save event type
-            </Button>
+            <div className="w-full flex items-center justify-between">
+              {isEditing && onDelete ? (
+                <Button
+                  variant="destructive"
+                  size="small"
+                  disabled={isDeleting}
+                  onClick={handleDelete}
+                  leadingIcon={HugeDelete}
+                >
+                  {isDeleting ? "Deleting..." : "Delete"}
+                </Button>
+              ) : (
+                <div />
+              )}
+
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={close} disabled={isSubmitting || isDeleting}>
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  form="new-event-form"
+                  variant="primary"
+                  disabled={isSubmitting || isDeleting}
+                >
+                  {isSubmitting
+                    ? "Saving..."
+                    : isEditing
+                    ? "Save changes"
+                    : "Create event type"}
+                </Button>
+              </div>
+            </div>
           </ModalFooter>
         </>
       )}

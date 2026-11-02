@@ -16,8 +16,8 @@ export interface RescheduleModalProps {
     date: string;
     time: string;
   } | null;
-  onConfirmReschedule?: (id: string, reason: string) => void;
-  onConfirmCancel?: (id: string) => void;
+  onConfirmReschedule?: (id: string, reason: string) => Promise<void> | void;
+  onConfirmCancel?: (id: string) => Promise<void> | void;
 }
 
 export function RescheduleModal({
@@ -29,6 +29,7 @@ export function RescheduleModal({
 }: RescheduleModalProps) {
   const [mode, setMode] = useState<"choose" | "cancelConfirm">("choose");
   const [reason, setReason] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
 
   if (!booking) return null;
 
@@ -40,7 +41,7 @@ export function RescheduleModal({
             title={mode === "cancelConfirm" ? "Cancel meeting" : "Manage booking"}
             description={
               mode === "cancelConfirm"
-                ? "This will cancel the meeting and notify the guest."
+                ? "This will cancel the meeting and update your schedule."
                 : `Booking with ${booking.guestName}`
             }
           />
@@ -71,12 +72,12 @@ export function RescheduleModal({
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     placeholder="e.g. Schedule conflict"
-                    className="w-full rounded-xl border border-border-button-default bg-background-secondary-default px-3 py-2 text-body-medium text-text-primary outline-none focus:border-accent-500"
+                    className="w-full rounded-xl border border-border-button-default bg-background-secondary-default px-3 py-2 text-body-medium text-text-primary outline-none focus:ring-2 focus:ring-border-focus-ring"
                   />
                 </div>
               ) : (
                 <p className="text-body-regular text-text-secondary">
-                  Would you like to send a reschedule link to {booking.guestName} or cancel this event?
+                  Would you like to cancel this scheduled meeting?
                 </p>
               )}
             </div>
@@ -85,39 +86,37 @@ export function RescheduleModal({
           <ModalFooter>
             {mode === "cancelConfirm" ? (
               <>
-                <Button variant="secondary" onClick={() => setMode("choose")}>
+                <Button variant="secondary" onClick={() => setMode("choose")} disabled={isProcessing}>
                   Back
                 </Button>
                 <Button
-                  variant="danger"
-                  onClick={() => {
-                    onConfirmCancel?.(booking.id);
-                    setMode("choose");
-                    close();
+                  variant="destructive"
+                  disabled={isProcessing}
+                  onClick={async () => {
+                    setIsProcessing(true);
+                    try {
+                      await onConfirmCancel?.(booking.id);
+                      setMode("choose");
+                      close();
+                    } finally {
+                      setIsProcessing(false);
+                    }
                   }}
                 >
-                  Confirm cancellation
+                  {isProcessing ? "Cancelling..." : "Confirm cancellation"}
                 </Button>
               </>
             ) : (
               <>
-                <Button variant="secondary" onClick={close}>
+                <Button variant="secondary" onClick={close} disabled={isProcessing}>
                   Keep meeting
                 </Button>
                 <Button
-                  variant="secondary"
+                  variant="destructive"
+                  disabled={isProcessing}
                   onClick={() => setMode("cancelConfirm")}
                 >
                   Cancel event
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    onConfirmReschedule?.(booking.id, "Reschedule requested");
-                    close();
-                  }}
-                >
-                  Send reschedule link
                 </Button>
               </>
             )}

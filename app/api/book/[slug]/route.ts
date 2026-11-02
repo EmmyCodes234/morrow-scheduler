@@ -98,27 +98,66 @@ export async function POST(
       })
       .returning();
 
-    // 5. Create Google Calendar event with auto Google Meet link
+    // 5. Create Calendar event and resolve video conference link (Google Meet or Zoom)
     let meetLink: string | undefined = undefined;
     let gcalEventId: string | undefined = undefined;
 
-    if (host.googleAccessToken || host.googleRefreshToken) {
-      const gcalResult = await createGoogleMeetEvent({
-        tokens: {
-          accessToken: host.googleAccessToken,
-          refreshToken: host.googleRefreshToken,
-        },
-        summary: `${targetEventType.title} with ${guestName}`,
-        description: `Scheduled via Morrow\n\nGuest: ${guestName} (${guestEmail})\nNotes: ${guestNotes || "None"}`,
-        startTime,
-        endTime,
-        guestEmail,
-        guestName,
-        timeZone: host.timezone,
-      });
+    const isZoom = host.defaultLocationType === "zoom" && Boolean(host.zoomMeetingUrl);
 
-      meetLink = gcalResult.meetLink;
-      gcalEventId = gcalResult.eventId;
+    if (isZoom) {
+      meetLink = host.zoomMeetingUrl!;
+    }
+
+    if (host.googleAccessToken || host.googleRefreshToken) {
+      try {
+        if (isZoom) {
+          // Calendar event with host's Zoom room link
+          const { google } = require("googleapis");
+          const oauth2Client = new google.auth.OAuth2(
+            process.env.GOOGLE_CLIENT_ID,
+            process.env.GOOGLE_CLIENT_SECRET
+          );
+          oauth2Client.setCredentials({
+            access_token: host.googleAccessToken || undefined,
+            refresh_token: host.googleRefreshToken || undefined,
+          });
+
+          const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+          const eventResponse = await calendar.events.insert({
+            calendarId: "primary",
+            sendUpdates: "all",
+            requestBody: {
+              summary: `${targetEventType.title} with ${guestName}`,
+              description: `Scheduled via Morrow\n\nZoom Link: ${meetLink}\nGuest: ${guestName} (${guestEmail})\nNotes: ${guestNotes || "None"}`,
+              location: meetLink,
+              start: { dateTime: startTime.toISOString(), timeZone: host.timezone || "UTC" },
+              end: { dateTime: endTime.toISOString(), timeZone: host.timezone || "UTC" },
+              attendees: [{ email: guestEmail, displayName: guestName }],
+            },
+          });
+          gcalEventId = eventResponse.data.id || undefined;
+        } else {
+          // Default: Generate dynamic Google Meet conference
+          const gcalResult = await createGoogleMeetEvent({
+            tokens: {
+              accessToken: host.googleAccessToken,
+              refreshToken: host.googleRefreshToken,
+            },
+            summary: `${targetEventType.title} with ${guestName}`,
+            description: `Scheduled via Morrow\n\nGuest: ${guestName} (${guestEmail})\nNotes: ${guestNotes || "None"}`,
+            startTime,
+            endTime,
+            guestEmail,
+            guestName,
+            timeZone: host.timezone,
+          });
+
+          meetLink = gcalResult.meetLink;
+          gcalEventId = gcalResult.eventId;
+        }
+      } catch (gcalErr) {
+        console.error("Error creating Google Calendar event:", gcalErr);
+      }
 
       if (meetLink || gcalEventId) {
         await db
@@ -126,6 +165,11 @@ export async function POST(
           .set({ meetLink, gcalEventId })
           .where(eq(bookings.id, newBooking.id));
       }
+    } else if (isZoom) {
+      await db
+        .update(bookings)
+        .set({ meetLink })
+        .where(eq(bookings.id, newBooking.id));
     }
 
     // 6. Upsert guest into Contacts

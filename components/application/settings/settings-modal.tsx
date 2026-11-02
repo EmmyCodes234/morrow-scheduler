@@ -25,6 +25,7 @@ import { SwitchCard } from "@/components/base/switch/switch-card";
 import { Avatar } from "@/components/base/avatar/avatar";
 import { Badge } from "@/components/base/badges/badge";
 import { Chip } from "@/components/base/badges/chip";
+import { signIn } from "next-auth/react";
 import { cx } from "@/utils/cx";
 import {
   SettingsCard,
@@ -126,6 +127,7 @@ export function SettingsModal({
   // Saved toast state
   const [savedPhase, setSavedPhase] = useState<"hidden" | "shown" | "leaving">("hidden");
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showSavedToast = () => {
     if (savedTimer.current) clearTimeout(savedTimer.current);
@@ -134,6 +136,22 @@ export function SettingsModal({
       setSavedPhase("leaving");
       savedTimer.current = setTimeout(() => setSavedPhase("hidden"), 220);
     }, 2000);
+  };
+
+  const persistSettings = (patch: Record<string, any>) => {
+    showSavedToast();
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await fetch("/api/user/me", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+      } catch (err) {
+        console.error("Failed to auto-persist settings:", err);
+      }
+    }, 350);
   };
 
   useEffect(() => {
@@ -176,7 +194,7 @@ export function SettingsModal({
   const handleColorChange = (hex: string) => {
     setBrandColor(hex);
     setCustomHex(hex);
-    showSavedToast();
+    persistSettings({ brandColor: hex });
   };
 
   return createPortal(
@@ -295,7 +313,7 @@ export function SettingsModal({
                       <label className="text-body-medium font-medium text-text-primary">Full Name</label>
                       <Input
                         value={name}
-                        onChange={(val) => { setName(val); showSavedToast(); }}
+                        onChange={(val) => { setName(val); persistSettings({ name: val }); }}
                         placeholder="Your full name"
                       />
                     </div>
@@ -308,7 +326,7 @@ export function SettingsModal({
                         </span>
                         <Input
                           value={slug}
-                          onChange={(val) => { setSlug(val); showSavedToast(); }}
+                          onChange={(val) => { setSlug(val); persistSettings({ slug: val }); }}
                           placeholder="username"
                           className="flex-1"
                         />
@@ -319,7 +337,7 @@ export function SettingsModal({
                       <label className="text-body-medium font-medium text-text-primary">Account Email</label>
                       <Input
                         value={email}
-                        onChange={(val) => { setEmail(val); showSavedToast(); }}
+                        disabled
                         placeholder="you@domain.com"
                       />
                     </div>
@@ -328,7 +346,7 @@ export function SettingsModal({
                       <label className="text-body-medium font-medium text-text-primary">Primary Timezone</label>
                       <select
                         value={timezone}
-                        onChange={(e) => { setTimezone(e.target.value); showSavedToast(); }}
+                        onChange={(e) => { setTimezone(e.target.value); persistSettings({ timezone: e.target.value }); }}
                         aria-label="Primary Timezone"
                         className="w-full px-3 py-2.5 rounded-xl border border-border-button-default bg-background-primary-default text-body-medium text-text-primary outline-none focus:ring-2 focus:ring-border-focus-ring cursor-pointer"
                       >
@@ -357,7 +375,7 @@ export function SettingsModal({
                       <label className="text-body-medium font-medium text-text-primary">Welcome Message</label>
                       <Textarea
                         value={welcomeMessage}
-                        onChange={(val) => { setWelcomeMessage(val); showSavedToast(); }}
+                        onChange={(val) => { setWelcomeMessage(val); persistSettings({ welcomeMessage: val }); }}
                         placeholder="Pick a time that works for you."
                         rows={3}
                       />
@@ -400,7 +418,7 @@ export function SettingsModal({
                               setCustomHex(val);
                               if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
                                 setBrandColor(val);
-                                showSavedToast();
+                                persistSettings({ brandColor: val });
                               }
                             }}
                             className="w-28 font-mono"
@@ -458,7 +476,7 @@ export function SettingsModal({
                     </label>
                     <select
                       value={bufferTime}
-                      onChange={(e) => { setBufferTime(e.target.value); showSavedToast(); }}
+                      onChange={(e) => { setBufferTime(e.target.value); persistSettings({ bufferMins: Number(e.target.value) }); }}
                       aria-label="Buffer time before & after calls"
                       className="w-full px-3 py-2.5 rounded-xl border border-border-button-default bg-background-primary-default text-body-medium text-text-primary outline-none cursor-pointer"
                     >
@@ -479,7 +497,7 @@ export function SettingsModal({
                     </label>
                     <select
                       value={minNotice}
-                      onChange={(e) => { setMinNotice(e.target.value); showSavedToast(); }}
+                      onChange={(e) => { setMinNotice(e.target.value); persistSettings({ minNoticeHours: Number(e.target.value) }); }}
                       aria-label="Minimum notice period"
                       className="w-full px-3 py-2.5 rounded-xl border border-border-button-default bg-background-primary-default text-body-medium text-text-primary outline-none cursor-pointer"
                     >
@@ -499,7 +517,7 @@ export function SettingsModal({
                     </label>
                     <select
                       value={maxWindow}
-                      onChange={(e) => { setMaxWindow(e.target.value); showSavedToast(); }}
+                      onChange={(e) => { setMaxWindow(e.target.value); persistSettings({ maxBookingDays: Number(e.target.value) }); }}
                       aria-label="Future booking window"
                       className="w-full px-3 py-2.5 rounded-xl border border-border-button-default bg-background-primary-default text-body-medium text-text-primary outline-none cursor-pointer"
                     >
@@ -535,8 +553,14 @@ export function SettingsModal({
                       </div>
                     </div>
 
-                    <Button variant="secondary" size="xs">
-                      Re-auth
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => {
+                        signIn("google", { callbackUrl: "/dashboard", redirectTo: "/dashboard" });
+                      }}
+                    >
+                      Re-authenticate
                     </Button>
                   </div>
 
