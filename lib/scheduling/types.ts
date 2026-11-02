@@ -34,7 +34,7 @@ export interface EventTypeConfig {
   slug: string;
   durationMins: number;
   description?: string | null;
-  locationType: string; // "google_meet" | "zoom" | "in_person" | "phone" | "custom"
+  locationType?: string | null; // "google_meet" | "zoom" | "in_person" | "phone" | "custom" | null
   locationUrl?: string | null;
   isActive: boolean;
   bufferBeforeMins: number;

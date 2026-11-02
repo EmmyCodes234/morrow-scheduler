@@ -52,7 +52,7 @@ export const eventTypes = pgTable(
     slug: text("slug").notNull(),
     durationMins: integer("duration_mins").notNull().default(30),
     description: text("description"),
-    locationType: text("location_type").notNull().default("google_meet"),
+    locationType: text("location_type"), // Nullable to inherit from user.defaultLocationType
     locationUrl: text("location_url"),
     color: text("color").default("blue"),
     isActive: boolean("is_active").notNull().default(true),
@@ -136,6 +136,7 @@ export const bookings = pgTable(
     idempotencyKey: text("idempotency_key"),
     requestHash: text("request_hash"),
     calendarSyncStatus: text("calendar_sync_status").notNull().default("not_applicable"),
+    lastSyncError: text("last_sync_error"),
     customAnswers: jsonb("custom_answers").$type<Record<string, unknown>>().default({}),
     cancelToken: text("cancel_token").notNull().unique(),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),

@@ -1,6 +1,8 @@
 import {
   buildGuestConfirmationEmail,
   buildHostBookingNotificationEmail,
+  buildGuestApprovalEmail,
+  buildGuestRejectionEmail,
   buildOtpEmail,
 } from "./email-templates";
 
@@ -81,6 +83,95 @@ export async function sendBookingConfirmationEmail(payload: BookingEmailPayload)
     return true;
   } catch (err) {
     console.error("[Email] Failed to send confirmation email:", err);
+    return false;
+  }
+}
+
+export async function sendBookingApprovalEmail(payload: BookingEmailPayload): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
+    console.log("[Email] Resend API key not configured, skipping approval email:", payload.toEmail);
+    return false;
+  }
+
+  const html = buildGuestApprovalEmail({
+    guestName: payload.guestName,
+    hostName: payload.hostName,
+    eventTitle: payload.eventTitle,
+    dateStr: payload.dateStr,
+    timeStr: payload.timeStr,
+    durationMins: payload.durationMins,
+    calendarSynced: payload.calendarSynced,
+    locationType: payload.locationType,
+    locationUrl: payload.locationUrl,
+    meetLink: payload.meetLink,
+    cancelUrl: payload.cancelUrl,
+  });
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "Morrow <notifications@usemorrow.xyz>",
+        to: [payload.toEmail],
+        subject: `Approved: ${payload.eventTitle} with ${payload.hostName}`,
+        html,
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("[Email] Failed to send approval email:", err);
+    return false;
+  }
+}
+
+export async function sendBookingRejectionEmail(payload: {
+  toEmail: string;
+  guestName: string;
+  hostName: string;
+  eventTitle: string;
+  dateStr: string;
+  timeStr: string;
+  reason?: string;
+  bookingUrl?: string;
+}): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
+    console.log("[Email] Resend API key not configured, skipping rejection email:", payload.toEmail);
+    return false;
+  }
+
+  const html = buildGuestRejectionEmail({
+    guestName: payload.guestName,
+    hostName: payload.hostName,
+    eventTitle: payload.eventTitle,
+    dateStr: payload.dateStr,
+    timeStr: payload.timeStr,
+    reason: payload.reason,
+    bookingUrl: payload.bookingUrl,
+  });
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "Morrow <notifications@usemorrow.xyz>",
+        to: [payload.toEmail],
+        subject: `Declined: ${payload.eventTitle} with ${payload.hostName}`,
+        html,
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("[Email] Failed to send rejection email:", err);
     return false;
   }
 }

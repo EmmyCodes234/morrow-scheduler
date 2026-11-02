@@ -423,3 +423,138 @@ export function buildOtpEmail(data: {
     contentHtml: content,
   });
 }
+
+
+/**
+ * Guest Booking Approval Notification Email
+ */
+export function buildGuestApprovalEmail(data: {
+  guestName: string;
+  hostName: string;
+  eventTitle: string;
+  dateStr: string;
+  timeStr: string;
+  durationMins: number;
+  calendarSynced?: boolean;
+  locationType?: string;
+  locationUrl?: string;
+  meetLink?: string;
+  cancelUrl?: string;
+}): string {
+  const locationInfo = resolveLocationDisplay({
+    locationType: data.locationType,
+    locationUrl: data.locationUrl,
+    meetLink: data.meetLink,
+  });
+
+  const content = `
+    <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px; margin-bottom: 20px;">
+      <div style="margin-bottom: 14px;">
+        <span style="font-size: 16px; font-weight: 700; color: #0F172A;">${data.eventTitle}</span>
+        <span style="display: inline-block; background-color: #EFF6FF; color: #1D4ED8; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 9999px; margin-left: 6px;">
+          ${data.durationMins} mins
+        </span>
+      </div>
+
+      <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; color: #334155; line-height: 1.7;">
+        <tr>
+          <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📅</td>
+          <td style="padding-bottom: 6px;">
+            <strong style="color: #0F172A;">When:</strong> ${data.dateStr} at ${data.timeStr}
+          </td>
+        </tr>
+        <tr>
+          <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">👤</td>
+          <td style="padding-bottom: 6px;">
+            <strong style="color: #0F172A;">Host:</strong> ${data.hostName}
+          </td>
+        </tr>
+        ${locationInfo ? `
+          <tr>
+            <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📍</td>
+            <td style="padding-bottom: 6px;">
+              <strong style="color: #0F172A;">${locationInfo.label}:</strong> ${locationInfo.detail}
+            </td>
+          </tr>
+        ` : ""}
+      </table>
+    </div>
+  `;
+
+  const calendarSubtext = data.calendarSynced
+    ? `A calendar invitation has been sent to your email and added to your calendar.`
+    : `Please mark your calendar for the scheduled time.`;
+
+  return renderBoardUIEmailLayout({
+    previewText: `Approved: ${data.eventTitle} with ${data.hostName}`,
+    badgeText: "Confirmed",
+    badgeVariant: "lime",
+    headline: "Your booking is approved!",
+    subheadline: `Hi ${data.guestName}, ${data.hostName} has approved your booking request. ${calendarSubtext}`,
+    contentHtml: content,
+    primaryCta: locationInfo?.ctaUrl ? {
+      label: `Join ${locationInfo.label}`,
+      url: locationInfo.ctaUrl,
+    } : undefined,
+    footerLinks: data.cancelUrl ? [
+      { label: "Reschedule or Cancel", url: data.cancelUrl },
+    ] : undefined,
+  });
+}
+
+/**
+ * Guest Booking Rejection Notification Email
+ */
+export function buildGuestRejectionEmail(data: {
+  guestName: string;
+  hostName: string;
+  eventTitle: string;
+  dateStr: string;
+  timeStr: string;
+  reason?: string;
+  bookingUrl?: string;
+}): string {
+  const content = `
+    <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px; margin-bottom: 20px;">
+      <div style="margin-bottom: 14px;">
+        <span style="font-size: 16px; font-weight: 700; color: #0F172A;">${data.eventTitle}</span>
+      </div>
+
+      <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; color: #334155; line-height: 1.7;">
+        <tr>
+          <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📅</td>
+          <td style="padding-bottom: 6px;">
+            <strong style="color: #0F172A;">Requested Time:</strong> ${data.dateStr} at ${data.timeStr}
+          </td>
+        </tr>
+        <tr>
+          <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">👤</td>
+          <td style="padding-bottom: 6px;">
+            <strong style="color: #0F172A;">Host:</strong> ${data.hostName}
+          </td>
+        </tr>
+        ${data.reason ? `
+          <tr>
+            <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📝</td>
+            <td style="padding-bottom: 6px;">
+              <strong style="color: #0F172A;">Reason:</strong> ${data.reason}
+            </td>
+          </tr>
+        ` : ""}
+      </table>
+    </div>
+  `;
+
+  return renderBoardUIEmailLayout({
+    previewText: `Declined: ${data.eventTitle} with ${data.hostName}`,
+    badgeText: "Declined",
+    badgeVariant: "destructive",
+    headline: "Booking Request Declined",
+    subheadline: `Hi ${data.guestName}, unfortunately ${data.hostName} was unable to accept your booking request for ${data.eventTitle}.`,
+    contentHtml: content,
+    primaryCta: data.bookingUrl ? {
+      label: "Choose Another Time",
+      url: data.bookingUrl,
+    } : undefined,
+  });
+}

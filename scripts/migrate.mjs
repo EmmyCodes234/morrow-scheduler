@@ -28,7 +28,33 @@ async function runMigrations() {
   const appliedRows = await sql`SELECT hash, created_at FROM "__drizzle_migrations"`;
   const appliedHashes = new Set(appliedRows.map((r) => r.hash));
 
-  // 2. Read journal
+  // 2. Safe Baseline Adoption for Pre-existing Databases:
+  // If no migrations are recorded yet, check if the original baseline schema already exists
+  if (appliedHashes.size === 0) {
+    const existingTables = await sql`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+        AND table_name IN ('users', 'bookings', 'event_types')
+    `;
+
+    if (existingTables.length === 3) {
+      console.log(
+        "[i] Detected existing pre-migration database with original Morrow schema (users, bookings, event_types)."
+      );
+      console.log(
+        "[i] Safely adopting 0000_massive_songbird as existing baseline without re-running destructive table creation."
+      );
+
+      await sql`
+        INSERT INTO "__drizzle_migrations" (hash, created_at)
+        VALUES ('0000_massive_songbird', ${Date.now()})
+      `;
+      appliedHashes.add("0000_massive_songbird");
+    }
+  }
+
+  // 3. Read journal
   const journalPath = path.resolve(import.meta.dirname, "../drizzle/meta/_journal.json");
   if (!fs.existsSync(journalPath)) {
     console.error("Migration journal not found at:", journalPath);
@@ -63,16 +89,24 @@ async function runMigrations() {
       try {
         await sql.query(stmt);
       } catch (err) {
-        // If 0000 baseline table creation encounters existing table, continue gracefully
-        const errMsg = String(err);
-        if (
-          tag.startsWith("0000") &&
-          (errMsg.includes("already exists") || errMsg.includes("duplicate key"))
-        ) {
-          console.log(`    Note: baseline object already exists in database (skipping).`);
+        // Distinguish genuinely existing baseline objects from missing columns, invalid constraints, or permissions
+        const errObj = err || {};
+        const sqlCode = errObj.code || (errObj.cause && errObj.cause.code);
+
+        // PostgreSQL error codes:
+        // 42P07: duplicate_table / duplicate_relation
+        // 42710: duplicate_object
+        const isDuplicateObject = sqlCode === "42P07" || sqlCode === "42710";
+
+        if (tag.startsWith("0000") && isDuplicateObject) {
+          console.log(`    Note: baseline object already exists (SQLSTATE ${sqlCode}), skipping duplicate statement #${i + 1}.`);
           continue;
         }
-        console.error(`Error executing statement #${i + 1} in ${tag}:`, err);
+
+        console.error(`\n[FATAL] Migration failed at statement #${i + 1} of ${tag}:`);
+        console.error(`Statement: ${stmt.slice(0, 150)}...`);
+        console.error(`Error Code: ${sqlCode || "UNKNOWN"}`);
+        console.error(`Error Message: ${errObj.message || String(err)}\n`);
         throw err;
       }
     }
