@@ -48,6 +48,9 @@ describeIntegration("Real PostgreSQL Concurrency & GiST Exclusion Constraints", 
     if (process.env.NODE_ENV === "production") {
       throw new Error("Refusing to run destructive concurrency integration tests in production environment!");
     }
+    if (testDbUrl === process.env.DATABASE_URL) {
+      throw new Error("Refusing to run tests: TEST_DATABASE_URL cannot be the same as DATABASE_URL (production database)!");
+    }
 
     rawSql = neon(testDbUrl!);
     testDb = drizzle(rawSql, { schema });

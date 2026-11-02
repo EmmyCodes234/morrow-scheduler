@@ -78,21 +78,47 @@ export async function PATCH(
         }
         if (existing.status !== "pending") {
           return NextResponse.json(
-            { error: `Cannot approve booking in '${existing.status}' status (only pending bookings can be approved).` },
-            { status: 400 }
+            { error: `Cannot approve booking in '${existing.status}' status (only pending bookings can be approved).`, errorCode: "CONFLICT" },
+            { status: 409 }
           );
         }
 
-        // Transition to confirmed
-        await db
+        // Conditional atomic update: only transitions if status is STILL 'pending'
+        const [transitionWon] = await db
           .update(bookings)
           .set({
             status: "confirmed",
             updatedAt: new Date(),
           })
-          .where(eq(bookings.id, id));
+          .where(
+            and(
+              eq(bookings.id, id),
+              eq(bookings.hostId, host.id),
+              eq(bookings.status, "pending")
+            )
+          )
+          .returning();
 
-        // Synchronize with external calendar
+        if (!transitionWon) {
+          // Lost race to a concurrent request. Fetch fresh record.
+          const fresh = await db.query.bookings.findFirst({
+            where: and(eq(bookings.id, id), eq(bookings.hostId, host.id)),
+            with: { eventType: true },
+          });
+          if (!fresh) {
+            return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+          }
+          if (fresh.status === "confirmed") {
+            // Idempotent: another concurrent approval won
+            return NextResponse.json({ success: true, booking: fresh });
+          }
+          return NextResponse.json(
+            { error: `Cannot approve booking: current status is '${fresh.status}'.`, errorCode: "CONFLICT" },
+            { status: 409 }
+          );
+        }
+
+        // Synchronize with external calendar only once for winning transition
         await reconcileBookingCalendarSync(existing.id, host.id);
 
         const updated = await db.query.bookings.findFirst({
@@ -133,22 +159,45 @@ export async function PATCH(
         }
         if (existing.status !== "pending") {
           return NextResponse.json(
-            { error: `Cannot reject booking in '${existing.status}' status (only pending bookings can be rejected).` },
-            { status: 400 }
+            { error: `Cannot reject booking in '${existing.status}' status (only pending bookings can be rejected).`, errorCode: "CONFLICT" },
+            { status: 409 }
           );
         }
 
-        // Updating to 'rejected' releases the reserved slot in the exclusion constraint
-        const [updated] = await db
+        // Conditional atomic update: only transitions if status is STILL 'pending'
+        const [transitionWon] = await db
           .update(bookings)
           .set({
             status: "rejected",
             updatedAt: new Date(),
           })
-          .where(eq(bookings.id, id))
+          .where(
+            and(
+              eq(bookings.id, id),
+              eq(bookings.hostId, host.id),
+              eq(bookings.status, "pending")
+            )
+          )
           .returning();
 
-        // Notify guest of rejection
+        if (!transitionWon) {
+          const fresh = await db.query.bookings.findFirst({
+            where: and(eq(bookings.id, id), eq(bookings.hostId, host.id)),
+            with: { eventType: true },
+          });
+          if (!fresh) {
+            return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+          }
+          if (fresh.status === "rejected") {
+            return NextResponse.json({ success: true, booking: fresh });
+          }
+          return NextResponse.json(
+            { error: `Cannot reject booking: current status is '${fresh.status}'.`, errorCode: "CONFLICT" },
+            { status: 409 }
+          );
+        }
+
+        // Notify guest of rejection only once for winning transition
         sendBookingRejectionEmail({
           toEmail: existing.guestEmail,
           guestName: existing.guestName,
@@ -160,7 +209,7 @@ export async function PATCH(
           bookingUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/${host.slug}`,
         }).catch((err) => console.error("Error sending rejection email:", err));
 
-        return NextResponse.json({ success: true, booking: updated });
+        return NextResponse.json({ success: true, booking: transitionWon });
       }
 
       // Confirmed -> Cancelled (Cancellation Workflow)
@@ -354,12 +403,17 @@ export async function PATCH(
           .where(eq(bookings.id, id))
           .returning();
 
-        // If calendar was synced, reconcile with updated time
-        if (existing.calendarSyncStatus === "synced" && existing.status === "confirmed") {
+        // If booking is confirmed and host has calendar tokens, update external Google Calendar event
+        if (existing.status === "confirmed" && (host.googleAccessToken || host.googleRefreshToken)) {
           await reconcileBookingCalendarSync(existing.id, host.id);
         }
 
-        return NextResponse.json({ success: true, booking: updated });
+        const freshRecord = await db.query.bookings.findFirst({
+          where: eq(bookings.id, id),
+          with: { eventType: true },
+        });
+
+        return NextResponse.json({ success: true, booking: freshRecord || updated });
       } catch (dbErr: unknown) {
         const errStr = String(dbErr);
         if (errStr.includes("23P01") || errStr.includes("bookings_host_no_overlap")) {

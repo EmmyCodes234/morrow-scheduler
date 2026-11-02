@@ -31,16 +31,82 @@ async function runMigrations() {
   // 2. Safe Baseline Adoption for Pre-existing Databases:
   // If no migrations are recorded yet, check if the original baseline schema already exists
   if (appliedHashes.size === 0) {
-    const existingTables = await sql`
+    const requiredTables = [
+      "availability",
+      "availability_overrides",
+      "bookings",
+      "contacts",
+      "event_types",
+      "users",
+      "verification_tokens",
+    ];
+
+    const existingTablesResult = await sql`
       SELECT table_name 
       FROM information_schema.tables 
       WHERE table_schema = 'public' 
-        AND table_name IN ('users', 'bookings', 'event_types')
+        AND table_name = ANY(${requiredTables})
     `;
+    const foundTables = new Set(existingTablesResult.map((r) => r.table_name));
 
-    if (existingTables.length === 3) {
+    if (foundTables.size === 0) {
+      console.log("[i] Fresh database detected (no baseline tables found). Running migrations from scratch.");
+    } else {
+      // Pre-existing database detected. Check if complete baseline is present.
+      const missingTables = requiredTables.filter((t) => !foundTables.has(t));
+      if (missingTables.length > 0) {
+        console.error(`\n[FATAL] Incomplete baseline schema detected.`);
+        console.error(`Found tables: ${Array.from(foundTables).join(", ")}`);
+        console.error(`Missing required baseline tables: ${missingTables.join(", ")}`);
+        console.error(`Cannot adopt baseline safely. Please inspect the database.\n`);
+        process.exit(1);
+      }
+
+      // Check essential required columns on key baseline tables
+      const requiredColumns = {
+        users: ["id", "email", "timezone"],
+        bookings: ["id", "host_id", "event_type_id", "start_time", "end_time", "status", "guest_email"],
+        event_types: ["id", "user_id", "title", "slug", "duration_mins"],
+        availability: ["id", "user_id", "day_of_week", "start_time", "end_time"],
+        availability_overrides: ["id", "user_id", "date", "is_blocked"],
+        contacts: ["id", "user_id", "email"],
+        verification_tokens: ["identifier", "token", "expires"],
+      };
+
+      const columnsResult = await sql`
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = ANY(${requiredTables})
+      `;
+
+      const foundColumnsByTable = new Map();
+      for (const row of columnsResult) {
+        if (!foundColumnsByTable.has(row.table_name)) {
+          foundColumnsByTable.set(row.table_name, new Set());
+        }
+        foundColumnsByTable.get(row.table_name).add(row.column_name);
+      }
+
+      const columnDiscrepancies = [];
+      for (const [table, expectedCols] of Object.entries(requiredColumns)) {
+        const tableCols = foundColumnsByTable.get(table) || new Set();
+        for (const col of expectedCols) {
+          if (!tableCols.has(col)) {
+            columnDiscrepancies.push(`${table}.${col}`);
+          }
+        }
+      }
+
+      if (columnDiscrepancies.length > 0) {
+        console.error(`\n[FATAL] Incompatible baseline schema detected.`);
+        console.error(`Missing required baseline columns: ${columnDiscrepancies.join(", ")}`);
+        console.error(`Cannot adopt baseline safely. Please inspect the database.\n`);
+        process.exit(1);
+      }
+
       console.log(
-        "[i] Detected existing pre-migration database with original Morrow schema (users, bookings, event_types)."
+        "[i] Detected complete, compatible pre-migration database with all 7 required baseline tables and verified columns."
       );
       console.log(
         "[i] Safely adopting 0000_massive_songbird as existing baseline without re-running destructive table creation."

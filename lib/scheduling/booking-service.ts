@@ -12,6 +12,10 @@ import {
 import {
   fetchGoogleBusyBlocks,
   createGoogleCalendarEvent,
+  getGoogleCalendarEvent,
+  patchGoogleCalendarEventTime,
+  generateGcalEventId,
+  generateGcalConferenceRequestId,
 } from "@/lib/google-calendar";
 import { sendBookingConfirmationEmail } from "@/lib/email";
 import { resolveEffectiveLocation } from "./location";
@@ -100,10 +104,10 @@ export function computeBookingFingerprint(input: {
  * Validates syntax, types, and required fields before any business logic or string operations run.
  */
 export function validateBookingInputSyntax(input: unknown): { isValid: boolean; error?: string } {
-  if (!input || typeof input !== "object") {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { isValid: false, error: "Invalid booking request payload." };
   }
-  const req = input as Partial<BookingRequestInput>;
+  const req = input as Record<string, unknown>;
 
   if (typeof req.eventTypeId !== "string" || !req.eventTypeId.trim()) {
     return { isValid: false, error: "eventTypeId is required and must be a non-empty string." };
@@ -132,20 +136,69 @@ export function validateBookingInputSyntax(input: unknown): { isValid: boolean; 
     return { isValid: false, error: "time is required." };
   }
 
+  // idempotencyKey validation
+  if (req.idempotencyKey !== undefined && req.idempotencyKey !== null) {
+    if (typeof req.idempotencyKey !== "string") {
+      return { isValid: false, error: "idempotencyKey must be a string." };
+    }
+    if (req.idempotencyKey.trim().length > 255) {
+      return { isValid: false, error: "idempotencyKey must not exceed 255 characters." };
+    }
+  }
+
+  // guestTimezone validation
+  if (req.guestTimezone !== undefined && req.guestTimezone !== null) {
+    if (typeof req.guestTimezone !== "string" || !req.guestTimezone.trim()) {
+      return { isValid: false, error: "guestTimezone must be a non-empty string." };
+    }
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: req.guestTimezone.trim() });
+    } catch {
+      return { isValid: false, error: `Invalid guestTimezone: '${req.guestTimezone}'. Must be a valid IANA timezone identifier.` };
+    }
+  }
+
+  // guestNotes validation
   if (req.guestNotes !== undefined && req.guestNotes !== null) {
-    if (typeof req.guestNotes !== "string" || req.guestNotes.trim().length > 1000) {
+    if (typeof req.guestNotes !== "string") {
+      return { isValid: false, error: "guestNotes must be a string." };
+    }
+    if (req.guestNotes.trim().length > 1000) {
       return { isValid: false, error: "guestNotes must not exceed 1000 characters." };
     }
   }
 
+  // additionalGuests validation
   if (req.additionalGuests !== undefined && req.additionalGuests !== null) {
-    const guests = Array.isArray(req.additionalGuests)
-      ? req.additionalGuests
-      : req.additionalGuests.split(",").map((g) => g.trim()).filter(Boolean);
+    let guests: string[];
+    if (Array.isArray(req.additionalGuests)) {
+      for (const item of req.additionalGuests) {
+        if (typeof item !== "string") {
+          return { isValid: false, error: "additionalGuests array items must be strings." };
+        }
+      }
+      guests = req.additionalGuests.map((g) => g.trim()).filter(Boolean);
+    } else if (typeof req.additionalGuests === "string") {
+      guests = req.additionalGuests.split(",").map((g) => g.trim()).filter(Boolean);
+    } else {
+      return { isValid: false, error: "additionalGuests must be an array of strings or a comma-separated string." };
+    }
+
+    if (guests.length > 20) {
+      return { isValid: false, error: "additionalGuests cannot exceed 20 email addresses." };
+    }
+
     for (const g of guests) {
-      if (!emailRegex.test(g)) {
+      if (!emailRegex.test(g) || g.length > 255) {
         return { isValid: false, error: `Invalid additional guest email address: ${g}` };
       }
+    }
+  }
+
+  // customAnswers validation
+  if (req.customAnswers !== undefined && req.customAnswers !== null) {
+    if (typeof req.customAnswers !== "object" || Array.isArray(req.customAnswers)) {
+      return { isValid: false, error: "customAnswers must be a JSON object mapping questions to answers." };
     }
   }
 
@@ -154,11 +207,13 @@ export function validateBookingInputSyntax(input: unknown): { isValid: boolean; 
 
 /**
  * Reconciles external calendar synchronization for a booking.
+ * Idempotently verifies if an event already exists on Google Calendar, patches existing event times,
+ * or inserts a new event using the deterministic stable event ID.
  */
 export async function reconcileBookingCalendarSync(
   bookingId: string,
   hostId: string
-): Promise<{ success: boolean; calendarSynced: boolean; meetLink?: string; error?: string }> {
+): Promise<{ success: boolean; calendarSynced: boolean; meetLink?: string; eventId?: string; error?: string }> {
   const booking = await db.query.bookings.findFirst({
     where: and(eq(bookings.id, bookingId), eq(bookings.hostId, hostId)),
     with: {
@@ -182,6 +237,19 @@ export async function reconcileBookingCalendarSync(
   const host = booking.host;
   const eventType = booking.eventType;
 
+  if (!host.googleAccessToken && !host.googleRefreshToken) {
+    await db
+      .update(bookings)
+      .set({
+        calendarSyncStatus: "not_applicable",
+        lastSyncError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(bookings.id, booking.id));
+
+    return { success: true, calendarSynced: false };
+  }
+
   const location = resolveEffectiveLocation({
     eventType,
     host,
@@ -190,71 +258,185 @@ export async function reconcileBookingCalendarSync(
   let meetLink =
     location.locationType === "zoom" || location.locationType === "custom"
       ? location.locationUrl
-      : undefined;
-  let gcalEventId = booking.gcalEventId || undefined;
-  let calendarSynced = false;
-  let syncStatus: CalendarSyncStatus = "not_applicable";
-  let lastSyncError: string | null = null;
+      : booking.meetLink || undefined;
 
-  if (host.googleAccessToken || host.googleRefreshToken) {
-    try {
-      const gcalResult = await createGoogleCalendarEvent({
-        tokens: {
-          accessToken: host.googleAccessToken,
-          refreshToken: host.googleRefreshToken,
-        },
-        summary: `${eventType?.title || "Meeting"} with ${booking.guestName}`,
-        description: `Scheduled via Morrow\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
+  const stableEventId = generateGcalEventId(booking.id);
+  const targetEventId = booking.gcalEventId || stableEventId;
+  const confRequestId = generateGcalConferenceRequestId(booking.id);
+
+  const tokens = {
+    accessToken: host.googleAccessToken,
+    refreshToken: host.googleRefreshToken,
+  };
+
+  try {
+    // 1. Check if the event already exists on Google Calendar (using targetEventId)
+    const existingCheck = await getGoogleCalendarEvent(tokens, targetEventId);
+
+    if (existingCheck.success && existingCheck.event && existingCheck.event.status !== "cancelled") {
+      // Event exists! Patch event with latest start/end time and details rather than inserting duplicate!
+      const patchRes = await patchGoogleCalendarEventTime({
+        tokens,
+        eventId: targetEventId,
         startTime: booking.startTime,
         endTime: booking.endTime,
-        guestEmail: booking.guestEmail,
-        guestName: booking.guestName,
         timeZone: host.timezone || "UTC",
-        locationType: location.locationType,
-        locationUrl: location.locationUrl,
-        requestId: `morrow-booking-${booking.id}`,
+        summary: `${eventType?.title || "Meeting"} with ${booking.guestName}`,
+        description: `Scheduled via Morrow\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
       });
 
-      if (gcalResult.success && gcalResult.eventId) {
-        gcalEventId = gcalResult.eventId;
-        calendarSynced = true;
-        syncStatus = "synced";
-        lastSyncError = null;
-        if (location.locationType === "google_meet" && gcalResult.meetLink) {
-          meetLink = gcalResult.meetLink;
-        }
-      } else {
-        syncStatus = "failed";
-        calendarSynced = false;
-        lastSyncError = gcalResult.error || "Google Calendar event creation failed";
+      const existingMeet =
+        existingCheck.event.hangoutLink ||
+        existingCheck.event.conferenceData?.entryPoints?.find(
+          (ep: { entryPointType?: string | null; uri?: string | null }) => ep.entryPointType === "video"
+        )?.uri ||
+        patchRes.meetLink ||
+        meetLink;
+
+      if (location.locationType === "google_meet" && existingMeet) {
+        meetLink = existingMeet;
       }
-    } catch (err) {
-      syncStatus = "failed";
-      calendarSynced = false;
-      lastSyncError = err instanceof Error ? err.message : String(err);
+
+      await db
+        .update(bookings)
+        .set({
+          gcalEventId: targetEventId,
+          meetLink: meetLink || booking.meetLink || null,
+          calendarSyncStatus: "synced",
+          lastSyncError: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.id, booking.id));
+
+      return {
+        success: true,
+        calendarSynced: true,
+        eventId: targetEventId,
+        meetLink,
+      };
     }
-  } else {
-    syncStatus = "not_applicable";
-    calendarSynced = false;
+
+    // 2. If get returned an error that wasn't 404/not-found (e.g. rate limit, auth error)
+    if (!existingCheck.success && !existingCheck.notFound) {
+      await db
+        .update(bookings)
+        .set({
+          calendarSyncStatus: "failed",
+          lastSyncError: existingCheck.error || "Failed to inspect existing Google Calendar event",
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.id, booking.id));
+
+      return {
+        success: false,
+        calendarSynced: false,
+        error: existingCheck.error,
+      };
+    }
+
+    // 3. Event does not exist on Google Calendar: insert using deterministic stableEventId
+    const gcalResult = await createGoogleCalendarEvent({
+      tokens,
+      summary: `${eventType?.title || "Meeting"} with ${booking.guestName}`,
+      description: `Scheduled via Morrow\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
+      startTime: booking.startTime,
+      endTime: booking.endTime,
+      guestEmail: booking.guestEmail,
+      guestName: booking.guestName,
+      timeZone: host.timezone || "UTC",
+      locationType: location.locationType,
+      locationUrl: location.locationUrl,
+      eventId: stableEventId,
+      confRequestId,
+    });
+
+    if (gcalResult.success && gcalResult.eventId) {
+      if (location.locationType === "google_meet" && gcalResult.meetLink) {
+        meetLink = gcalResult.meetLink;
+      }
+
+      await db
+        .update(bookings)
+        .set({
+          gcalEventId: gcalResult.eventId,
+          meetLink: meetLink || booking.meetLink || null,
+          calendarSyncStatus: "synced",
+          lastSyncError: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.id, booking.id));
+
+      return {
+        success: true,
+        calendarSynced: true,
+        eventId: gcalResult.eventId,
+        meetLink,
+      };
+    }
+
+    // If insertion failed because it already existed (e.g. race condition 409):
+    if (gcalResult.isDuplicate) {
+      const retryGet = await getGoogleCalendarEvent(tokens, stableEventId);
+      if (retryGet.success && retryGet.event) {
+        const recoveredMeet =
+          retryGet.event.hangoutLink ||
+          retryGet.event.conferenceData?.entryPoints?.find(
+            (ep: { entryPointType?: string | null; uri?: string | null }) => ep.entryPointType === "video"
+          )?.uri ||
+          meetLink;
+
+        await db
+          .update(bookings)
+          .set({
+            gcalEventId: stableEventId,
+            meetLink: recoveredMeet || booking.meetLink || null,
+            calendarSyncStatus: "synced",
+            lastSyncError: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(bookings.id, booking.id));
+
+        return {
+          success: true,
+          calendarSynced: true,
+          eventId: stableEventId,
+          meetLink: recoveredMeet,
+        };
+      }
+    }
+
+    // Otherwise record failure, preserving booking and any previously assigned event ID
+    await db
+      .update(bookings)
+      .set({
+        calendarSyncStatus: "failed",
+        lastSyncError: gcalResult.error || "Google Calendar event creation failed",
+        updatedAt: new Date(),
+      })
+      .where(eq(bookings.id, booking.id));
+
+    return {
+      success: false,
+      calendarSynced: false,
+      error: gcalResult.error,
+    };
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    await db
+      .update(bookings)
+      .set({
+        calendarSyncStatus: "failed",
+        lastSyncError: errorMsg,
+        updatedAt: new Date(),
+      })
+      .where(eq(bookings.id, booking.id));
+
+    return {
+      success: false,
+      calendarSynced: false,
+      error: errorMsg,
+    };
   }
-
-  await db
-    .update(bookings)
-    .set({
-      meetLink: meetLink || booking.meetLink || null,
-      gcalEventId: gcalEventId || booking.gcalEventId || null,
-      calendarSyncStatus: syncStatus,
-      lastSyncError,
-      updatedAt: new Date(),
-    })
-    .where(eq(bookings.id, booking.id));
-
-  return {
-    success: calendarSynced || syncStatus === "not_applicable",
-    calendarSynced,
-    meetLink,
-    error: lastSyncError || undefined,
-  };
 }
 
 export async function processBooking(
@@ -383,17 +565,36 @@ export async function processBooking(
         };
       }
 
-      // Recoverable sync check on retry: if booking was confirmed but sync failed, attempt reconciliation
-      if (existing.status === "confirmed" && existing.calendarSyncStatus === "failed") {
+      // Recoverable sync check on retry: if booking was confirmed and sync failed OR was interrupted in pending state
+      const isInterruptedPending =
+        existing.status === "confirmed" &&
+        existing.calendarSyncStatus === "pending" &&
+        !existing.gcalEventId &&
+        Date.now() - new Date(existing.createdAt).getTime() > 3000;
+
+      const needsSyncRecovery =
+        existing.status === "confirmed" &&
+        (existing.calendarSyncStatus === "failed" || isInterruptedPending);
+
+      if (needsSyncRecovery) {
         await reconcileBookingCalendarSync(existing.id, host.id);
       }
 
-      const existingStatus = existing.status as BookingStatus;
-      const isSynced = existing.calendarSyncStatus === "synced" || Boolean(existing.gcalEventId);
-      const syncStatus = (existing.calendarSyncStatus as CalendarSyncStatus) || (isSynced ? "synced" : "not_applicable");
+      // Reload fresh booking record from database so response reflects persisted state
+      const freshBooking = await db.query.bookings.findFirst({
+        where: eq(bookings.id, existing.id),
+        with: {
+          eventType: true,
+        },
+      });
+      const current = freshBooking || existing;
+
+      const currentStatus = current.status as BookingStatus;
+      const isSynced = current.calendarSyncStatus === "synced" || Boolean(current.gcalEventId);
+      const syncStatus = (current.calendarSyncStatus as CalendarSyncStatus) || (isSynced ? "synced" : "not_applicable");
 
       const resolvedLoc = resolveEffectiveLocation({
-        eventType: existing.eventType,
+        eventType: current.eventType,
         host,
       });
 
@@ -401,16 +602,16 @@ export async function processBooking(
         success: true,
         status: 200,
         booking: {
-          id: existing.id,
-          guestName: existing.guestName,
-          guestEmail: existing.guestEmail,
-          startTime: existing.startTime.toISOString(),
-          endTime: existing.endTime.toISOString(),
-          meetLink: existing.meetLink || undefined,
-          cancelToken: existing.cancelToken,
-          eventType: existing.eventType?.title || eventType.title,
-          status: existingStatus,
-          requiresApproval: existingStatus === "pending",
+          id: current.id,
+          guestName: current.guestName,
+          guestEmail: current.guestEmail,
+          startTime: current.startTime.toISOString(),
+          endTime: current.endTime.toISOString(),
+          meetLink: current.meetLink || undefined,
+          cancelToken: current.cancelToken,
+          eventType: current.eventType?.title || eventType.title,
+          status: currentStatus,
+          requiresApproval: currentStatus === "pending",
           calendarSynced: isSynced,
           calendarSyncStatus: syncStatus,
           locationType: resolvedLoc.locationType,
@@ -637,6 +838,8 @@ export async function processBooking(
     finalCalendarSyncStatus = "pending";
     calendarSynced = false;
   } else if (host.googleAccessToken || host.googleRefreshToken) {
+    const stableEventId = generateGcalEventId(newBooking.id);
+    const confRequestId = generateGcalConferenceRequestId(newBooking.id);
     try {
       const gcalResult = await createGoogleCalendarEvent({
         tokens: {
@@ -652,7 +855,8 @@ export async function processBooking(
         timeZone: host.timezone || "UTC",
         locationType: location.locationType,
         locationUrl: location.locationUrl,
-        requestId: `morrow-booking-${newBooking.id}`,
+        eventId: stableEventId,
+        confRequestId,
       });
 
       if (gcalResult.success && gcalResult.eventId) {
