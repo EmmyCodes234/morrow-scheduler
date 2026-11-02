@@ -9,9 +9,9 @@
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "build:cloudflare": "opennextjs-cloudflare",
-    "deploy:cloudflare": "opennextjs-cloudflare && wrangler deploy",
-    "preview:cloudflare": "opennextjs-cloudflare && wrangler dev"
+    "build:cloudflare": "opennextjs-cloudflare build",
+    "deploy:cloudflare": "opennextjs-cloudflare build && wrangler deploy",
+    "preview:cloudflare": "opennextjs-cloudflare preview"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.4.0",

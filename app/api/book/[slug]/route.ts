@@ -211,7 +211,7 @@ export async function POST(
       dateStr: date,
       timeStr: time,
       durationMins: duration,
-      meetLink: meetLink || (isZoom ? host.zoomMeetingUrl : "https://meet.google.com/new"),
+      meetLink: meetLink || (isZoom ? (host.zoomMeetingUrl ?? undefined) : "https://meet.google.com/new"),
       guestNotes,
       cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/cancel/${cancelToken}`,
     }).catch((err) => console.error("Error sending guest confirmation email:", err));

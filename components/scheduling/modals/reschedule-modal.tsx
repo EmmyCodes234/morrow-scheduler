@@ -90,7 +90,7 @@ export function RescheduleModal({
                   Back
                 </Button>
                 <Button
-                  variant="destructive"
+                  variant="danger"
                   disabled={isProcessing}
                   onClick={async () => {
                     setIsProcessing(true);
@@ -112,7 +112,7 @@ export function RescheduleModal({
                   Keep meeting
                 </Button>
                 <Button
-                  variant="destructive"
+                  variant="danger"
                   disabled={isProcessing}
                   onClick={() => setMode("cancelConfirm")}
                 >

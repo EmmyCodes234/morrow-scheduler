@@ -7,5 +7,12 @@
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
+  },
+  "vars": {
+    "AUTH_URL": "https://usemorrow.xyz",
+    "NEXT_PUBLIC_APP_URL": "https://usemorrow.xyz",
+    "RESEND_FROM_EMAIL": "Morrow <notifications@usemorrow.xyz>",
+    "RESEND_AUTH_FROM_EMAIL": "Morrow Security <auth@usemorrow.xyz>",
+    "RESEND_SUPPORT_FROM_EMAIL": "Morrow Support <support@usemorrow.xyz>"
   }
 }

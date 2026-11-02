@@ -777,7 +777,7 @@ export function DashboardView({
                       </div>
 
                       <div className="flex items-center gap-3">
-                        <Badge color={b.status === "Cancelled" ? "destructive" : "primary"}>
+                        <Badge color={b.status === "Cancelled" ? "neutral" : "primary"}>
                           {b.status}
                         </Badge>
 

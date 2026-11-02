@@ -177,7 +177,7 @@ export function NewEventModal({
             <div className="w-full flex items-center justify-between">
               {isEditing && onDelete ? (
                 <Button
-                  variant="destructive"
+                  variant="danger"
                   size="small"
                   disabled={isDeleting}
                   onClick={handleDelete}

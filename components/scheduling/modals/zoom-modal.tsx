@@ -103,7 +103,7 @@ export function ZoomModal({
                 placeholder="https://zoom.us/j/1234567890"
                 leadingIcon={HugeLink}
                 isRequired
-                description="Found in your Zoom Profile under Personal Meeting ID (PMI)."
+                hint="Found in your Zoom Profile under Personal Meeting ID (PMI)."
               />
 
               {error && (
@@ -118,7 +118,7 @@ export function ZoomModal({
             <div className="w-full flex items-center justify-between">
               {isZoomActive && onDisableZoom ? (
                 <Button
-                  variant="destructive"
+                  variant="danger"
                   size="small"
                   disabled={isSubmitting}
                   onClick={handleDisable}

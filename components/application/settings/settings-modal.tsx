@@ -337,7 +337,7 @@ export function SettingsModal({
                       <label className="text-body-medium font-medium text-text-primary">Account Email</label>
                       <Input
                         value={email}
-                        disabled
+                        isDisabled
                         placeholder="you@domain.com"
                       />
                     </div>
