@@ -36,7 +36,9 @@ export function GuestCancellationView({
   const [submittedReason, setSubmittedReason] = useState<string | null>(
     initialBooking?.cancellationReason || null
   );
-  const [notificationStatus, setNotificationStatus] = useState<"sent" | "already_sent" | "pending" | "failed" | null>(null);
+  const [notificationStatus, setNotificationStatus] = useState<"sent" | "already_sent" | "pending" | "failed" | null>(
+    initialBooking?.notification?.status || null
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // 1. Not Found State
@@ -76,9 +78,9 @@ export function GuestCancellationView({
             Booking Cancelled
           </h1>
           <p className="text-body-regular text-text-secondary text-center mb-6">
-            {notificationStatus === "failed" || notificationStatus === "pending"
-              ? `Your meeting with ${booking.hostName} has been cancelled. We've released the time slot, but the cancellation notification could not be confirmed yet.`
-              : `Your meeting with ${booking.hostName} has been cancelled. We've released the time slot and notified your host.`}
+            {notificationStatus === "sent" || notificationStatus === "already_sent"
+              ? `Your meeting with ${booking.hostName} has been cancelled. We've released the time slot and notified your host.`
+              : `Your meeting with ${booking.hostName} has been cancelled. We've released the time slot, but the cancellation notification could not be confirmed yet.`}
           </p>
 
           <div className="bg-background-secondary-default rounded-2xl p-4 border border-separator-border mb-6 space-y-3">

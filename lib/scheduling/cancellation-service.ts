@@ -97,6 +97,12 @@ export interface PublicBookingCancellationSummary {
   canCancel: boolean;
   cancellationReason?: string | null;
   cancelledAt?: string | null;
+  notification?: {
+    status: SafeNotificationStatus;
+  } | null;
+  calendarSync?: {
+    status: SafeCalendarSyncStatus;
+  } | null;
 }
 
 export interface CancelledCalendarCleanupResult {
@@ -105,6 +111,62 @@ export interface CancelledCalendarCleanupResult {
   alreadyRemoved?: boolean;
   error?: string;
   booking?: typeof bookings.$inferSelect;
+}
+
+/**
+ * Maps an outbox DispatchNotificationResult to a strict, safe public notification status.
+ */
+export function mapDispatchResultToSafeStatus(
+  result: DispatchNotificationResult
+): SafeNotificationStatus {
+  switch (result.status) {
+    case "sent":
+      return "sent";
+    case "already_sent":
+      return "already_sent";
+    case "sending":
+    case "claim_locked":
+    case "claim_failed":
+    case "stale_worker":
+    case "idle":
+      return "pending";
+    case "failed":
+    case "not_found":
+    default:
+      return "failed";
+  }
+}
+
+/**
+ * Maps raw database notification status to a safe public notification status.
+ */
+export function mapDbNotificationToSafeStatus(
+  status?: string | null,
+  isAlreadyCancelled: boolean = false
+): SafeNotificationStatus {
+  if (status === "sent") {
+    return isAlreadyCancelled ? "already_sent" : "sent";
+  }
+  if (status === "sending" || status === "pending") {
+    return "pending";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  return "pending";
+}
+
+/**
+ * Maps raw database calendar sync status to a safe public calendar status.
+ */
+export function mapDbCalendarSyncToSafeStatus(
+  calendarSyncStatus?: string | null,
+  hasGcalEventId?: boolean
+): SafeCalendarSyncStatus {
+  if (!hasGcalEventId) return "not_applicable";
+  if (calendarSyncStatus === "failed") return "failed";
+  if (calendarSyncStatus === "pending") return "pending";
+  return "cleaned";
 }
 
 /**
@@ -148,13 +210,15 @@ export function toPublicCancellationDTO(
  * Does not mutate state or disclose sensitive credentials.
  */
 export async function getBookingForCancellation(
-  token: string
+  token: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dbClient: any = db
 ): Promise<PublicBookingCancellationSummary | null> {
   if (!token || typeof token !== "string" || token.trim().length === 0) {
     return null;
   }
 
-  const booking = await db.query.bookings.findFirst({
+  const booking = await dbClient.query.bookings.findFirst({
     where: eq(bookings.cancelToken, token.trim()),
     with: {
       eventType: true,
@@ -171,6 +235,7 @@ export async function getBookingForCancellation(
   const now = new Date();
   const isPast = new Date(booking.startTime).getTime() < now.getTime();
   const canCancel = (booking.status === "confirmed" || booking.status === "pending") && !isPast;
+  const isCancelled = booking.status === "cancelled";
 
   return {
     eventTitle: booking.eventType?.title || "Meeting",
@@ -187,6 +252,12 @@ export async function getBookingForCancellation(
     canCancel,
     cancellationReason: booking.cancellationReason || null,
     cancelledAt: booking.cancelledAt?.toISOString() || null,
+    notification: isCancelled
+      ? { status: mapDbNotificationToSafeStatus(booking.notificationStatus, true) }
+      : null,
+    calendarSync: isCancelled
+      ? { status: mapDbCalendarSyncToSafeStatus(booking.calendarSyncStatus, Boolean(booking.gcalEventId)) }
+      : null,
   };
 }
 
@@ -202,9 +273,11 @@ export async function getBookingForCancellation(
  */
 export async function retryCancelledBookingCalendarCleanup(
   bookingId: string,
-  hostId: string
+  hostId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dbClient: any = db
 ): Promise<CancelledCalendarCleanupResult> {
-  const booking = await db.query.bookings.findFirst({
+  const booking = await dbClient.query.bookings.findFirst({
     where: and(eq(bookings.id, bookingId), eq(bookings.hostId, hostId)),
     with: {
       host: true,
@@ -229,7 +302,7 @@ export async function retryCancelledBookingCalendarCleanup(
 
   // 1. If no external Google Calendar event ID exists
   if (!booking.gcalEventId) {
-    await db
+    await dbClient
       .update(bookings)
       .set({
         calendarSyncStatus: "not_applicable",
@@ -249,7 +322,7 @@ export async function retryCancelledBookingCalendarCleanup(
   // 2. Missing credentials check: cannot report deletion as successful
   if (!host?.googleAccessToken && !host?.googleRefreshToken) {
     const errorMsg = "Google Calendar credentials not found or disconnected.";
-    await db
+    await dbClient
       .update(bookings)
       .set({
         calendarSyncStatus: "failed",
@@ -265,7 +338,16 @@ export async function retryCancelledBookingCalendarCleanup(
     };
   }
 
-  // 3. Retry deletion
+  // 3. Mark cleanup as pending during retry execution
+  await dbClient
+    .update(bookings)
+    .set({
+      calendarSyncStatus: "pending",
+      updatedAt: new Date(),
+    })
+    .where(eq(bookings.id, booking.id));
+
+  // 4. Retry deletion
   const calResult = await cancelGoogleCalendarEventWithDetails(
     { accessToken: host.googleAccessToken, refreshToken: host.googleRefreshToken },
     booking.gcalEventId
@@ -273,7 +355,7 @@ export async function retryCancelledBookingCalendarCleanup(
 
   if (!calResult.success) {
     const errorMsg = calResult.error || "Failed to remove Google Calendar event.";
-    await db
+    await dbClient
       .update(bookings)
       .set({
         calendarSyncStatus: "failed",
@@ -290,7 +372,7 @@ export async function retryCancelledBookingCalendarCleanup(
   }
 
   // Succeeded or already removed
-  const [updated] = await db
+  const [updated] = await dbClient
     .update(bookings)
     .set({
       calendarSyncStatus: "not_applicable",
@@ -316,7 +398,9 @@ export async function retryCancelledBookingCalendarCleanup(
  * - Host deletion API (DELETE /api/bookings/[id])
  */
 export async function cancelBooking(
-  params: CancelBookingParams
+  params: CancelBookingParams,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dbClient: any = db
 ): Promise<CancelBookingResult> {
   const { identifier, identifierType, cancelledBy, hostId } = params;
 
@@ -352,7 +436,7 @@ export async function cancelBooking(
     };
   }
 
-  const existing = await db.query.bookings.findFirst({
+  const existing = await dbClient.query.bookings.findFirst({
     where:
       identifierType === "token"
         ? eq(bookings.cancelToken, identifier.trim())
@@ -387,9 +471,9 @@ export async function cancelBooking(
     // Retry unfinished external work if needed without repeating completed operations
     let calSyncStatus: SafeCalendarSyncStatus = "not_applicable";
     if (existing.gcalEventId) {
-      if (existing.calendarSyncStatus === "failed") {
-        // Attempt recovery of failed calendar cleanup
-        const cleanup = await retryCancelledBookingCalendarCleanup(existing.id, existing.hostId);
+      if (existing.calendarSyncStatus === "failed" || existing.calendarSyncStatus === "pending") {
+        // Attempt recovery of failed or interrupted pending calendar cleanup
+        const cleanup = await retryCancelledBookingCalendarCleanup(existing.id, existing.hostId, dbClient);
         calSyncStatus = cleanup.success ? "cleaned" : "failed";
       } else {
         calSyncStatus = "cleaned";
@@ -398,8 +482,10 @@ export async function cancelBooking(
 
     let notifStatus: SafeNotificationStatus = "already_sent";
     if (existing.notificationStatus === "failed" || existing.notificationStatus === "pending") {
-      const retryResult = await dispatchDurableBookingNotification(existing.id);
-      notifStatus = retryResult.status === "sent" ? "sent" : "failed";
+      const retryResult = await dispatchDurableBookingNotification(existing.id, dbClient);
+      notifStatus = mapDispatchResultToSafeStatus(retryResult);
+    } else {
+      notifStatus = mapDbNotificationToSafeStatus(existing.notificationStatus, true);
     }
 
     const publicDto = toPublicCancellationDTO(
@@ -488,12 +574,16 @@ export async function cancelBooking(
         };
 
   // 8. Atomic conditional status update (prevents race conditions)
-  const [transitionWon] = await db
+  // Sets calendarSyncStatus to 'pending' atomically if gcalEventId exists, preventing
+  // crash window where a process exits before external calendar cleanup.
+  const [transitionWon] = await dbClient
     .update(bookings)
     .set({
       status: "cancelled",
       cancelledAt: now,
       cancellationReason: sanitizedReason || null,
+      calendarSyncStatus: existing.gcalEventId ? "pending" : "not_applicable",
+      lastSyncError: null,
       notificationType,
       notificationStatus: "pending",
       notificationAttempts: 0,
@@ -513,17 +603,20 @@ export async function cancelBooking(
 
   if (!transitionWon) {
     // Another concurrent operation changed the status
-    const fresh = await db.query.bookings.findFirst({
+    const fresh = await dbClient.query.bookings.findFirst({
       where: eq(bookings.id, existing.id),
       with: { eventType: true, host: true },
     });
 
     if (fresh?.status === "cancelled") {
+      const safeCal = mapDbCalendarSyncToSafeStatus(fresh.calendarSyncStatus, Boolean(fresh.gcalEventId));
+      const safeNotif = mapDbNotificationToSafeStatus(fresh.notificationStatus, true);
+
       const publicDto = toPublicCancellationDTO(
         fresh,
         "already_cancelled",
-        fresh.gcalEventId ? (fresh.calendarSyncStatus === "failed" ? "failed" : "cleaned") : "not_applicable",
-        fresh.notificationStatus === "sent" ? "already_sent" : "failed"
+        safeCal,
+        safeNotif
       );
 
       return {
@@ -531,8 +624,8 @@ export async function cancelBooking(
         booking: fresh,
         publicDto,
         alreadyCancelled: true,
-        safeCalendarStatus: publicDto.calendarSync.status,
-        safeNotificationStatus: publicDto.notification.status,
+        safeCalendarStatus: safeCal,
+        safeNotificationStatus: safeNotif,
       };
     }
 
@@ -545,7 +638,7 @@ export async function cancelBooking(
 
   // 9. External Google Calendar synchronization
   let calResult: CancelGoogleEventResult | undefined;
-  let safeCalendarStatus: SafeCalendarSyncStatus = "not_applicable";
+  let safeCalendarStatus: SafeCalendarSyncStatus = existing.gcalEventId ? "pending" : "not_applicable";
 
   if (existing.gcalEventId) {
     if (host.googleAccessToken || host.googleRefreshToken) {
@@ -556,7 +649,7 @@ export async function cancelBooking(
 
       if (!calResult.success) {
         safeCalendarStatus = "failed";
-        await db
+        await dbClient
           .update(bookings)
           .set({
             calendarSyncStatus: "failed",
@@ -566,7 +659,7 @@ export async function cancelBooking(
           .where(eq(bookings.id, existing.id));
       } else {
         safeCalendarStatus = "cleaned";
-        await db
+        await dbClient
           .update(bookings)
           .set({
             calendarSyncStatus: "not_applicable",
@@ -578,7 +671,7 @@ export async function cancelBooking(
     } else {
       // Event ID exists but no credentials available
       safeCalendarStatus = "failed";
-      await db
+      await dbClient
         .update(bookings)
         .set({
           calendarSyncStatus: "failed",
@@ -590,21 +683,11 @@ export async function cancelBooking(
   }
 
   // 10. Dispatch durable notification outbox
-  const notifyResult: DispatchNotificationResult = await dispatchDurableBookingNotification(existing.id);
-
-  let safeNotificationStatus: SafeNotificationStatus;
-  if (notifyResult.status === "sent") {
-    safeNotificationStatus = "sent";
-  } else if (notifyResult.status === "already_sent") {
-    safeNotificationStatus = "already_sent";
-  } else if (notifyResult.status === "sending" || notifyResult.status === "claim_locked") {
-    safeNotificationStatus = "pending";
-  } else {
-    safeNotificationStatus = "failed";
-  }
+  const notifyResult: DispatchNotificationResult = await dispatchDurableBookingNotification(existing.id, dbClient);
+  const safeNotificationStatus: SafeNotificationStatus = mapDispatchResultToSafeStatus(notifyResult);
 
   // 11. Fetch final record
-  const finalBooking = await db.query.bookings.findFirst({
+  const finalBooking = await dbClient.query.bookings.findFirst({
     where: eq(bookings.id, existing.id),
     with: { eventType: true, host: true },
   });

@@ -83,7 +83,9 @@ export interface DispatchNotificationResult {
  *     beyond this 24-hour window maintains delivery state independently via PostgreSQL.
  */
 export async function dispatchDurableBookingNotification(
-  bookingId: string
+  bookingId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dbClient: any = db
 ): Promise<DispatchNotificationResult> {
   const claimToken = crypto.randomUUID();
   const now = new Date();
@@ -95,7 +97,7 @@ export async function dispatchDurableBookingNotification(
   let claimedBooking: typeof bookings.$inferSelect | undefined;
 
   try {
-    const [claimed] = await db
+    const [claimed] = await dbClient
       .update(bookings)
       .set({
         notificationStatus: "sending",
@@ -130,7 +132,7 @@ export async function dispatchDurableBookingNotification(
 
   // 2. If row was not claimed, inspect existing state to return precise reason
   if (!claimedBooking) {
-    const existing = await db.query.bookings.findFirst({
+    const existing = await dbClient.query.bookings.findFirst({
       where: eq(bookings.id, bookingId),
     });
 
@@ -170,7 +172,7 @@ export async function dispatchDurableBookingNotification(
   const payload = claimedBooking.notificationPayload as unknown as DurableNotificationPayload | null;
   if (!payload || !claimedBooking.notificationType) {
     // Release claim back to failed with descriptive error
-    await db
+    await dbClient
       .update(bookings)
       .set({
         notificationStatus: "failed",
@@ -275,7 +277,7 @@ export async function dispatchDurableBookingNotification(
   }
 
   // 5. Fenced Status Update (Protects against stale workers whose lease expired)
-  const [fencedRow] = await db
+  const [fencedRow] = await dbClient
     .update(bookings)
     .set(
       emailAccepted

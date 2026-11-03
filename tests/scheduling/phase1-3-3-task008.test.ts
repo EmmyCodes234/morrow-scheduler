@@ -3,6 +3,9 @@ import {
   cancelBooking,
   getBookingForCancellation,
   retryCancelledBookingCalendarCleanup,
+  mapDispatchResultToSafeStatus,
+  mapDbNotificationToSafeStatus,
+  mapDbCalendarSyncToSafeStatus,
 } from "@/lib/scheduling/cancellation-service";
 import {
   cancelGoogleCalendarEventWithDetails,
@@ -712,45 +715,43 @@ describe("Task 008 & 008.1: Cancellation Security, Reliability & Hardening Suite
       }
     });
 
-    it("two concurrent cancellation requests: exactly one wins the transition, final status is cancelled", async () => {
-      // Execute two simultaneous atomic updates on the exact same booking row
-      const [attempt1, attempt2] = await Promise.all([
-        testDb
-          .update(schema.bookings)
-          .set({
-            status: "cancelled",
-            cancelledAt: new Date(),
-            cancellationReason: "Concurrent Attempt 1",
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(schema.bookings.id, testBookingId),
-              inArray(schema.bookings.status, ["confirmed", "pending"])
-            )
-          )
-          .returning(),
-        testDb
-          .update(schema.bookings)
-          .set({
-            status: "cancelled",
-            cancelledAt: new Date(),
-            cancellationReason: "Concurrent Attempt 2",
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(schema.bookings.id, testBookingId),
-              inArray(schema.bookings.status, ["confirmed", "pending"])
-            )
-          )
-          .returning(),
+    it("two concurrent calls to cancelBooking(): exactly one wins transition, exactly one notification intent enqueued, both return safe DTOs", async () => {
+      const [res1, res2] = await Promise.all([
+        cancelBooking(
+          {
+            identifier: testCancelToken,
+            identifierType: "token",
+            cancelledBy: "guest",
+            reason: "Concurrent Attempt 1",
+          },
+          testDb
+        ),
+        cancelBooking(
+          {
+            identifier: testCancelToken,
+            identifierType: "token",
+            cancelledBy: "guest",
+            reason: "Concurrent Attempt 2",
+          },
+          testDb
+        ),
       ]);
 
-      const wins = [attempt1.length === 1, attempt2.length === 1].filter(Boolean).length;
-      expect(wins).toBe(1);
+      // Both requests succeed gracefully without 500s or crashes
+      expect(res1.success).toBe(true);
+      expect(res2.success).toBe(true);
 
-      // Verify final database state
+      // Exactly one was the first-time cancellation; the other recognized it was already cancelled
+      const alreadyCancelledCount = [res1.alreadyCancelled, res2.alreadyCancelled].filter(Boolean).length;
+      expect(alreadyCancelledCount).toBe(1);
+
+      const winner = !res1.alreadyCancelled ? res1 : res2;
+      const loser = res1.alreadyCancelled ? res1 : res2;
+
+      expect(winner.publicDto?.outcome).toBe("cancelled");
+      expect(loser.publicDto?.outcome).toBe("already_cancelled");
+
+      // Verify final database state in real PostgreSQL
       const [finalRow] = await testDb
         .select()
         .from(schema.bookings)
@@ -759,24 +760,175 @@ describe("Task 008 & 008.1: Cancellation Security, Reliability & Hardening Suite
       expect(finalRow.status).toBe("cancelled");
       expect(finalRow.cancelledAt).not.toBeNull();
       expect(finalRow.cancellationReason).toMatch(/Concurrent Attempt (1|2)/);
+
+      // Verify notification intent: exactly one notification intent enqueued
+      expect(finalRow.notificationType).toBe("guest_cancellation");
+      expect(finalRow.notificationPayload).not.toBeNull();
+      expect((finalRow.notificationPayload as any).eventTitle).toBe("Integration Concurrency Event");
+      expect((finalRow.notificationPayload as any).guestEmail).toBe("guest@example.com");
+
+      // Verify calendar sync status was marked safely without double-deletion errors
+      expect(["not_applicable", "cleaned", "pending"]).toContain(finalRow.calendarSyncStatus);
     });
 
-    it("repeated cancellation on already-cancelled booking in PostgreSQL returns 0 rows updated", async () => {
-      const repeated = await testDb
+    it("crash recovery: cancelled booking with calendarSyncStatus='pending' is cleanly recovered", async () => {
+      // Simulate process crash: row marked cancelled with calendarSyncStatus = 'pending' and gcalEventId set
+      const gcalEventId = "simulated-gcal-event-999";
+      await testDb
         .update(schema.bookings)
         .set({
-          status: "cancelled",
+          calendarSyncStatus: "pending",
+          gcalEventId,
           updatedAt: new Date(),
         })
-        .where(
-          and(
-            eq(schema.bookings.id, testBookingId),
-            inArray(schema.bookings.status, ["confirmed", "pending"])
-          )
-        )
-        .returning();
+        .where(eq(schema.bookings.id, testBookingId));
 
-      expect(repeated.length).toBe(0);
+      // Also set host Google credentials on test user so cleanup can proceed
+      await testDb
+        .update(schema.users)
+        .set({
+          googleAccessToken: "mock-test-access-token",
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.users.id, testHostId));
+
+      // Mock google calendar deletion for this call
+      mockDeleteGoogle.mockResolvedValueOnce({ status: 204 });
+
+      const cleanup = await retryCancelledBookingCalendarCleanup(testBookingId, testHostId, testDb);
+      expect(cleanup.success).toBe(true);
+      expect(cleanup.status).toBe("cleaned");
+
+      const [recoveredRow] = await testDb
+        .select()
+        .from(schema.bookings)
+        .where(eq(schema.bookings.id, testBookingId));
+
+      expect(recoveredRow.calendarSyncStatus).toBe("not_applicable");
+      expect(recoveredRow.lastSyncError).toBeNull();
+    });
+
+    it("getBookingForCancellation() returns accurate safe notification and calendar status for previously cancelled booking", async () => {
+      const summary = await getBookingForCancellation(testCancelToken, testDb);
+      expect(summary).not.toBeNull();
+      expect(summary?.status).toBe("cancelled");
+      expect(summary?.notification).toBeDefined();
+      expect(["sent", "already_sent", "pending", "failed"]).toContain(summary?.notification?.status);
+      expect(summary?.calendarSync).toBeDefined();
+      expect(["cleaned", "not_applicable", "failed", "pending"]).toContain(summary?.calendarSync?.status);
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
+  /*  8. Task 008.2: Durable Cancellation Recovery Unit Tests                   */
+  /* -------------------------------------------------------------------------- */
+  describe("8. Task 008.2: Durable Cancellation Recovery Unit Tests", () => {
+    it("mapDispatchResultToSafeStatus maps all outbox statuses accurately", () => {
+      expect(mapDispatchResultToSafeStatus({ success: true, status: "sent" })).toBe("sent");
+      expect(mapDispatchResultToSafeStatus({ success: true, status: "already_sent" })).toBe("already_sent");
+      expect(mapDispatchResultToSafeStatus({ success: false, status: "sending" })).toBe("pending");
+      expect(mapDispatchResultToSafeStatus({ success: false, status: "claim_locked" })).toBe("pending");
+      expect(mapDispatchResultToSafeStatus({ success: false, status: "claim_failed" })).toBe("pending");
+      expect(mapDispatchResultToSafeStatus({ success: false, status: "stale_worker" })).toBe("pending");
+      expect(mapDispatchResultToSafeStatus({ success: false, status: "idle" })).toBe("pending");
+      expect(mapDispatchResultToSafeStatus({ success: false, status: "failed" })).toBe("failed");
+      expect(mapDispatchResultToSafeStatus({ success: false, status: "not_found" })).toBe("failed");
+    });
+
+    it("mapDbNotificationToSafeStatus maps raw DB statuses accurately", () => {
+      expect(mapDbNotificationToSafeStatus("sent", false)).toBe("sent");
+      expect(mapDbNotificationToSafeStatus("sent", true)).toBe("already_sent");
+      expect(mapDbNotificationToSafeStatus("sending")).toBe("pending");
+      expect(mapDbNotificationToSafeStatus("pending")).toBe("pending");
+      expect(mapDbNotificationToSafeStatus("failed")).toBe("failed");
+      expect(mapDbNotificationToSafeStatus(null)).toBe("pending");
+    });
+
+    it("mapDbCalendarSyncToSafeStatus handles gcalEventId presence and sync states", () => {
+      expect(mapDbCalendarSyncToSafeStatus("failed", false)).toBe("not_applicable");
+      expect(mapDbCalendarSyncToSafeStatus("pending", false)).toBe("not_applicable");
+      expect(mapDbCalendarSyncToSafeStatus("failed", true)).toBe("failed");
+      expect(mapDbCalendarSyncToSafeStatus("pending", true)).toBe("pending");
+      expect(mapDbCalendarSyncToSafeStatus("not_applicable", true)).toBe("cleaned");
+      expect(mapDbCalendarSyncToSafeStatus("synced", true)).toBe("cleaned");
+    });
+
+    it("cancelBooking sets calendarSyncStatus='pending' in atomic transition when gcalEventId exists", async () => {
+      const futureDate = new Date(Date.now() + 86400000);
+      mockFindClient.mockResolvedValueOnce({
+        id: "b-pending-cal-test",
+        cancelToken: "tok-pending-cal",
+        hostId: "host-1",
+        status: "confirmed",
+        startTime: futureDate,
+        guestTimezone: "UTC",
+        gcalEventId: "gcal-exist-1",
+        eventType: { id: "et-1", title: "Strategy Call" },
+        host: {
+          id: "host-1",
+          name: "Host Bob",
+          slug: "bob",
+          googleAccessToken: "valid-tok",
+        },
+      });
+
+      mockUpdateReturning.mockResolvedValueOnce([
+        {
+          id: "b-pending-cal-test",
+          status: "cancelled",
+          cancellationReason: "Test Reason",
+          calendarSyncStatus: "pending",
+          startTime: futureDate,
+        },
+      ]);
+      mockDeleteGoogle.mockResolvedValueOnce({ status: 204 });
+
+      await cancelBooking({
+        identifier: "tok-pending-cal",
+        identifierType: "token",
+        cancelledBy: "guest",
+        reason: "Test Reason",
+      });
+
+      // Assert that step 8 included calendarSyncStatus: 'pending'
+      expect(mockUpdateSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "cancelled",
+          calendarSyncStatus: "pending",
+          notificationStatus: "pending",
+        })
+      );
+    });
+
+    it("getBookingForCancellation populates safe notification and calendar status for cancelled bookings", async () => {
+      const futureDate = new Date(Date.now() + 86400000);
+      mockFindClient.mockResolvedValueOnce({
+        id: "b-summary-test",
+        cancelToken: "tok-summary-cancelled",
+        hostId: "host-1",
+        status: "cancelled",
+        startTime: futureDate,
+        endTime: new Date(futureDate.getTime() + 1800000),
+        guestTimezone: "UTC",
+        gcalEventId: "gcal-1",
+        calendarSyncStatus: "failed",
+        notificationStatus: "failed",
+        cancellationReason: "Previous reason",
+        cancelledAt: new Date(),
+        eventType: { id: "et-1", title: "Strategy Call" },
+        host: {
+          id: "host-1",
+          name: "Host Bob",
+          slug: "bob",
+          timezone: "UTC",
+        },
+      });
+
+      const summary = await getBookingForCancellation("tok-summary-cancelled");
+      expect(summary).not.toBeNull();
+      expect(summary?.status).toBe("cancelled");
+      expect(summary?.notification).toEqual({ status: "failed" });
+      expect(summary?.calendarSync).toEqual({ status: "failed" });
     });
   });
 });
