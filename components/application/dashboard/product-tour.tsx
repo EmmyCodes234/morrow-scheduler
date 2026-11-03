@@ -90,17 +90,17 @@ export function ProductTour({
 
   // Measure target and calculate card placement
   const updateTargetPosition = useCallback(() => {
-    if (!isOpen || !step) return;
+    if (!isOpen || !step) return false;
 
     const el = document.querySelector(step.targetSelector);
     if (!el) {
       // If target isn't found immediately, fallback to viewport center
       setTargetRect(null);
       setPopoverPos({
-        top: window.innerHeight / 2 - 120,
-        left: window.innerWidth / 2 - 190,
+        top: window.innerHeight / 2 - 130,
+        left: window.innerWidth / 2 - Math.min(380, window.innerWidth - 32) / 2,
       });
-      return;
+      return false;
     }
 
     // Scroll into view smoothly if not visible
@@ -137,6 +137,7 @@ export function ProductTour({
     top = Math.max(padding, Math.min(window.innerHeight - cardHeight - padding, top));
 
     setPopoverPos({ top, left });
+    return true;
   }, [isOpen, step]);
 
   // Recalculate on step change, resize, and scroll
@@ -146,11 +147,21 @@ export function ProductTour({
       return;
     }
 
-    // Short timeout to let layout settle
-    const timer = setTimeout(() => {
-      updateTargetPosition();
-      setIsVisible(true);
-    }, 80);
+    // Initial attempt
+    const found = updateTargetPosition();
+    setIsVisible(true);
+
+    // If target not in DOM yet (e.g. data fetching), poll briefly until it renders
+    let pollInterval: NodeJS.Timeout | null = null;
+    if (!found) {
+      let attempts = 0;
+      pollInterval = setInterval(() => {
+        attempts++;
+        if (updateTargetPosition() || attempts > 20) {
+          if (pollInterval) clearInterval(pollInterval);
+        }
+      }, 100);
+    }
 
     const handleResize = () => updateTargetPosition();
     const handleScroll = () => updateTargetPosition();
@@ -159,7 +170,7 @@ export function ProductTour({
     window.addEventListener("scroll", handleScroll, true);
 
     return () => {
-      clearTimeout(timer);
+      if (pollInterval) clearInterval(pollInterval);
       window.removeEventListener("resize", handleResize);
       window.removeEventListener("scroll", handleScroll, true);
     };
