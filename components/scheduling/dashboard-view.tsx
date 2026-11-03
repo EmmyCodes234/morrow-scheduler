@@ -28,7 +28,9 @@ import {
   HugeContacts,
   HugeArrowRight,
   HugeSidebar,
+  HugeSparkles,
 } from "@/components/icons/hugeicons";
+import { ProductTour } from "@/components/application/dashboard/product-tour";
 import { NewEventModal, type EventFormData } from "@/components/scheduling/modals/new-event-modal";
 import { RescheduleModal } from "@/components/scheduling/modals/reschedule-modal";
 import { ZoomModal } from "@/components/scheduling/modals/zoom-modal";
@@ -157,6 +159,19 @@ export function DashboardView({
 
   // Status message
   const [statusNotification, setStatusNotification] = useState<string | null>(null);
+
+  // Interactive Onboarding Tour state
+  const [tourOpen, setTourOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const completed = localStorage.getItem("morrow_tour_completed_v1");
+      if (!completed) {
+        const t = setTimeout(() => setTourOpen(true), 1000);
+        return () => clearTimeout(t);
+      }
+    } catch {}
+  }, []);
 
   const showNotification = (msg: string) => {
     setStatusNotification(msg);
@@ -484,6 +499,7 @@ export function DashboardView({
       label: "Working hours",
       icon: HugeClock,
       onClick: () => setActiveTab("availability"),
+      dataTour: "nav-working-hours",
     },
     {
       key: "contacts",
@@ -570,6 +586,10 @@ export function DashboardView({
                 },
               }))}
               user={user}
+              onStartTour={() => {
+                setIsMobileMenuOpen(false);
+                setTourOpen(true);
+              }}
             />
           </div>
         </div>
@@ -581,6 +601,7 @@ export function DashboardView({
         items={sidebarNavItems}
         user={user}
         showThemeToggle={false}
+        onStartTour={() => setTourOpen(true)}
         className="shrink-0 sticky top-6 h-[calc(100vh-3rem)] hidden lg:flex"
       />
 
@@ -603,25 +624,38 @@ export function DashboardView({
                 </p>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
                 <Button
-                  variant="secondary"
-                  leadingIcon={copiedId === "profile" ? HugeCheck : HugeCopy}
-                  onClick={() => handleCopy("profile", "")}
+                  variant="ghost"
+                  leadingIcon={HugeSparkles}
+                  onClick={() => setTourOpen(true)}
+                  title="Take a quick tour"
                 >
-                  {copiedId === "profile" ? "Link copied" : "Copy profile link"}
+                  Quick tour
                 </Button>
 
-                <Button
-                  variant="primary"
-                  leadingIcon={HugeAdd}
-                  onClick={() => {
-                    setEditingEvent(null);
-                    setIsNewEventOpen(true);
-                  }}
-                >
-                  New event type
-                </Button>
+                <div data-tour="copy-link-btn">
+                  <Button
+                    variant="secondary"
+                    leadingIcon={copiedId === "profile" ? HugeCheck : HugeCopy}
+                    onClick={() => handleCopy("profile", "")}
+                  >
+                    {copiedId === "profile" ? "Link copied" : "Copy profile link"}
+                  </Button>
+                </div>
+
+                <div data-tour="new-event-btn">
+                  <Button
+                    variant="primary"
+                    leadingIcon={HugeAdd}
+                    onClick={() => {
+                      setEditingEvent(null);
+                      setIsNewEventOpen(true);
+                    }}
+                  >
+                    New event type
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -656,9 +690,10 @@ export function DashboardView({
 
             {/* Event Types Card Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              {eventTypes.map((event) => (
+              {eventTypes.map((event, idx) => (
                 <div
                   key={event.id}
+                  data-tour={idx === 0 ? "event-types-card" : undefined}
                   className={`rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col justify-between gap-6 hover:border-accent-500/50 transition-all shadow-2xs ${
                     !event.active ? "opacity-60 grayscale-[40%]" : ""
                   }`}
@@ -1166,6 +1201,12 @@ export function DashboardView({
         onClose={() => setIsGCalModalOpen(false)}
         userEmail={user.email}
         isConnected={user.hasGoogleCalendar}
+      />
+
+      {/* Interactive Onboarding Walkthrough Tour */}
+      <ProductTour
+        isOpen={tourOpen}
+        onClose={() => setTourOpen(false)}
       />
     </div>
   );

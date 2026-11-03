@@ -25,6 +25,7 @@ import {
   HugeDashboard,
   HugeAnalytics,
   HugeContacts,
+  HugeSparkles,
 } from "@/components/icons/hugeicons";
 import { SettingsModal } from "@/components/application/settings/settings-modal";
 import { SupportModal } from "@/components/application/support/support-modal";
@@ -88,6 +89,7 @@ function NavItem({
   collapsed = false,
   href = "#",
   onClick,
+  dataTour,
 }: {
   icon: IconComponent;
   label: string;
@@ -97,11 +99,13 @@ function NavItem({
   href?: string;
   /** Action rows (e.g. Settings → modal) intercept the navigation. */
   onClick?: () => void;
+  dataTour?: string;
 }) {
   const localize = useTemplateCopy();
   return localize((
     <a
       href={href}
+      data-tour={dataTour}
       onClick={
         onClick
           ? (event) => {
@@ -151,6 +155,7 @@ export interface DashboardNavItem {
   href?: string;
   badge?: string | number;
   onClick?: () => void;
+  dataTour?: string;
 }
 
 /** Kept as a name for callers that typed their `selected` prop; any key works. */
@@ -203,6 +208,7 @@ function NavRows({
           isSelected={isSelected}
           collapsed={collapsed}
           onClick={item.onClick}
+          dataTour={item.dataTour}
           badge={
             item.badge !== undefined ? (
               <Badge color={isSelected ? "primary" : "neutral"}>{item.badge}</Badge>
@@ -223,6 +229,7 @@ export function DashboardSidebar({
   flat = false,
   className,
   user,
+  onStartTour,
 }: {
   /** Rendered inside the mobile drawer: always expanded, close button instead of collapse. */
   mobile?: boolean;
@@ -248,6 +255,8 @@ export function DashboardSidebar({
     slug: string;
     initials: string;
   };
+  /** Callback to launch the interactive product walkthrough tour */
+  onStartTour?: () => void;
 } = {}) {
   const localize = useTemplateCopy();
   const [collapsedState, setCollapsed] = useState(false);
@@ -262,7 +271,7 @@ export function DashboardSidebar({
   const collapsed = mobile ? false : collapsedState;
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const matches = (label: string) => label.toLocaleLowerCase().includes(normalizedQuery);
-  const secondaryLabels = ["Support", "Settings"];
+  const secondaryLabels = ["Support", "Settings", "Tour"];
   const secondaryMatch = secondaryLabels.some(matches);
 
   const activateSearch = useCallback(() => {
@@ -543,12 +552,21 @@ export function DashboardSidebar({
           ))}
         {/* Secondary nav */}
         <nav className="flex w-full flex-col gap-1">
+          {onStartTour && matches("Tour") && (
+            <NavItem
+              icon={HugeSparkles}
+              label="Quick tour"
+              collapsed={collapsed}
+              onClick={onStartTour}
+            />
+          )}
           {matches("Support") && (
             <NavItem
               icon={HugeSupport}
               label="Support"
               collapsed={collapsed}
               onClick={() => setSupportOpen(true)}
+              dataTour="sidebar-support"
             />
           )}
           {matches("Settings") && (

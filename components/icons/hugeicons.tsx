@@ -37,6 +37,8 @@ import {
   Upload01Icon,
   File01Icon,
   Image01Icon,
+  SparklesIcon,
+  Compass01Icon,
 } from "@hugeicons/core-free-icons";
 
 type IconProps = {
@@ -84,3 +86,5 @@ export const HugeLock = wrapIcon(LockIcon);
 export const HugeUpload = wrapIcon(Upload01Icon);
 export const HugeFile = wrapIcon(File01Icon);
 export const HugeImage = wrapIcon(Image01Icon);
+export const HugeSparkles = wrapIcon(SparklesIcon);
+export const HugeCompass = wrapIcon(Compass01Icon);
