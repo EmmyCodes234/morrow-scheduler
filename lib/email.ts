@@ -22,9 +22,13 @@ export interface BookingEmailPayload {
   meetLink?: string;
   guestNotes?: string;
   cancelUrl?: string;
+  idempotencyKey?: string;
 }
 
-export async function sendBookingConfirmationEmail(payload: BookingEmailPayload): Promise<boolean> {
+export async function sendBookingConfirmationEmail(
+  payload: BookingEmailPayload,
+  idempotencyKey?: string
+): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
     console.log("[Email] Resend API key not configured, skipping dispatch:", payload.toEmail);
@@ -53,12 +57,18 @@ export async function sendBookingConfirmationEmail(payload: BookingEmailPayload)
     : `Confirmed: ${payload.eventTitle} with ${payload.hostName}`;
 
   try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    const key = idempotencyKey || payload.idempotencyKey;
+    if (key) {
+      headers["Idempotency-Key"] = key;
+    }
+
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         from: "Morrow <notifications@usemorrow.xyz>",
         to: [payload.toEmail],
@@ -68,14 +78,17 @@ export async function sendBookingConfirmationEmail(payload: BookingEmailPayload)
     });
 
     if (!res.ok) {
-      const err = await res.text();
-      console.error("[Email] Resend API error (guest):", err);
+      const err = await res.text().catch(() => "");
+      console.error(`[Email] Resend API error (${res.status}):`, err);
       return false;
     }
 
     // Also notify host if host email is present
     if (payload.hostEmail && payload.hostEmail !== payload.toEmail) {
-      sendHostNotificationEmail(payload).catch((e) =>
+      sendHostNotificationEmail(
+        payload,
+        key ? `${key}-host` : undefined
+      ).catch((e) =>
         console.error("[Email] Error sending host notification:", e)
       );
     }
@@ -87,7 +100,10 @@ export async function sendBookingConfirmationEmail(payload: BookingEmailPayload)
   }
 }
 
-export async function sendBookingApprovalEmail(payload: BookingEmailPayload): Promise<boolean> {
+export async function sendBookingApprovalEmail(
+  payload: BookingEmailPayload,
+  idempotencyKey?: string
+): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
     console.log("[Email] Resend API key not configured, skipping approval email:", payload.toEmail);
@@ -109,12 +125,18 @@ export async function sendBookingApprovalEmail(payload: BookingEmailPayload): Pr
   });
 
   try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    const key = idempotencyKey || payload.idempotencyKey;
+    if (key) {
+      headers["Idempotency-Key"] = key;
+    }
+
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         from: "Morrow <notifications@usemorrow.xyz>",
         to: [payload.toEmail],
@@ -122,23 +144,34 @@ export async function sendBookingApprovalEmail(payload: BookingEmailPayload): Pr
         html,
       }),
     });
-    return res.ok;
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.error(`[Email] Resend API error (${res.status}):`, err);
+      return false;
+    }
+
+    return true;
   } catch (err) {
     console.error("[Email] Failed to send approval email:", err);
     return false;
   }
 }
 
-export async function sendBookingRejectionEmail(payload: {
-  toEmail: string;
-  guestName: string;
-  hostName: string;
-  eventTitle: string;
-  dateStr: string;
-  timeStr: string;
-  reason?: string;
-  bookingUrl?: string;
-}): Promise<boolean> {
+export async function sendBookingRejectionEmail(
+  payload: {
+    toEmail: string;
+    guestName: string;
+    hostName: string;
+    eventTitle: string;
+    dateStr: string;
+    timeStr: string;
+    reason?: string;
+    bookingUrl?: string;
+    idempotencyKey?: string;
+  },
+  idempotencyKey?: string
+): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
     console.log("[Email] Resend API key not configured, skipping rejection email:", payload.toEmail);
@@ -156,12 +189,18 @@ export async function sendBookingRejectionEmail(payload: {
   });
 
   try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    const key = idempotencyKey || payload.idempotencyKey;
+    if (key) {
+      headers["Idempotency-Key"] = key;
+    }
+
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         from: "Morrow <notifications@usemorrow.xyz>",
         to: [payload.toEmail],
@@ -169,14 +208,24 @@ export async function sendBookingRejectionEmail(payload: {
         html,
       }),
     });
-    return res.ok;
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.error(`[Email] Resend API error (${res.status}):`, err);
+      return false;
+    }
+
+    return true;
   } catch (err) {
     console.error("[Email] Failed to send rejection email:", err);
     return false;
   }
 }
 
-async function sendHostNotificationEmail(payload: BookingEmailPayload): Promise<boolean> {
+async function sendHostNotificationEmail(
+  payload: BookingEmailPayload,
+  idempotencyKey?: string
+): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey || !payload.hostEmail) return false;
 
@@ -203,12 +252,17 @@ async function sendHostNotificationEmail(payload: BookingEmailPayload): Promise<
     : `New Meeting: ${payload.guestName} booked ${payload.eventTitle}`;
 
   try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    if (idempotencyKey) {
+      headers["Idempotency-Key"] = idempotencyKey;
+    }
+
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         from: "Morrow <notifications@usemorrow.xyz>",
         to: [payload.hostEmail],

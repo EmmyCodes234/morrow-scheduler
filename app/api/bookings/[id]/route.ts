@@ -189,14 +189,29 @@ export async function PATCH(
         // Synchronize with external calendar only once for winning transition
         const syncResult = await reconcileBookingCalendarSync(existing.id, host.id);
 
+        // Fetch fresh record to preserve any concurrently updated payload fields and avoid stale overwrites
+        const freshForPayload = await db.query.bookings.findFirst({
+          where: eq(bookings.id, id),
+        });
+        const currentPayload = (freshForPayload?.notificationPayload as unknown as DurableNotificationPayload) || notificationPayload;
+
+        // Persist calendar synchronization outcome independently of Meet link presence
+        currentPayload.calendarSynced = Boolean(syncResult.calendarSynced);
         if (syncResult.meetLink) {
-          notificationPayload.meetLink = syncResult.meetLink;
-          notificationPayload.calendarSynced = syncResult.calendarSynced;
-          await db
-            .update(bookings)
-            .set({ notificationPayload })
-            .where(eq(bookings.id, id));
+          currentPayload.meetLink = syncResult.meetLink;
         }
+        // Preserve meeting location and URL in the payload
+        if (effectiveLocation.locationType) {
+          currentPayload.locationType = effectiveLocation.locationType;
+        }
+        if (effectiveLocation.locationUrl && !currentPayload.locationUrl) {
+          currentPayload.locationUrl = effectiveLocation.locationUrl;
+        }
+
+        await db
+          .update(bookings)
+          .set({ notificationPayload: currentPayload as unknown as Record<string, unknown> })
+          .where(eq(bookings.id, id));
 
         // Dispatch durable notification outside the DB transaction
         await dispatchDurableBookingNotification(existing.id);

@@ -393,6 +393,7 @@ export async function reconcileBookingCalendarSync(
         status: "confirmed",
         summary: `${eventType?.title || "Meeting"} with ${booking.guestName}`,
         description: `Scheduled via Morrow (Booking ID: ${booking.id})\n\nGuest: ${booking.guestName} (${booking.guestEmail})\nNotes: ${booking.guestNotes || "None"}`,
+        bookingId: booking.id,
       });
 
       if (!restoreRes.success) {
@@ -413,6 +414,35 @@ export async function reconcileBookingCalendarSync(
           calendarSynced: false,
           eventId: targetEventId,
           error: restoreRes.error || "Existing Google Calendar event is cancelled and could not be restored.",
+        };
+      }
+
+      // Confirm with Google Calendar that the restored event is actually active
+      let isActuallyActive = Boolean(
+        restoreRes.event && restoreRes.event.status && restoreRes.event.status !== "cancelled"
+      );
+      if (!isActuallyActive) {
+        const recheck = await getGoogleCalendarEvent(tokens, targetEventId);
+        isActuallyActive = Boolean(recheck.success && recheck.event && recheck.event.status !== "cancelled");
+      }
+
+      if (!isActuallyActive) {
+        await db
+          .update(bookings)
+          .set({
+            gcalEventId: targetEventId,
+            meetLink: booking.meetLink || null,
+            calendarSyncStatus: "failed",
+            lastSyncError: "Google Calendar event restoration failed: event status remains cancelled.",
+            updatedAt: new Date(),
+          })
+          .where(eq(bookings.id, booking.id));
+
+        return {
+          success: false,
+          calendarSynced: false,
+          eventId: targetEventId,
+          error: "Google Calendar event restoration failed: event status remains cancelled.",
         };
       }
 
@@ -476,6 +506,7 @@ export async function reconcileBookingCalendarSync(
       endTime: booking.endTime,
       guestEmail: booking.guestEmail,
       guestName: booking.guestName,
+      bookingId: booking.id,
       timeZone: host.timezone || "UTC",
       locationType: location.locationType,
       locationUrl: location.locationUrl,
@@ -1010,11 +1041,12 @@ export async function processBooking(
           refreshToken: host.googleRefreshToken,
         },
         summary: `${eventType.title} with ${input.guestName.trim()}`,
-        description: `Scheduled via Morrow\n\nGuest: ${input.guestName.trim()} (${normalizedGuestEmail})\nNotes: ${input.guestNotes || "None"}`,
+        description: `Scheduled via Morrow (Booking ID: ${newBooking.id})\n\nGuest: ${input.guestName.trim()} (${normalizedGuestEmail})\nNotes: ${input.guestNotes || "None"}`,
         startTime: proposedStartTime,
         endTime: proposedEndTime,
         guestEmail: normalizedGuestEmail,
         guestName: input.guestName.trim(),
+        bookingId: newBooking.id,
         timeZone: host.timezone || "UTC",
         locationType: location.locationType,
         locationUrl: location.locationUrl,

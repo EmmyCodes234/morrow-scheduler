@@ -138,10 +138,12 @@ export const bookings = pgTable(
     calendarSyncStatus: text("calendar_sync_status").notNull().default("not_applicable"),
     lastSyncError: text("last_sync_error"),
     notificationType: text("notification_type"), // approval, rejection, cancellation
-    notificationStatus: text("notification_status").notNull().default("idle"), // idle, pending, sent, failed
+    notificationStatus: text("notification_status").notNull().default("idle"), // idle, pending, sending, sent, failed
     notificationAttempts: integer("notification_attempts").notNull().default(0),
     notificationLastError: text("notification_last_error"),
     notificationSentAt: timestamp("notification_sent_at", { withTimezone: true }),
+    notificationClaimToken: text("notification_claim_token"),
+    notificationClaimedAt: timestamp("notification_claimed_at", { withTimezone: true }),
     notificationPayload: jsonb("notification_payload").$type<Record<string, unknown>>(),
     customAnswers: jsonb("custom_answers").$type<Record<string, unknown>>().default({}),
     cancelToken: text("cancel_token").notNull().unique(),

@@ -90,6 +90,7 @@ export interface CreateEventParams {
   endTime: Date;
   guestEmail: string;
   guestName: string;
+  bookingId?: string; // Private booking metadata identifier
   timeZone?: string;
   locationType?: string; // "google_meet" | "zoom" | "in_person" | "phone" | "custom"
   locationUrl?: string | null;
@@ -115,6 +116,7 @@ export async function createGoogleCalendarEvent({
   endTime,
   guestEmail,
   guestName,
+  bookingId,
   timeZone = "UTC",
   locationType = "google_meet",
   locationUrl,
@@ -144,6 +146,12 @@ export async function createGoogleCalendarEvent({
         timeZone,
       },
       attendees: [{ email: guestEmail, displayName: guestName }],
+      extendedProperties: {
+        private: {
+          morrowBookingId: bookingId || "",
+          morrowApp: "morrow-scheduler",
+        },
+      },
     };
 
     if (eventId) {
@@ -239,6 +247,7 @@ export interface PatchEventTimeParams {
   summary?: string;
   description?: string;
   status?: string; // e.g. "confirmed" to restore a cancelled event
+  bookingId?: string; // Private booking metadata identifier
 }
 
 export async function patchGoogleCalendarEventTime({
@@ -250,16 +259,13 @@ export async function patchGoogleCalendarEventTime({
   summary,
   description,
   status,
-}: PatchEventTimeParams): Promise<{ success: boolean; eventId?: string; meetLink?: string; error?: string }> {
+  bookingId,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+}: PatchEventTimeParams): Promise<{ success: boolean; eventId?: string; meetLink?: string; error?: string; event?: any }> {
   try {
     const calendar = getCalendarClient(tokens);
-    const requestBody: {
-      start: { dateTime: string; timeZone: string };
-      end: { dateTime: string; timeZone: string };
-      summary?: string;
-      description?: string;
-      status?: string;
-    } = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const requestBody: Record<string, any> = {
       start: {
         dateTime: startTime.toISOString(),
         timeZone,
@@ -272,6 +278,14 @@ export async function patchGoogleCalendarEventTime({
     if (summary) requestBody.summary = summary;
     if (description) requestBody.description = description;
     if (status) requestBody.status = status;
+    if (bookingId) {
+      requestBody.extendedProperties = {
+        private: {
+          morrowBookingId: bookingId,
+          morrowApp: "morrow-scheduler",
+        },
+      };
+    }
 
     const response = await calendar.events.patch({
       calendarId: "primary",
@@ -291,6 +305,7 @@ export async function patchGoogleCalendarEventTime({
       success: true,
       eventId: response.data.id || eventId,
       meetLink,
+      event: response.data,
     };
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
@@ -308,32 +323,68 @@ export interface GoogleCalendarEventLike {
   attendees?: Array<{ email?: string | null }> | null;
   description?: string | null;
   summary?: string | null;
+  extendedProperties?: {
+    private?: Record<string, string | null | undefined> | null;
+    shared?: Record<string, string | null | undefined> | null;
+  } | null;
   [key: string]: unknown;
 }
 
 /**
- * Validates whether an existing Google Calendar event belongs to the specified booking
- * by checking attendees and event description.
+ * Validates whether an existing Google Calendar event securely belongs to the specified booking.
+ * 
+ * Supported forms of evidence:
+ * 1. Exact private extendedProperties match: morrowBookingId === booking.id
+ * 2. Exact database mapping match: booking.gcalEventId === event.id
+ * 3. Exact deterministic Calendar event ID derived from booking ID: event.id === generateGcalEventId(booking.id)
+ * 4. Exact booking-ID description marker where legacy format can be reliably identified.
+ * 
+ * Explicitly rejected as proof of ownership:
+ * - Guest email alone
+ * - Generic "Scheduled via Morrow" phrase alone
+ * - Generic meeting summary/title alone
  */
 export function isGoogleEventMatchingBooking(
   event: GoogleCalendarEventLike | null | undefined,
-  booking: { id: string; guestEmail: string }
+  booking: { id: string; guestEmail?: string; gcalEventId?: string | null }
 ): boolean {
   if (!event || typeof event !== "object") return false;
 
-  const normalizedGuestEmail = booking.guestEmail.toLowerCase().trim();
-  const attendees = Array.isArray(event.attendees) ? event.attendees : [];
-  const hasAttendee = attendees.some(
-    (att) => att && typeof att.email === "string" && att.email.toLowerCase().trim() === normalizedGuestEmail
-  );
+  // 1. Exact private booking reference in extendedProperties (authoritative marker)
+  const extProps = event.extendedProperties?.private;
+  if (extProps && typeof extProps === "object") {
+    if (extProps.morrowBookingId) {
+      return extProps.morrowBookingId === booking.id;
+    }
+  }
 
+  // 2. Exact legacy booking marker in description
   const description = typeof event.description === "string" ? event.description : "";
-  const hasBookingRef =
-    description.includes(booking.id) ||
-    description.includes(normalizedGuestEmail) ||
-    description.includes("Scheduled via Morrow");
+  const bookingIdMarkerMatch = description.match(/Booking (?:ID|Reference):\s*([a-zA-Z0-9-]+)/i);
+  if (bookingIdMarkerMatch && bookingIdMarkerMatch[1]) {
+    return bookingIdMarkerMatch[1] === booking.id;
+  }
 
-  return hasAttendee || hasBookingRef;
+  // 3. Exact existing database mapping
+  if (booking.gcalEventId && event.id === booking.gcalEventId) {
+    return true;
+  }
+
+  // 4. Exact deterministic Calendar event ID derived from booking ID
+  if (event.id === generateGcalEventId(booking.id)) {
+    return true;
+  }
+
+  // 5. Explicit bracketed token match [morrow:<id>]
+  if (
+    description.includes(`[morrow:${booking.id}]`) ||
+    (booking.id.length >= 8 && description.includes(booking.id))
+  ) {
+    return true;
+  }
+
+  // Explicitly reject guest email alone, "Scheduled via Morrow" alone, or generic title
+  return false;
 }
 
 export async function cancelGoogleCalendarEvent(

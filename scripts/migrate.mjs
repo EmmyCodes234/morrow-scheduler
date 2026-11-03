@@ -57,7 +57,31 @@ async function runMigrations() {
       foundColumnsByTable[row.table_name].push(row.column_name);
     }
 
-    const verification = verifyBaselineSchema(foundTables, foundColumnsByTable);
+    const constraintsResult = await sql`
+      SELECT 
+        con.conname AS name,
+        con.contype::text AS type,
+        rel.relname AS table_name,
+        pg_get_constraintdef(con.oid) AS def
+      FROM pg_constraint con
+      JOIN pg_class rel ON rel.oid = con.conrelid
+      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+      WHERE nsp.nspname = 'public'
+    `;
+
+    const indexesResult = await sql`
+      SELECT tablename AS table_name, indexname AS index_name, indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+    `;
+
+    const verification = verifyBaselineSchema({
+      existingTables: foundTables,
+      existingColumnsByTable: foundColumnsByTable,
+      existingConstraints: constraintsResult,
+      existingIndexes: indexesResult,
+      stage: "0000_baseline",
+    });
 
     if (verification.isFreshDatabase) {
       console.log("[i] Fresh database detected (no baseline tables found). Running migrations from scratch.");

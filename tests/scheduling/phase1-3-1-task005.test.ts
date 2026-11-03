@@ -46,10 +46,18 @@ vi.mock("@/lib/email", () => ({
 }));
 
 // Mock db for unit tests
-vi.mock("@/db", () => {
+const { mockUpdateReturning, mockUpdateSet, mockUpdateWhere } = vi.hoisted(() => {
+  const mockUpdateReturning = vi.fn().mockResolvedValue([]);
   const mockUpdateSet = vi.fn().mockReturnThis();
-  const mockUpdateWhere = vi.fn().mockResolvedValue([{ id: "mock-booking-id" }]);
+  const mockUpdateWhere = vi.fn().mockImplementation(() => ({
+    returning: mockUpdateReturning,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    then: (resolve: any, reject: any) => Promise.resolve([{ id: "mock-booking-id" }]).then(resolve, reject),
+  }));
+  return { mockUpdateReturning, mockUpdateSet, mockUpdateWhere };
+});
 
+vi.mock("@/db", () => {
   return {
     db: {
       query: {
@@ -267,11 +275,11 @@ describe("Phase 1.3.1: Task 005 Regression Test Suite", () => {
       expect(result.error).toContain("cancelled");
     });
 
-    it("verifies event ownership via attendee email and booking ID reference", () => {
+    it("verifies event ownership via booking ID reference and rejects attendee email alone", () => {
       const b = { id: "test-booking-id", guestEmail: "Guest@Example.COM" };
 
-      // Match by attendee
-      expect(isGoogleEventMatchingBooking({ attendees: [{ email: "guest@example.com" }] }, b)).toBe(true);
+      // Reject match by attendee email alone (hardened in Task 006)
+      expect(isGoogleEventMatchingBooking({ attendees: [{ email: "guest@example.com" }] }, b)).toBe(false);
 
       // Match by description with booking id
       expect(isGoogleEventMatchingBooking({ description: "Scheduled via Morrow (Booking ID: test-booking-id)" }, b)).toBe(true);
@@ -354,6 +362,9 @@ describe("Phase 1.3.1: Task 005 Regression Test Suite", () => {
 
   describe("3. Durable Notification Lifecycle", () => {
     it("Scenario 3: Repeated same-state request -> no duplicate notification job dispatched", async () => {
+      // Claim fails because status is already sent
+      mockUpdateReturning.mockResolvedValueOnce([]);
+
       (db.query.bookings.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         id: "booking-already-sent",
         notificationStatus: "sent",
@@ -372,12 +383,13 @@ describe("Phase 1.3.1: Task 005 Regression Test Suite", () => {
         new Error("Resend API 500: Server unavailable")
       );
 
-      (db.query.bookings.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      const bookingPayload = {
         id: "booking-pending-notify",
         status: "confirmed",
-        notificationStatus: "pending",
+        notificationStatus: "sending",
         notificationType: "approval",
-        notificationAttempts: 0,
+        notificationAttempts: 1,
+        notificationClaimToken: "mock-token",
         notificationPayload: {
           toEmail: "guest@example.com",
           guestName: "Guest",
@@ -386,7 +398,14 @@ describe("Phase 1.3.1: Task 005 Regression Test Suite", () => {
           dateStr: "2026-11-10",
           timeStr: "10:00 AM",
         },
-      });
+      };
+
+      // 1. Claim update returns the claimed booking
+      mockUpdateReturning.mockResolvedValueOnce([bookingPayload]);
+      // 2. Fenced completion update succeeds
+      mockUpdateReturning.mockResolvedValueOnce([{ id: "booking-pending-notify" }]);
+
+      (db.query.bookings.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(bookingPayload);
 
       const result = await dispatchDurableBookingNotification("booking-pending-notify");
 

@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { bookings } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { sendBookingApprovalEmail, sendBookingRejectionEmail } from "@/lib/email";
 
 export interface DurableNotificationPayload {
@@ -23,94 +23,269 @@ export interface DurableNotificationPayload {
 }
 
 /**
- * Dispatches a durable notification from the booking outbox.
- * 
- * - Ensures repeated approval/rejection calls do not duplicate notification delivery.
- * - Tracks attempts and records delivery state ('sent' or 'failed').
- * - Allows failed notifications to be retried independently without altering the booking status.
- * - External email transmission occurs strictly outside the database state-transition transaction.
+ * Centrally defined delivery lease duration.
+ * An in-flight 'sending' claim is considered abandoned and recoverable after this duration.
  */
-export async function dispatchDurableBookingNotification(bookingId: string): Promise<{
+export const NOTIFICATION_LEASE_MS = 60_000; // 60 seconds
+
+/**
+ * Generates a stable provider idempotency key for email delivery retries.
+ * Stable across retries for the same booking and notification type.
+ */
+export function generateResendIdempotencyKey(
+  bookingId: string,
+  notificationType: string
+): string {
+  return `morrow-booking-${bookingId}-${notificationType}-v1`;
+}
+
+export type DispatchNotificationStatus =
+  | "sent"
+  | "already_sent"
+  | "sending"
+  | "failed"
+  | "claim_locked"
+  | "claim_failed"
+  | "stale_worker"
+  | "idle"
+  | "not_found";
+
+export interface DispatchNotificationResult {
   success: boolean;
-  status: "sent" | "failed" | "already_sent";
+  status: DispatchNotificationStatus;
   error?: string;
-}> {
-  const booking = await db.query.bookings.findFirst({
-    where: eq(bookings.id, bookingId),
-  });
+  claimToken?: string;
+}
 
-  if (!booking) {
-    return { success: false, status: "failed", error: "Booking not found" };
-  }
+/**
+ * Dispatches a durable notification from the booking outbox with atomic claiming,
+ * fence token protection, and provider idempotency keys.
+ * 
+ * State Machine:
+ *   idle → pending → sending → sent
+ *   sending → failed → sending
+ * 
+ * Lease & Stale Worker Protection:
+ *   - Uses conditional PostgreSQL update to claim the notification row atomically.
+ *   - A unique claim token is generated per attempt.
+ *   - Completion updates (both success and failure) are fenced to the specific claim token and 'sending' status.
+ *   - If a worker's lease expires and another worker acquires the claim, the stale worker's final update is safely ignored.
+ * 
+ * Resend Idempotency:
+ *   - Generates stable key: `morrow-booking-${bookingId}-${notificationType}-v1`.
+ *   - The payload and key remain immutable across retries.
+ *   - Provider Limitation Note: Resend retains idempotency keys for 24 hours. Application-level recovery
+ *     beyond this 24-hour window maintains delivery state independently via PostgreSQL.
+ */
+export async function dispatchDurableBookingNotification(
+  bookingId: string
+): Promise<DispatchNotificationResult> {
+  const claimToken = crypto.randomUUID();
+  const now = new Date();
+  const leaseCutoff = new Date(now.getTime() - NOTIFICATION_LEASE_MS);
 
-  // Idempotency: do not resend if already marked sent
-  if (booking.notificationStatus === "sent") {
-    return { success: true, status: "already_sent" };
-  }
-
-  const payload = booking.notificationPayload as unknown as DurableNotificationPayload | null;
-  if (!payload || !booking.notificationType) {
-    return { success: false, status: "failed", error: "No notification intent found on booking" };
-  }
+  // 1. Atomic Claim via conditional update
+  // Only claim if status is 'pending' or 'failed', or if status is 'sending' and lease has expired.
+  // Never claim 'idle' (requires explicit intent) or 'sent'.
+  let claimedBooking: typeof bookings.$inferSelect | undefined;
 
   try {
-    if (booking.notificationType === "approval") {
-      await sendBookingApprovalEmail({
-        toEmail: payload.toEmail,
-        guestName: payload.guestName,
-        hostName: payload.hostName,
-        hostEmail: payload.hostEmail || "",
-        eventTitle: payload.eventTitle,
-        dateStr: payload.dateStr,
-        timeStr: payload.timeStr,
-        durationMins: payload.durationMins || 30,
-        calendarSynced: Boolean(payload.calendarSynced),
-        locationType: payload.locationType || "google_meet",
-        locationUrl: payload.locationUrl || undefined,
-        meetLink: payload.meetLink,
-        cancelUrl: payload.cancelUrl || "",
-      });
-    } else if (booking.notificationType === "rejection") {
-      await sendBookingRejectionEmail({
-        toEmail: payload.toEmail,
-        guestName: payload.guestName,
-        hostName: payload.hostName,
-        eventTitle: payload.eventTitle,
-        dateStr: payload.dateStr,
-        timeStr: payload.timeStr,
-        reason: payload.reason,
-        bookingUrl: payload.bookingUrl || "",
-      });
-    }
-
-    // Record successful delivery
-    await db
+    const [claimed] = await db
       .update(bookings)
       .set({
-        notificationStatus: "sent",
-        notificationSentAt: new Date(),
-        notificationAttempts: (booking.notificationAttempts || 0) + 1,
-        notificationLastError: null,
-        updatedAt: new Date(),
+        notificationStatus: "sending",
+        notificationClaimToken: claimToken,
+        notificationClaimedAt: now,
+        notificationAttempts: sql`${bookings.notificationAttempts} + 1`,
+        updatedAt: now,
       })
-      .where(eq(bookings.id, bookingId));
+      .where(
+        and(
+          eq(bookings.id, bookingId),
+          or(
+            inArray(bookings.notificationStatus, ["pending", "failed"]),
+            and(
+              eq(bookings.notificationStatus, "sending"),
+              lt(bookings.notificationClaimedAt, leaseCutoff)
+            )
+          )
+        )
+      )
+      .returning();
 
-    return { success: true, status: "sent" };
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[Notification Outbox] Delivery failed for booking ${bookingId}:`, errorMsg);
+    claimedBooking = claimed;
+  } catch (claimErr) {
+    console.error("[Notification Outbox] Error during atomic claim:", claimErr);
+    return {
+      success: false,
+      status: "claim_failed",
+      error: claimErr instanceof Error ? claimErr.message : String(claimErr),
+    };
+  }
 
-    // Record failed attempt while keeping status retryable
+  // 2. If row was not claimed, inspect existing state to return precise reason
+  if (!claimedBooking) {
+    const existing = await db.query.bookings.findFirst({
+      where: eq(bookings.id, bookingId),
+    });
+
+    if (!existing) {
+      return { success: false, status: "not_found", error: "Booking not found" };
+    }
+
+    if (existing.notificationStatus === "sent") {
+      return { success: true, status: "already_sent" };
+    }
+
+    if (existing.notificationStatus === "idle") {
+      return {
+        success: false,
+        status: "idle",
+        error: "No notification intent found on booking (status is idle)",
+      };
+    }
+
+    if (existing.notificationStatus === "sending") {
+      // Lease still active under another worker
+      return {
+        success: false,
+        status: "claim_locked",
+        error: "Another worker currently owns the notification delivery lease",
+      };
+    }
+
+    return {
+      success: false,
+      status: "claim_failed",
+      error: `Could not acquire notification claim for status '${existing.notificationStatus}'`,
+    };
+  }
+
+  // 3. Validate notification payload and intent
+  const payload = claimedBooking.notificationPayload as unknown as DurableNotificationPayload | null;
+  if (!payload || !claimedBooking.notificationType) {
+    // Release claim back to failed with descriptive error
     await db
       .update(bookings)
       .set({
         notificationStatus: "failed",
-        notificationAttempts: (booking.notificationAttempts || 0) + 1,
-        notificationLastError: errorMsg,
+        notificationLastError: "Missing notification payload or notification type",
         updatedAt: new Date(),
       })
-      .where(eq(bookings.id, bookingId));
+      .where(
+        and(
+          eq(bookings.id, bookingId),
+          eq(bookings.notificationClaimToken, claimToken),
+          eq(bookings.notificationStatus, "sending")
+        )
+      );
 
-    return { success: false, status: "failed", error: errorMsg };
+    return {
+      success: false,
+      status: "failed",
+      error: "No notification intent found on booking",
+    };
   }
+
+  // 4. Stable Resend Idempotency Key (immutable across retries)
+  const notificationType = claimedBooking.notificationType;
+  const idempotencyKey = generateResendIdempotencyKey(bookingId, notificationType);
+
+  let emailAccepted = false;
+  let deliveryError: string | null = null;
+
+  try {
+    if (notificationType === "approval") {
+      emailAccepted = await sendBookingApprovalEmail(
+        {
+          toEmail: payload.toEmail,
+          guestName: payload.guestName,
+          hostName: payload.hostName,
+          hostEmail: payload.hostEmail || "",
+          eventTitle: payload.eventTitle,
+          dateStr: payload.dateStr,
+          timeStr: payload.timeStr,
+          durationMins: payload.durationMins || 30,
+          calendarSynced: Boolean(payload.calendarSynced),
+          locationType: payload.locationType || "google_meet",
+          locationUrl: payload.locationUrl || undefined,
+          meetLink: payload.meetLink,
+          cancelUrl: payload.cancelUrl || "",
+        },
+        idempotencyKey
+      );
+    } else if (notificationType === "rejection") {
+      emailAccepted = await sendBookingRejectionEmail(
+        {
+          toEmail: payload.toEmail,
+          guestName: payload.guestName,
+          hostName: payload.hostName,
+          eventTitle: payload.eventTitle,
+          dateStr: payload.dateStr,
+          timeStr: payload.timeStr,
+          reason: payload.reason,
+          bookingUrl: payload.bookingUrl || "",
+        },
+        idempotencyKey
+      );
+    } else {
+      deliveryError = `Unsupported notification type: ${notificationType}`;
+    }
+
+    if (!emailAccepted && !deliveryError) {
+      deliveryError = "Email provider rejected or failed to accept message";
+    }
+  } catch (sendErr) {
+    emailAccepted = false;
+    deliveryError = sendErr instanceof Error ? sendErr.message : String(sendErr);
+  }
+
+  // 5. Fenced Status Update (Protects against stale workers whose lease expired)
+  const [fencedRow] = await db
+    .update(bookings)
+    .set(
+      emailAccepted
+        ? {
+            notificationStatus: "sent",
+            notificationSentAt: new Date(),
+            notificationLastError: null,
+            updatedAt: new Date(),
+          }
+        : {
+            notificationStatus: "failed",
+            notificationLastError: deliveryError || "Notification delivery failed",
+            updatedAt: new Date(),
+          }
+    )
+    .where(
+      and(
+        eq(bookings.id, bookingId),
+        eq(bookings.notificationClaimToken, claimToken),
+        eq(bookings.notificationStatus, "sending")
+      )
+    )
+    .returning();
+
+  if (!fencedRow) {
+    console.warn(
+      `[Notification Outbox] Stale worker claim detected for booking ${bookingId}. Lease expired and claim was re-acquired.`
+    );
+    return {
+      success: false,
+      status: "stale_worker",
+      error: "Notification claim expired and was acquired by another worker",
+      claimToken,
+    };
+  }
+
+  if (emailAccepted) {
+    return { success: true, status: "sent", claimToken };
+  }
+
+  return {
+    success: false,
+    status: "failed",
+    error: deliveryError || "Delivery rejected by email provider",
+    claimToken,
+  };
 }
