@@ -7,7 +7,6 @@ import {
   reconcileBookingCalendarSync,
 } from "@/lib/scheduling/booking-service";
 import {
-  cancelGoogleCalendarEvent,
   fetchGoogleBusyBlocks,
 } from "@/lib/google-calendar";
 import {
@@ -18,6 +17,7 @@ import {
 import { validateBookingRequest } from "@/lib/scheduling/validation";
 import { resolveEffectiveLocation } from "@/lib/scheduling/location";
 import { parseJsonRequest } from "@/lib/http/parse-json";
+import { cancelBooking } from "@/lib/scheduling/cancellation-service";
 import { dispatchDurableBookingNotification, type DurableNotificationPayload } from "@/lib/scheduling/notification-service";
 
 export async function PATCH(
@@ -297,31 +297,38 @@ export async function PATCH(
         return NextResponse.json({ success: true, booking: updated || transitionWon });
       }
 
-      // Confirmed -> Cancelled (Cancellation Workflow)
+      // Confirmed/Pending -> Cancelled (Cancellation Workflow)
       if (requestedStatus === "cancelled") {
-        if (existing.status === "cancelled") {
-          return NextResponse.json({ success: true, booking: existing });
-        }
+        const cancelResult = await cancelBooking({
+          identifier: id,
+          identifierType: "id",
+          cancelledBy: "host",
+          hostId: host.id,
+          reason: typeof body.reason === "string" ? body.reason : undefined,
+        });
 
-        // Cancel external Google Calendar event if present
-        if (existing.gcalEventId && (host.googleAccessToken || host.googleRefreshToken)) {
-          await cancelGoogleCalendarEvent(
-            { accessToken: host.googleAccessToken, refreshToken: host.googleRefreshToken },
-            existing.gcalEventId
+        if (!cancelResult.success) {
+          const status =
+            cancelResult.errorCode === "NOT_FOUND"
+              ? 404
+              : cancelResult.errorCode === "UNAUTHORIZED"
+              ? 403
+              : cancelResult.errorCode === "CONFLICT"
+              ? 409
+              : 400;
+
+          return NextResponse.json(
+            { error: cancelResult.error, errorCode: cancelResult.errorCode },
+            { status }
           );
         }
 
-        const [updated] = await db
-          .update(bookings)
-          .set({
-            status: "cancelled",
-            cancelledAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(eq(bookings.id, id))
-          .returning();
-
-        return NextResponse.json({ success: true, booking: updated });
+        return NextResponse.json({
+          success: true,
+          booking: cancelResult.booking,
+          alreadyCancelled: cancelResult.alreadyCancelled,
+          calendarSyncResult: cancelResult.calendarSyncResult,
+        });
       }
 
       // Allowed post-meeting statuses
@@ -558,25 +565,36 @@ export async function DELETE(
       return NextResponse.json({ error: "Booking not found" }, { status: 404 });
     }
 
-    // Cancel Google Calendar event if present
-    if (existing.gcalEventId && (host.googleAccessToken || host.googleRefreshToken)) {
-      await cancelGoogleCalendarEvent(
-        { accessToken: host.googleAccessToken, refreshToken: host.googleRefreshToken },
-        existing.gcalEventId
+    const cancelResult = await cancelBooking({
+      identifier: id,
+      identifierType: "id",
+      cancelledBy: "host",
+      hostId: host.id,
+      reason: undefined,
+    });
+
+    if (!cancelResult.success) {
+      const status =
+        cancelResult.errorCode === "NOT_FOUND"
+          ? 404
+          : cancelResult.errorCode === "UNAUTHORIZED"
+          ? 403
+          : cancelResult.errorCode === "CONFLICT"
+          ? 409
+          : 400;
+
+      return NextResponse.json(
+        { error: cancelResult.error, errorCode: cancelResult.errorCode },
+        { status }
       );
     }
 
-    // Mark as cancelled rather than hard deleting
-    await db
-      .update(bookings)
-      .set({
-        status: "cancelled",
-        cancelledAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(bookings.id, id));
-
-    return NextResponse.json({ success: true, cancelledId: id });
+    return NextResponse.json({
+      success: true,
+      cancelledId: id,
+      booking: cancelResult.booking,
+      alreadyCancelled: cancelResult.alreadyCancelled,
+    });
   } catch (err) {
     console.error("Error cancelling booking:", err);
     return NextResponse.json({ error: "Failed to cancel booking" }, { status: 500 });

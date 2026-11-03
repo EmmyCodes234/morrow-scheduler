@@ -1,7 +1,12 @@
 import { db } from "@/db";
 import { bookings } from "@/db/schema";
 import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
-import { sendBookingApprovalEmail, sendBookingRejectionEmail } from "@/lib/email";
+import {
+  sendBookingApprovalEmail,
+  sendBookingRejectionEmail,
+  sendGuestCancellationEmail,
+  sendHostCancellationEmail,
+} from "@/lib/email";
 
 export interface DurableNotificationPayload {
   toEmail: string;
@@ -225,6 +230,35 @@ export async function dispatchDurableBookingNotification(
           timeStr: payload.timeStr,
           reason: payload.reason,
           bookingUrl: payload.bookingUrl || "",
+        },
+        idempotencyKey
+      );
+    } else if (notificationType === "guest_cancellation") {
+      emailAccepted = await sendGuestCancellationEmail(
+        {
+          toEmail: payload.hostEmail || payload.toEmail,
+          hostName: payload.hostName,
+          guestName: payload.guestName,
+          guestEmail: (payload.guestEmail as string) || payload.toEmail,
+          eventTitle: payload.eventTitle,
+          dateStr: payload.dateStr,
+          timeStr: payload.timeStr,
+          reason: payload.reason,
+          dashboardUrl: payload.dashboardUrl as string | undefined,
+        },
+        idempotencyKey
+      );
+    } else if (notificationType === "host_cancellation" || notificationType === "cancellation") {
+      emailAccepted = await sendHostCancellationEmail(
+        {
+          toEmail: payload.toEmail,
+          guestName: payload.guestName,
+          hostName: payload.hostName,
+          eventTitle: payload.eventTitle,
+          dateStr: payload.dateStr,
+          timeStr: payload.timeStr,
+          reason: payload.reason,
+          rebookUrl: (payload.rebookUrl as string | undefined) || payload.bookingUrl,
         },
         idempotencyKey
       );

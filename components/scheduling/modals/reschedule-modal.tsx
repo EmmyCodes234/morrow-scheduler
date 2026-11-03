@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
 import { Button } from "@/components/base/buttons/button";
-import { HugeCalendar, HugeClock, HugeClose, HugeCheck } from "@/components/icons/hugeicons";
+import { HugeCalendar } from "@/components/icons/hugeicons";
+import { RiAlertLine } from "@remixicon/react";
 
 export interface RescheduleModalProps {
   isOpen: boolean;
@@ -17,24 +18,31 @@ export interface RescheduleModalProps {
     time: string;
   } | null;
   onConfirmReschedule?: (id: string, reason: string) => Promise<void> | void;
-  onConfirmCancel?: (id: string) => Promise<void> | void;
+  onConfirmCancel?: (id: string, reason?: string) => Promise<void | boolean> | void;
 }
 
 export function RescheduleModal({
   isOpen,
   onClose,
   booking,
-  onConfirmReschedule,
   onConfirmCancel,
 }: RescheduleModalProps) {
   const [mode, setMode] = useState<"choose" | "cancelConfirm">("choose");
   const [reason, setReason] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!booking) return null;
 
+  const handleModalClose = () => {
+    setMode("choose");
+    setReason("");
+    setError(null);
+    onClose();
+  };
+
   return (
-    <Modal isOpen={isOpen} onOpenChange={onClose} size="md">
+    <Modal isOpen={isOpen} onOpenChange={handleModalClose} size="md">
       {({ close }) => (
         <>
           <ModalHeader
@@ -62,16 +70,30 @@ export function RescheduleModal({
                 </div>
               </div>
 
+              {error && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-text-error-primary text-body-2-regular flex items-start gap-2">
+                  <RiAlertLine className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+              )}
+
               {mode === "cancelConfirm" ? (
                 <div className="flex flex-col gap-2">
-                  <span className="text-body-medium text-text-primary font-medium">
-                    Reason for cancellation (optional)
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-body-medium text-text-primary font-medium">
+                      Reason for cancellation (optional)
+                    </span>
+                    <span className="text-caption-1-regular text-text-tertiary">
+                      {reason.length}/500
+                    </span>
+                  </div>
                   <input
                     type="text"
                     value={reason}
+                    maxLength={500}
                     onChange={(e) => setReason(e.target.value)}
                     placeholder="e.g. Schedule conflict"
+                    disabled={isProcessing}
                     className="w-full rounded-xl border border-border-button-default bg-background-secondary-default px-3 py-2 text-body-medium text-text-primary outline-none focus:ring-2 focus:ring-border-focus-ring"
                   />
                 </div>
@@ -86,7 +108,14 @@ export function RescheduleModal({
           <ModalFooter>
             {mode === "cancelConfirm" ? (
               <>
-                <Button variant="secondary" onClick={() => setMode("choose")} disabled={isProcessing}>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setError(null);
+                    setMode("choose");
+                  }}
+                  disabled={isProcessing}
+                >
                   Back
                 </Button>
                 <Button
@@ -94,10 +123,14 @@ export function RescheduleModal({
                   disabled={isProcessing}
                   onClick={async () => {
                     setIsProcessing(true);
+                    setError(null);
                     try {
-                      await onConfirmCancel?.(booking.id);
+                      await onConfirmCancel?.(booking.id, reason.trim() || undefined);
                       setMode("choose");
+                      setReason("");
                       close();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Failed to cancel meeting.");
                     } finally {
                       setIsProcessing(false);
                     }
@@ -114,7 +147,10 @@ export function RescheduleModal({
                 <Button
                   variant="danger"
                   disabled={isProcessing}
-                  onClick={() => setMode("cancelConfirm")}
+                  onClick={() => {
+                    setError(null);
+                    setMode("cancelConfirm");
+                  }}
                 >
                   Cancel event
                 </Button>

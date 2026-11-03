@@ -229,7 +229,7 @@ export function DashboardView({
       .then((data) => {
         if (data.eventTypes && Array.isArray(data.eventTypes)) {
           setEventTypes(
-            data.eventTypes.map((et: any) => ({
+            data.eventTypes.map((et: { id: string; title: string; slug: string; durationMins?: number; description?: string; locationType?: string; isActive?: boolean }) => ({
               id: et.id,
               title: et.title,
               slug: et.slug,
@@ -271,8 +271,8 @@ export function DashboardView({
       .then((res) => res.json())
       .then((data) => {
         if (data.availability && Array.isArray(data.availability) && data.availability.length > 0) {
-          const map = new Map<number, any>();
-          data.availability.forEach((row: any) => {
+          const map = new Map<number, { dayOfWeek: number; isEnabled: boolean; startTime: string; endTime: string }>();
+          data.availability.forEach((row: { dayOfWeek: number; isEnabled: boolean; startTime: string; endTime: string }) => {
             map.set(row.dayOfWeek, row);
           });
 
@@ -466,15 +466,27 @@ export function DashboardView({
   };
 
   // Booking actions
-  const handleCancelBooking = async (id: string) => {
+  const handleCancelBooking = async (id: string, reason?: string) => {
     const res = await fetch(`/api/bookings/${id}`, {
-      method: "DELETE",
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        status: "cancelled",
+        reason: reason?.trim() || undefined,
+      }),
     });
     if (res.ok) {
       setBookings((prev) =>
         prev.map((b) => (b.id === id ? { ...b, status: "Cancelled" } : b))
       );
       showNotification("Meeting cancelled");
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      const msg = errData.error || "Failed to cancel meeting";
+      showNotification(msg);
+      throw new Error(msg);
     }
   };
 

@@ -258,7 +258,7 @@ export function buildGuestConfirmationEmail(data: {
       subheadline: `Hi ${data.guestName}, your request for ${data.eventTitle} with ${data.hostName} has been submitted. This event requires host approval. You will receive an update once the host reviews your request.`,
       contentHtml: content,
       footerLinks: data.cancelUrl ? [
-        { label: "Cancel Request", url: data.cancelUrl },
+        { label: "Cancel request", url: data.cancelUrl },
       ] : undefined,
     });
   }
@@ -279,7 +279,7 @@ export function buildGuestConfirmationEmail(data: {
       url: locationInfo.ctaUrl,
     } : undefined,
     footerLinks: data.cancelUrl ? [
-      { label: "Reschedule or Cancel", url: data.cancelUrl },
+      { label: "Cancel booking", url: data.cancelUrl },
     ] : undefined,
   });
 }
@@ -497,7 +497,7 @@ export function buildGuestApprovalEmail(data: {
       url: locationInfo.ctaUrl,
     } : undefined,
     footerLinks: data.cancelUrl ? [
-      { label: "Reschedule or Cancel", url: data.cancelUrl },
+      { label: "Cancel booking", url: data.cancelUrl },
     ] : undefined,
   });
 }
@@ -555,6 +555,122 @@ export function buildGuestRejectionEmail(data: {
     primaryCta: data.bookingUrl ? {
       label: "Choose Another Time",
       url: data.bookingUrl,
+    } : undefined,
+  });
+}
+
+
+/**
+ * Host notification when a guest cancels a booking
+ */
+export function buildGuestCancellationEmail(data: {
+  hostName: string;
+  guestName: string;
+  guestEmail: string;
+  eventTitle: string;
+  dateStr: string;
+  timeStr: string;
+  reason?: string;
+  dashboardUrl?: string;
+}): string {
+  const content = `
+    <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px; margin-bottom: 20px;">
+      <div style="margin-bottom: 14px;">
+        <span style="font-size: 16px; font-weight: 700; color: #0F172A;">${data.eventTitle}</span>
+      </div>
+
+      <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; color: #334155; line-height: 1.7;">
+        <tr>
+          <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📅</td>
+          <td style="padding-bottom: 6px;">
+            <strong style="color: #0F172A;">Scheduled Time:</strong> ${data.dateStr} at ${data.timeStr}
+          </td>
+        </tr>
+        <tr>
+          <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">👤</td>
+          <td style="padding-bottom: 6px;">
+            <strong style="color: #0F172A;">Guest:</strong> ${data.guestName} (${data.guestEmail})
+          </td>
+        </tr>
+        ${data.reason ? `
+          <tr>
+            <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📝</td>
+            <td style="padding-bottom: 6px;">
+              <strong style="color: #0F172A;">Reason:</strong> ${data.reason}
+            </td>
+          </tr>
+        ` : ""}
+      </table>
+    </div>
+  `;
+
+  return renderBoardUIEmailLayout({
+    previewText: `Cancelled: ${data.eventTitle} with ${data.guestName}`,
+    badgeText: "Cancelled",
+    badgeVariant: "destructive",
+    headline: "Meeting Cancelled by Guest",
+    subheadline: `Hi ${data.hostName}, ${data.guestName} has cancelled their scheduled meeting for ${data.eventTitle}. The time slot has been released back to your available hours.`,
+    contentHtml: content,
+    primaryCta: data.dashboardUrl ? {
+      label: "View Bookings",
+      url: data.dashboardUrl,
+    } : undefined,
+  });
+}
+
+/**
+ * Guest notification when a host cancels a booking
+ */
+export function buildHostCancellationEmail(data: {
+  guestName: string;
+  hostName: string;
+  eventTitle: string;
+  dateStr: string;
+  timeStr: string;
+  reason?: string;
+  rebookUrl?: string;
+}): string {
+  const content = `
+    <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px; margin-bottom: 20px;">
+      <div style="margin-bottom: 14px;">
+        <span style="font-size: 16px; font-weight: 700; color: #0F172A;">${data.eventTitle}</span>
+      </div>
+
+      <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; color: #334155; line-height: 1.7;">
+        <tr>
+          <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📅</td>
+          <td style="padding-bottom: 6px;">
+            <strong style="color: #0F172A;">Scheduled Time:</strong> ${data.dateStr} at ${data.timeStr}
+          </td>
+        </tr>
+        <tr>
+          <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">👤</td>
+          <td style="padding-bottom: 6px;">
+            <strong style="color: #0F172A;">Host:</strong> ${data.hostName}
+          </td>
+        </tr>
+        ${data.reason ? `
+          <tr>
+            <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📝</td>
+            <td style="padding-bottom: 6px;">
+              <strong style="color: #0F172A;">Reason:</strong> ${data.reason}
+            </td>
+          </tr>
+        ` : ""}
+      </table>
+    </div>
+  `;
+
+  return renderBoardUIEmailLayout({
+    previewText: `Cancelled: ${data.eventTitle} with ${data.hostName}`,
+    badgeText: "Cancelled",
+    badgeVariant: "destructive",
+    headline: "Meeting Cancelled by Host",
+    subheadline: `Hi ${data.guestName}, your meeting for ${data.eventTitle} with ${data.hostName} has been cancelled.`,
+    contentHtml: content,
+    primaryCta: data.rebookUrl ? {
+      label: "Schedule Another Time",
+      url: data.rebookUrl,
     } : undefined,
   });
 }

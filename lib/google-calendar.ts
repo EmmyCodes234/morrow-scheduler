@@ -387,10 +387,16 @@ export function isGoogleEventMatchingBooking(
   return false;
 }
 
-export async function cancelGoogleCalendarEvent(
+export interface CancelGoogleEventResult {
+  success: boolean;
+  alreadyRemoved?: boolean;
+  error?: string;
+}
+
+export async function cancelGoogleCalendarEventWithDetails(
   tokens: { accessToken?: string | null; refreshToken?: string | null },
   eventId: string
-): Promise<boolean> {
+): Promise<CancelGoogleEventResult> {
   try {
     const calendar = getCalendarClient(tokens);
     await calendar.events.delete({
@@ -398,10 +404,31 @@ export async function cancelGoogleCalendarEvent(
       eventId,
       sendUpdates: "all",
     });
-    return true;
+    return { success: true };
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error("Failed to cancel Google Calendar event:", errorMessage);
-    return false;
+    const errObj = err as { code?: number | string; status?: number; message?: string };
+    const statusCode = Number(errObj?.code || errObj?.status);
+    const message = err instanceof Error ? err.message : String(err);
+
+    // 404 = Not Found, 410 = Gone / Resource has been deleted
+    if (
+      statusCode === 404 ||
+      statusCode === 410 ||
+      /not found|resource has been deleted|gone/i.test(message)
+    ) {
+      console.log(`[Google Calendar] Event ${eventId} was already removed externally.`);
+      return { success: true, alreadyRemoved: true };
+    }
+
+    console.error("Failed to cancel Google Calendar event:", message);
+    return { success: false, error: message };
   }
+}
+
+export async function cancelGoogleCalendarEvent(
+  tokens: { accessToken?: string | null; refreshToken?: string | null },
+  eventId: string
+): Promise<boolean> {
+  const result = await cancelGoogleCalendarEventWithDetails(tokens, eventId);
+  return result.success;
 }

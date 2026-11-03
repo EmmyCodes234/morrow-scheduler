@@ -3,6 +3,8 @@ import {
   buildHostBookingNotificationEmail,
   buildGuestApprovalEmail,
   buildGuestRejectionEmail,
+  buildGuestCancellationEmail,
+  buildHostCancellationEmail,
   buildOtpEmail,
 } from "./email-templates";
 
@@ -318,6 +320,137 @@ export async function sendOtpEmail(email: string, otpCode: string): Promise<bool
     return true;
   } catch (err) {
     console.error("[Email] Failed to send OTP email:", err);
+    return false;
+  }
+}
+
+
+export async function sendGuestCancellationEmail(
+  payload: {
+    toEmail: string;
+    hostName: string;
+    guestName: string;
+    guestEmail: string;
+    eventTitle: string;
+    dateStr: string;
+    timeStr: string;
+    reason?: string;
+    dashboardUrl?: string;
+    idempotencyKey?: string;
+  },
+  idempotencyKey?: string
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
+    console.log("[Email] Resend API key not configured, skipping guest cancellation email:", payload.toEmail);
+    return false;
+  }
+
+  const html = buildGuestCancellationEmail({
+    hostName: payload.hostName,
+    guestName: payload.guestName,
+    guestEmail: payload.guestEmail,
+    eventTitle: payload.eventTitle,
+    dateStr: payload.dateStr,
+    timeStr: payload.timeStr,
+    reason: payload.reason,
+    dashboardUrl: payload.dashboardUrl || `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/dashboard/bookings`,
+  });
+
+  try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    const key = idempotencyKey || payload.idempotencyKey;
+    if (key) {
+      headers["Idempotency-Key"] = key;
+    }
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        from: "Morrow <notifications@usemorrow.xyz>",
+        to: [payload.toEmail],
+        subject: `Cancelled: ${payload.eventTitle} with ${payload.guestName}`,
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.error(`[Email] Resend API error (${res.status}):`, err);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("[Email] Failed to send guest cancellation email:", err);
+    return false;
+  }
+}
+
+export async function sendHostCancellationEmail(
+  payload: {
+    toEmail: string;
+    guestName: string;
+    hostName: string;
+    eventTitle: string;
+    dateStr: string;
+    timeStr: string;
+    reason?: string;
+    rebookUrl?: string;
+    idempotencyKey?: string;
+  },
+  idempotencyKey?: string
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
+    console.log("[Email] Resend API key not configured, skipping host cancellation email:", payload.toEmail);
+    return false;
+  }
+
+  const html = buildHostCancellationEmail({
+    guestName: payload.guestName,
+    hostName: payload.hostName,
+    eventTitle: payload.eventTitle,
+    dateStr: payload.dateStr,
+    timeStr: payload.timeStr,
+    reason: payload.reason,
+    rebookUrl: payload.rebookUrl,
+  });
+
+  try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    const key = idempotencyKey || payload.idempotencyKey;
+    if (key) {
+      headers["Idempotency-Key"] = key;
+    }
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        from: "Morrow <notifications@usemorrow.xyz>",
+        to: [payload.toEmail],
+        subject: `Cancelled: ${payload.eventTitle} with ${payload.hostName}`,
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.error(`[Email] Resend API error (${res.status}):`, err);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("[Email] Failed to send host cancellation email:", err);
     return false;
   }
 }

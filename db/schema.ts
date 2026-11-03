@@ -148,6 +148,7 @@ export const bookings = pgTable(
     customAnswers: jsonb("custom_answers").$type<Record<string, unknown>>().default({}),
     cancelToken: text("cancel_token").notNull().unique(),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancellationReason: text("cancellation_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
