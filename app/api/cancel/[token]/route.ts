@@ -105,11 +105,10 @@ export async function POST(
       );
     }
 
+    // Strict whitelist: return ONLY the public sanitized DTO
     return NextResponse.json({
       success: true,
-      booking: result.booking,
-      alreadyCancelled: result.alreadyCancelled ?? false,
-      calendarSyncResult: result.calendarSyncResult,
+      booking: result.publicDto,
     });
   } catch (err) {
     console.error("[Cancel API] POST error:", err);

@@ -561,6 +561,37 @@ export function buildGuestRejectionEmail(data: {
 
 
 /**
+ * HTML escaping utility for email content.
+ * Escapes &, <, >, ", and ' to prevent HTML injection/XSS in email clients.
+ */
+export function escapeHtml(str?: string | null): string {
+  if (!str || typeof str !== "string") return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Sanitizes URLs for href attributes in email templates.
+ * Restricts to http, https, and mailto schemes, and escapes quotes.
+ */
+export function sanitizeEmailUrl(url?: string | null): string | undefined {
+  if (!url || typeof url !== "string") return undefined;
+  const trimmed = url.trim();
+  if (/^(https?:\/\/|mailto:)/i.test(trimmed)) {
+    return trimmed
+      .replace(/"/g, "%22")
+      .replace(/'/g, "%27")
+      .replace(/</g, "%3C")
+      .replace(/>/g, "%3E");
+  }
+  return undefined;
+}
+
+/**
  * Host notification when a guest cancels a booking
  */
 export function buildGuestCancellationEmail(data: {
@@ -573,30 +604,39 @@ export function buildGuestCancellationEmail(data: {
   reason?: string;
   dashboardUrl?: string;
 }): string {
+  const safeTitle = escapeHtml(data.eventTitle);
+  const safeHostName = escapeHtml(data.hostName);
+  const safeGuestName = escapeHtml(data.guestName);
+  const safeGuestEmail = escapeHtml(data.guestEmail);
+  const safeDateStr = escapeHtml(data.dateStr);
+  const safeTimeStr = escapeHtml(data.timeStr);
+  const safeReason = data.reason ? escapeHtml(data.reason) : undefined;
+  const safeDashboardUrl = sanitizeEmailUrl(data.dashboardUrl);
+
   const content = `
     <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px; margin-bottom: 20px;">
       <div style="margin-bottom: 14px;">
-        <span style="font-size: 16px; font-weight: 700; color: #0F172A;">${data.eventTitle}</span>
+        <span style="font-size: 16px; font-weight: 700; color: #0F172A;">${safeTitle}</span>
       </div>
 
       <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; color: #334155; line-height: 1.7;">
         <tr>
           <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📅</td>
           <td style="padding-bottom: 6px;">
-            <strong style="color: #0F172A;">Scheduled Time:</strong> ${data.dateStr} at ${data.timeStr}
+            <strong style="color: #0F172A;">Scheduled Time:</strong> ${safeDateStr} at ${safeTimeStr}
           </td>
         </tr>
         <tr>
           <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">👤</td>
           <td style="padding-bottom: 6px;">
-            <strong style="color: #0F172A;">Guest:</strong> ${data.guestName} (${data.guestEmail})
+            <strong style="color: #0F172A;">Guest:</strong> ${safeGuestName} (${safeGuestEmail})
           </td>
         </tr>
-        ${data.reason ? `
+        ${safeReason ? `
           <tr>
             <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📝</td>
             <td style="padding-bottom: 6px;">
-              <strong style="color: #0F172A;">Reason:</strong> ${data.reason}
+              <strong style="color: #0F172A;">Reason:</strong> ${safeReason}
             </td>
           </tr>
         ` : ""}
@@ -605,15 +645,15 @@ export function buildGuestCancellationEmail(data: {
   `;
 
   return renderBoardUIEmailLayout({
-    previewText: `Cancelled: ${data.eventTitle} with ${data.guestName}`,
+    previewText: `Cancelled: ${safeTitle} with ${safeGuestName}`,
     badgeText: "Cancelled",
     badgeVariant: "destructive",
     headline: "Meeting Cancelled by Guest",
-    subheadline: `Hi ${data.hostName}, ${data.guestName} has cancelled their scheduled meeting for ${data.eventTitle}. The time slot has been released back to your available hours.`,
+    subheadline: `Hi ${safeHostName}, ${safeGuestName} has cancelled their scheduled meeting for ${safeTitle}. The time slot has been released back to your available hours.`,
     contentHtml: content,
-    primaryCta: data.dashboardUrl ? {
+    primaryCta: safeDashboardUrl ? {
       label: "View Bookings",
-      url: data.dashboardUrl,
+      url: safeDashboardUrl,
     } : undefined,
   });
 }
@@ -630,30 +670,38 @@ export function buildHostCancellationEmail(data: {
   reason?: string;
   rebookUrl?: string;
 }): string {
+  const safeTitle = escapeHtml(data.eventTitle);
+  const safeHostName = escapeHtml(data.hostName);
+  const safeGuestName = escapeHtml(data.guestName);
+  const safeDateStr = escapeHtml(data.dateStr);
+  const safeTimeStr = escapeHtml(data.timeStr);
+  const safeReason = data.reason ? escapeHtml(data.reason) : undefined;
+  const safeRebookUrl = sanitizeEmailUrl(data.rebookUrl);
+
   const content = `
     <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px; margin-bottom: 20px;">
       <div style="margin-bottom: 14px;">
-        <span style="font-size: 16px; font-weight: 700; color: #0F172A;">${data.eventTitle}</span>
+        <span style="font-size: 16px; font-weight: 700; color: #0F172A;">${safeTitle}</span>
       </div>
 
       <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; color: #334155; line-height: 1.7;">
         <tr>
           <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📅</td>
           <td style="padding-bottom: 6px;">
-            <strong style="color: #0F172A;">Scheduled Time:</strong> ${data.dateStr} at ${data.timeStr}
+            <strong style="color: #0F172A;">Scheduled Time:</strong> ${safeDateStr} at ${safeTimeStr}
           </td>
         </tr>
         <tr>
           <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">👤</td>
           <td style="padding-bottom: 6px;">
-            <strong style="color: #0F172A;">Host:</strong> ${data.hostName}
+            <strong style="color: #0F172A;">Host:</strong> ${safeHostName}
           </td>
         </tr>
-        ${data.reason ? `
+        ${safeReason ? `
           <tr>
             <td style="width: 24px; vertical-align: top; padding-bottom: 6px;">📝</td>
             <td style="padding-bottom: 6px;">
-              <strong style="color: #0F172A;">Reason:</strong> ${data.reason}
+              <strong style="color: #0F172A;">Reason:</strong> ${safeReason}
             </td>
           </tr>
         ` : ""}
@@ -662,15 +710,15 @@ export function buildHostCancellationEmail(data: {
   `;
 
   return renderBoardUIEmailLayout({
-    previewText: `Cancelled: ${data.eventTitle} with ${data.hostName}`,
+    previewText: `Cancelled: ${safeTitle} with ${safeHostName}`,
     badgeText: "Cancelled",
     badgeVariant: "destructive",
     headline: "Meeting Cancelled by Host",
-    subheadline: `Hi ${data.guestName}, your meeting for ${data.eventTitle} with ${data.hostName} has been cancelled.`,
+    subheadline: `Hi ${safeGuestName}, your meeting for ${safeTitle} with ${safeHostName} has been cancelled.`,
     contentHtml: content,
-    primaryCta: data.rebookUrl ? {
+    primaryCta: safeRebookUrl ? {
       label: "Schedule Another Time",
-      url: data.rebookUrl,
+      url: safeRebookUrl,
     } : undefined,
   });
 }

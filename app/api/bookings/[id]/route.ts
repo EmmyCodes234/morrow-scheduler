@@ -17,7 +17,7 @@ import {
 import { validateBookingRequest } from "@/lib/scheduling/validation";
 import { resolveEffectiveLocation } from "@/lib/scheduling/location";
 import { parseJsonRequest } from "@/lib/http/parse-json";
-import { cancelBooking } from "@/lib/scheduling/cancellation-service";
+import { cancelBooking, retryCancelledBookingCalendarCleanup } from "@/lib/scheduling/cancellation-service";
 import { dispatchDurableBookingNotification, type DurableNotificationPayload } from "@/lib/scheduling/notification-service";
 
 export async function PATCH(
@@ -64,8 +64,30 @@ export async function PATCH(
 
     const hostTimezone = resolveTimezone(host.timezone, "UTC");
 
-    // 2. Action: Manual Calendar Sync Recovery
-    if (body.action === "retry_sync") {
+    // 2. Action: Manual Calendar Sync Recovery (Cancelled vs Confirmed)
+    if (body.action === "retry_sync" || body.action === "retry_cancel_sync") {
+      if (existing.status === "cancelled") {
+        const cleanupResult = await retryCancelledBookingCalendarCleanup(existing.id, host.id);
+        const updated = await db.query.bookings.findFirst({
+          where: eq(bookings.id, id),
+          with: { eventType: true },
+        });
+
+        if (!cleanupResult.success) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: cleanupResult.error || "Calendar cleanup failed.",
+              booking: updated || existing,
+              cleanupResult,
+            },
+            { status: 502 }
+          );
+        }
+
+        return NextResponse.json({ success: true, booking: updated, cleanupResult });
+      }
+
       const syncResult = await reconcileBookingCalendarSync(existing.id, host.id);
       const updated = await db.query.bookings.findFirst({
         where: eq(bookings.id, id),
