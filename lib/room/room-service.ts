@@ -33,20 +33,22 @@ export interface RoomDetails {
   status: "pre_meeting" | "in_progress" | "concluded";
   booking: {
     id: string;
+    status: string;
     startTime: string;
     endTime: string;
     eventTitle: string;
     durationMins: number;
     host: {
+      id: string;
       name: string;
-      email: string;
+      email?: string;
       slug: string;
       avatarUrl?: string | null;
       timezone: string;
     };
     guest: {
       name: string;
-      email: string;
+      email?: string;
       timezone: string;
       notes?: string | null;
     };
@@ -103,25 +105,42 @@ export async function getOrCreateRoomForBooking(bookingId: string): Promise<type
     customAnswers: booking.customAnswers,
   });
 
-  const [newRoom] = await db
-    .insert(rooms)
-    .values({
-      bookingId: booking.id,
-      accessToken,
-      status: "pre_meeting",
-      agenda: veraBrief.suggestedAgenda,
-      sharedNotes: "",
-      files: [],
-      veraBrief: {
-        intent: veraBrief.intent,
-        talkingPoints: veraBrief.talkingPoints,
-        background: veraBrief.background,
-      },
-      veraLedger: null,
-    })
-    .returning();
+  try {
+    const [newRoom] = await db
+      .insert(rooms)
+      .values({
+        bookingId: booking.id,
+        accessToken,
+        status: "pre_meeting",
+        agenda: veraBrief.suggestedAgenda,
+        sharedNotes: "",
+        files: [],
+        veraBrief: {
+          intent: veraBrief.intent,
+          talkingPoints: veraBrief.talkingPoints,
+          background: veraBrief.background,
+        },
+        veraLedger: null,
+      })
+      .onConflictDoNothing({ target: rooms.bookingId })
+      .returning();
 
-  return newRoom;
+    if (newRoom) {
+      return newRoom;
+    }
+  } catch (err) {
+    console.warn(`[RoomProvisioning] Conflict on insert for booking ${bookingId}:`, err);
+  }
+
+  const winningRoom = await db.query.rooms.findFirst({
+    where: eq(rooms.bookingId, bookingId),
+  });
+
+  if (!winningRoom) {
+    throw new Error(`Failed to provision or retrieve room for booking ${bookingId}`);
+  }
+
+  return winningRoom;
 }
 
 /**
@@ -156,20 +175,20 @@ export async function getRoomByAccessToken(token: string): Promise<RoomDetails |
     status: (room.status as "pre_meeting" | "in_progress" | "concluded") || "pre_meeting",
     booking: {
       id: b.id,
+      status: b.status,
       startTime: b.startTime.toISOString(),
       endTime: b.endTime.toISOString(),
       eventTitle: et?.title || "Strategy Call",
       durationMins: et?.durationMins || 30,
       host: {
+        id: h.id,
         name: h.name,
-        email: h.email,
         slug: h.slug,
         avatarUrl: h.avatarUrl,
         timezone: h.timezone || "UTC",
       },
       guest: {
         name: b.guestName,
-        email: b.guestEmail,
         timezone: b.guestTimezone || "UTC",
         notes: b.guestNotes,
       },
@@ -254,6 +273,11 @@ export async function concludeRoomAndSynthesize(token: string): Promise<typeof r
   });
 
   if (!room || !room.booking) return null;
+
+  // Prevent duplicate Vera synthesis if room is already concluded
+  if (room.status === "concluded") {
+    return room;
+  }
 
   const b = room.booking;
   const ledger = await generateVeraLedger({

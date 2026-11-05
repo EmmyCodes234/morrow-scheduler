@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getRoomByAccessToken } from "@/lib/room/room-service";
 import { RoomView } from "@/components/room/room-view";
 import { Spinner } from "@/components/base/spinner/spinner";
+import { auth } from "@/auth";
 
 export const instant = false;
 
@@ -13,7 +14,10 @@ async function RoomContent({ token }: { token: string }) {
     notFound();
   }
 
-  return <RoomView initialRoom={room} />;
+  const session = await auth();
+  const isHost = Boolean(session?.user?.id && session.user.id === room.booking.host.id);
+
+  return <RoomView initialRoom={room} isHost={isHost} />;
 }
 
 export default async function RoomPage({

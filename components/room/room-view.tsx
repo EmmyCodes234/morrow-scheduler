@@ -35,6 +35,7 @@ import {
   RiAddLine,
   RiTimeLine,
   RiVolumeUpLine,
+  RiCalendarCloseLine,
 } from "@remixicon/react";
 import type { RoomDetails, RoomFileItem } from "@/lib/room/room-service";
 import type { VeraAgendaItem, VeraLedger } from "@/lib/intelligence/vera";
@@ -43,9 +44,10 @@ type LiveKitRoomType = import("livekit-client").Room;
 
 export interface RoomViewProps {
   initialRoom: RoomDetails;
+  isHost?: boolean;
 }
 
-export function RoomView({ initialRoom }: RoomViewProps) {
+export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const [room, setRoom] = useState<RoomDetails>(initialRoom);
   const [activeTab, setActiveTab] = useState<"agenda" | "notes" | "files" | "summary">("agenda");
   const [mobileMode, setMobileMode] = useState<"call" | "canvas">("call");
@@ -196,12 +198,14 @@ export function RoomView({ initialRoom }: RoomViewProps) {
         lk.on(RoomEvent.Reconnecting, () => setConnectionStatus("connecting"));
         lk.on(RoomEvent.Reconnected, () => setConnectionStatus("connected"));
 
-        // Fetch Room Access Token
-        const participantName = room.booking.host.name;
-        const res = await fetch(
-          `/api/room/${room.accessToken}/livekit?name=${encodeURIComponent(participantName)}&role=host`
-        );
-        if (!res.ok) throw new Error("Could not acquire room connection token");
+        // Fetch Room Access Token securely via server-authoritative POST
+        const res = await fetch(`/api/room/${room.accessToken}/livekit`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Could not acquire room connection token");
+        }
         const { token, url } = await res.json();
 
         if (isCancelled) return;
@@ -242,7 +246,7 @@ export function RoomView({ initialRoom }: RoomViewProps) {
         lkRoomRef.current = null;
       }
     };
-  }, [isCallActive, room.accessToken, room.booking.host.name]);
+  }, [isCallActive, room.accessToken]);
 
   // Toggle Microphone
   const toggleMic = async () => {
@@ -333,7 +337,7 @@ export function RoomView({ initialRoom }: RoomViewProps) {
           size: file.size,
           type: file.type || "application/octet-stream",
           dataUrl,
-          uploadedBy: room.booking.host.name,
+          uploadedBy: isHost ? room.booking.host.name : (room.booking.guest.name || "Guest"),
           uploadedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         };
 
@@ -472,6 +476,23 @@ export function RoomView({ initialRoom }: RoomViewProps) {
     }
   };
 
+  // Safely leave live media session without concluding persistent room or triggering AI synthesis
+  const handleLeaveCall = () => {
+    if (lkRoomRef.current) {
+      lkRoomRef.current.disconnect();
+      lkRoomRef.current = null;
+    }
+    setIsCallActive(false);
+    setConnectionStatus("idle");
+  };
+
+  const currentUserName = isHost ? room.booking.host.name : (room.booking.guest.name || "Guest");
+  const remoteParticipantName = isHost ? (room.booking.guest.name || "Guest") : room.booking.host.name;
+  const isBookingCancelled = room.booking.status === "cancelled";
+  const isBookingRejected = room.booking.status === "rejected";
+  const isCancelledOrRejected = isBookingCancelled || isBookingRejected;
+  const isBookingEligible = room.booking.status === "confirmed";
+
   const copyRoomLink = () => {
     navigator.clipboard.writeText(window.location.href);
     setCopiedLink(true);
@@ -486,7 +507,7 @@ export function RoomView({ initialRoom }: RoomViewProps) {
     .slice(0, 2)
     .toUpperCase();
 
-  const guestInitials = room.booking.guest.name
+  const guestInitials = (room.booking.guest.name || "Guest")
     .split(" ")
     .filter(Boolean)
     .map((n) => n[0])
@@ -524,12 +545,12 @@ export function RoomView({ initialRoom }: RoomViewProps) {
         <div className="hidden md:flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-secondary-default text-caption-1-semibold">
             <Avatar size="xs" initials={hostInitials} color="blue" />
-            <span className="text-text-secondary">{room.booking.host.name}</span>
+            <span className="text-text-secondary">{room.booking.host.name} {isHost ? "(Host, You)" : "(Host)"}</span>
           </div>
 
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-secondary-default text-caption-1-semibold">
             <Avatar size="xs" initials={guestInitials} color="lime" />
-            <span className="text-text-secondary">{room.booking.guest.name}</span>
+            <span className="text-text-secondary">{room.booking.guest.name || "Guest"} {!isHost ? "(You)" : ""}</span>
           </div>
 
           {/* Vera Participant Badge */}
@@ -544,6 +565,8 @@ export function RoomView({ initialRoom }: RoomViewProps) {
         <div className="flex items-center gap-2">
           {isConcluded ? (
             <Badge color="primary">Concluded</Badge>
+          ) : isCancelledOrRejected ? (
+            <Badge color="neutral">{isBookingCancelled ? "Cancelled" : "Declined"}</Badge>
           ) : isCallActive ? (
             <Badge color="primary">In Session</Badge>
           ) : (
@@ -753,16 +776,21 @@ export function RoomView({ initialRoom }: RoomViewProps) {
                       >
                         Exit
                       </Button>
+                    ) : isCancelledOrRejected ? (
+                      <Badge color="neutral">
+                        {isBookingCancelled ? "Cancelled" : "Declined"}
+                      </Badge>
                     ) : !isCallActive ? (
                       <Button
                         variant="primary"
                         size="xs"
                         leadingIcon={RiVideoOnLine}
                         onClick={() => setIsCallActive(true)}
+                        disabled={!isBookingEligible}
                       >
                         Start Call
                       </Button>
-                    ) : (
+                    ) : isHost ? (
                       <Button
                         variant="primary"
                         size="xs"
@@ -770,6 +798,14 @@ export function RoomView({ initialRoom }: RoomViewProps) {
                         disabled={isSynthesizing}
                       >
                         {isSynthesizing ? "Synthesizing..." : "End Meeting"}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={handleLeaveCall}
+                      >
+                        Leave Call
                       </Button>
                     )}
                   </div>
@@ -860,21 +896,43 @@ export function RoomView({ initialRoom }: RoomViewProps) {
             )}
 
             {/* ----------------------------------------------------------------- */}
-            {/* CASE 5: PRE-MEETING SCREEN / AWAITING GUEST */}
+            {/* CASE: CANCELLED OR DECLINED BOOKING */}
             {/* ----------------------------------------------------------------- */}
-            {!isConcluded && !isDisplayingStageFile && (!isCallActive || (!hasActivePresentation && !remoteHasVideo && isCamOff)) && (
+            {!isConcluded && isCancelledOrRejected && (
+              <div className="flex flex-col items-center justify-center text-center p-6 gap-3 z-10 max-w-sm">
+                <div className="size-16 rounded-3xl bg-background-primary-default border border-border-button-default flex items-center justify-center text-text-error-primary shadow-sm">
+                  <RiCalendarCloseLine className="size-8" />
+                </div>
+                <div>
+                  <h3 className="text-title-3-semibold text-text-primary">
+                    {isBookingCancelled ? "Meeting Cancelled" : "Meeting Declined"}
+                  </h3>
+                  <p className="text-body-2-regular text-text-secondary mt-1">
+                    {isBookingCancelled
+                      ? "This booking was cancelled and video sessions are disabled."
+                      : "This booking was declined."}
+                    {" "}Collaborative agenda, shared notes, and files remain preserved.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ----------------------------------------------------------------- */}
+            {/* CASE 5: PRE-MEETING SCREEN / AWAITING PEER */}
+            {/* ----------------------------------------------------------------- */}
+            {!isConcluded && !isCancelledOrRejected && !isDisplayingStageFile && (!isCallActive || (!hasActivePresentation && !remoteHasVideo && isCamOff)) && (
               <div className="flex flex-col items-center justify-center text-center p-6 gap-3 z-10 max-w-sm">
                 <div className="relative">
-                  <Avatar size="lg" initials={guestInitials} color="lime" />
+                  <Avatar size="lg" initials={isHost ? guestInitials : hostInitials} color={isHost ? "lime" : "blue"} />
                   <span className="absolute -bottom-1 -end-1 size-3.5 rounded-full bg-status-lime-text ring-2 ring-background-primary-default animate-pulse" />
                 </div>
                 <div>
                   <h3 className="text-title-3-semibold text-text-primary">
-                    {room.booking.guest.name}
+                    {remoteParticipantName}
                   </h3>
                   <p className="text-body-2-regular text-text-secondary mt-1">
                     {isCallActive
-                      ? "Awaiting guest arrival in Morrow room..."
+                      ? `Awaiting ${remoteParticipantName} in Morrow room...`
                       : "The room is ready. Start the session when you are set."}
                   </p>
                 </div>
@@ -902,7 +960,7 @@ export function RoomView({ initialRoom }: RoomViewProps) {
             {isRemoteSpeaking && !hasActivePresentation && !isDisplayingStageFile && !isConcluded && (
               <div className="absolute top-4 start-4 flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-500 text-text-primary text-caption-1-semibold shadow-lg z-20">
                 <RiVolumeUpLine className="size-4" />
-                <span>{room.booking.guest.name} speaking</span>
+                <span>{remoteParticipantName} speaking</span>
               </div>
             )}
 
@@ -919,7 +977,7 @@ export function RoomView({ initialRoom }: RoomViewProps) {
                   />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-text-secondary">
-                    <Avatar size="xs" initials={hostInitials} color="blue" />
+                    <Avatar size="xs" initials={isHost ? hostInitials : guestInitials} color={isHost ? "blue" : "lime"} />
                     <span className="text-caption-2-medium text-text-tertiary">Camera Off</span>
                   </div>
                 )}
@@ -934,7 +992,7 @@ export function RoomView({ initialRoom }: RoomViewProps) {
               <div className="absolute bottom-20 start-4 z-10 flex items-center gap-2 px-3 py-1 rounded-full bg-background-primary-default/80 backdrop-blur-md border border-border-button-default text-caption-1-semibold text-text-primary shadow-2xs">
                 <span className="size-2 rounded-full bg-accent-500" />
                 <span>
-                  {remoteHasVideo ? room.booking.guest.name : `${room.booking.host.name} (You)`}
+                  {remoteHasVideo ? remoteParticipantName : `${currentUserName} (You)`}
                 </span>
                 {isMicMuted && <RiMicOffLine className="size-3.5 text-text-error-primary" />}
               </div>
@@ -1011,10 +1069,11 @@ export function RoomView({ initialRoom }: RoomViewProps) {
                       size="small"
                       leadingIcon={RiVideoOnLine}
                       onClick={() => setIsCallActive(true)}
+                      disabled={!isBookingEligible}
                     >
                       Start Call
                     </Button>
-                  ) : (
+                  ) : isHost ? (
                     <Button
                       variant="primary"
                       size="small"
@@ -1022,6 +1081,14 @@ export function RoomView({ initialRoom }: RoomViewProps) {
                       disabled={isSynthesizing}
                     >
                       {isSynthesizing ? "Synthesizing..." : "End Meeting"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      onClick={handleLeaveCall}
+                    >
+                      Leave Call
                     </Button>
                   )}
                 </div>
@@ -1393,14 +1460,20 @@ export function RoomView({ initialRoom }: RoomViewProps) {
                   <p className="text-body-2-regular text-text-secondary max-w-sm">
                     Once the discussion wraps, conclude the call to have Vera extract key decisions, assign action items, and generate the executive summary.
                   </p>
-                  <Button
-                    variant="primary"
-                    size="small"
-                    onClick={handleConcludeCall}
-                    disabled={isSynthesizing}
-                  >
-                    {isSynthesizing ? "Vera Generating Summary..." : "End Meeting & Generate Summary"}
-                  </Button>
+                  {isHost ? (
+                    <Button
+                      variant="primary"
+                      size="small"
+                      onClick={handleConcludeCall}
+                      disabled={isSynthesizing}
+                    >
+                      {isSynthesizing ? "Vera Generating Summary..." : "End Meeting & Generate Summary"}
+                    </Button>
+                  ) : (
+                    <p className="text-caption-1-medium text-text-tertiary">
+                      Meeting takeaways and action items will be generated once the host concludes the call.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="relative min-h-0 flex-1 h-full">
@@ -1461,7 +1534,7 @@ export function RoomView({ initialRoom }: RoomViewProps) {
                               </span>
                               <div className="flex items-center justify-between pt-2 border-t border-border-button-default/50 text-caption-1-semibold">
                                 <div className="flex items-center gap-1.5 min-w-0">
-                                  <Avatar size="2xs" initials={action.assignee.slice(0, 2).toUpperCase()} color="neutral" />
+                                  <Avatar size="xs" initials={action.assignee.slice(0, 2).toUpperCase()} color="neutral" />
                                   <span className="text-caption-2-medium text-text-secondary truncate">{action.assignee}</span>
                                 </div>
                                 <Chip

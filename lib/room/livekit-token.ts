@@ -19,7 +19,7 @@ export function createLiveKitToken({
   identity,
   name,
   room,
-  ttlSeconds = 21600,
+  ttlSeconds = 7200,
 }: LiveKitTokenOptions): string {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "HS256", typ: "JWT" };
@@ -34,6 +34,7 @@ export function createLiveKitToken({
       roomJoin: true,
       canPublish: true,
       canSubscribe: true,
+      canPublishData: true,
     },
   };
 

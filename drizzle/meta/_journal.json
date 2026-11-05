@@ -50,6 +50,13 @@
       "when": 1793733966206,
       "tag": "0006_complete_wiccan",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793856839006,
+      "tag": "0007_loose_toro",
+      "breakpoints": true
     }
   ]
 }

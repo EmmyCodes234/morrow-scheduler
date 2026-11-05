@@ -215,12 +215,12 @@ export const rooms = pgTable(
       dataUrl?: string;
       uploadedBy: string;
       uploadedAt: string;
-    }>>().default([]),
+    }>>().default([]).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    index("rooms_booking_idx").on(table.bookingId),
+    uniqueIndex("rooms_booking_idx").on(table.bookingId),
     uniqueIndex("rooms_access_token_idx").on(table.accessToken),
   ]
 );
