@@ -103,6 +103,8 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
     status?: string;
     requiresApproval?: boolean;
     meetLink?: string;
+    roomToken?: string;
+    roomUrl?: string;
   } | null>(null);
   const [isBooking, setIsBooking] = useState(false);
   const [bookingError, setBookingError] = useState<string | null>(null);
@@ -360,6 +362,19 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
               </div>
             )}
           </div>
+
+            {confirmedBooking?.roomToken && (
+              <Button
+                variant="primary"
+                size="medium"
+                className="w-full mb-3"
+                onClick={() => {
+                  window.location.href = `/room/${confirmedBooking.roomToken}`;
+                }}
+              >
+                Enter Morrow Room
+              </Button>
+            )}
 
           <button
             type="button"

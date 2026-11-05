@@ -183,6 +183,48 @@ export const contacts = pgTable(
   ]
 );
 
+export const rooms = pgTable(
+  "rooms",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bookingId: uuid("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    accessToken: text("access_token").notNull().unique(),
+    status: text("status").notNull().default("pre_meeting"), // pre_meeting, in_progress, concluded
+    agenda: jsonb("agenda").$type<Array<{ id: string; text: string; done: boolean; addedBy: "host" | "guest" | "vera" }>>().default([]),
+    sharedNotes: text("shared_notes").default(""),
+    veraBrief: jsonb("vera_brief").$type<{
+      intent?: string;
+      talkingPoints?: string[];
+      background?: string;
+    }>(),
+    veraLedger: jsonb("vera_ledger").$type<{
+      executiveSummary?: string[];
+      actionItems?: Array<{ id: string; task: string; assignee: string; priority: "high" | "medium" | "low"; done: boolean }>;
+      keyDecisions?: string[];
+      suggestedFollowUp?: string;
+    }>(),
+    transcript: text("transcript"),
+    files: jsonb("files").$type<Array<{
+      id: string;
+      name: string;
+      size: number;
+      type: string;
+      url?: string;
+      dataUrl?: string;
+      uploadedBy: string;
+      uploadedAt: string;
+    }>>().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("rooms_booking_idx").on(table.bookingId),
+    uniqueIndex("rooms_access_token_idx").on(table.accessToken),
+  ]
+);
+
 export const verificationTokens = pgTable(
   "verification_tokens",
   {
@@ -223,6 +265,7 @@ export const bookingsRelations = relations(bookings, ({ one }) => ({
     fields: [bookings.hostId],
     references: [users.id],
   }),
+  room: one(rooms),
 }));
 
 export const availabilityRelations = relations(availability, ({ one }) => ({
@@ -243,6 +286,13 @@ export const contactsRelations = relations(contacts, ({ one }) => ({
   user: one(users, {
     fields: [contacts.userId],
     references: [users.id],
+  }),
+}));
+
+export const roomsRelations = relations(rooms, ({ one }) => ({
+  booking: one(bookings, {
+    fields: [rooms.bookingId],
+    references: [bookings.id],
   }),
 }));
 
@@ -267,3 +317,6 @@ export type NewContact = typeof contacts.$inferInsert;
 
 export type VerificationToken = typeof verificationTokens.$inferSelect;
 export type NewVerificationToken = typeof verificationTokens.$inferInsert;
+
+export type Room = typeof rooms.$inferSelect;
+export type NewRoom = typeof rooms.$inferInsert;

@@ -1,3 +1,4 @@
+import { getOrCreateRoomForBooking } from "@/lib/room/room-service";
 import crypto from "crypto";
 import { db } from "@/db";
 import { users, eventTypes, bookings, contacts, availability, availabilityOverrides } from "@/db/schema";
@@ -41,6 +42,8 @@ export interface BookingResponse {
     calendarSyncStatus?: CalendarSyncStatus;
     locationType?: string;
     locationUrl?: string;
+    roomToken?: string;
+    roomUrl?: string;
   };
 }
 
@@ -1149,6 +1152,17 @@ export async function processBooking(
     cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/cancel/${cancelToken}`,
   }).catch((err) => console.error("Error sending guest confirmation email:", err));
 
+  let roomToken: string | undefined;
+  let roomUrl: string | undefined;
+  try {
+    const room = await getOrCreateRoomForBooking(newBooking.id);
+    roomToken = room.accessToken;
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz";
+    roomUrl = `${baseUrl}/room/${room.accessToken}`;
+  } catch (roomErr) {
+    console.error("Error creating room for booking:", roomErr);
+  }
+
   return {
     success: true,
     status: 201,
@@ -1167,6 +1181,8 @@ export async function processBooking(
       calendarSyncStatus: finalCalendarSyncStatus,
       locationType: location.locationType,
       locationUrl: location.locationUrl,
+      roomToken,
+      roomUrl,
     },
   };
 }

@@ -43,6 +43,13 @@
       "when": 1793707067981,
       "tag": "0005_jittery_aqueduct",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793733966206,
+      "tag": "0006_complete_wiccan",
+      "breakpoints": true
     }
   ]
 }

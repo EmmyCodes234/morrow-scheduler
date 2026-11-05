@@ -55,6 +55,7 @@ interface BookingItem {
   date: string;
   time: string;
   meetLink?: string;
+  roomToken?: string;
   status: "Confirmed" | "Completed" | "Cancelled" | string;
 }
 
@@ -823,12 +824,24 @@ export function DashboardView({
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 sm:gap-3">
                         <Badge color={b.status === "Cancelled" ? "neutral" : "primary"}>
                           {b.status}
                         </Badge>
 
-                        {b.meetLink && b.status !== "Cancelled" && (
+                        {b.roomToken && b.status !== "Cancelled" && (
+                          <Button
+                            variant="primary"
+                            size="xs"
+                            onClick={() => {
+                              window.open(`/room/${b.roomToken}`, "_blank");
+                            }}
+                          >
+                            Open Room
+                          </Button>
+                        )}
+
+                        {b.meetLink && b.status !== "Cancelled" && !b.roomToken && (
                           <a
                             href={b.meetLink}
                             target="_blank"

@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
       orderBy: [desc(bookings.startTime)],
       with: {
         eventType: true,
+        room: true,
       },
     });
 
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
         rawStartTime: b.startTime.toISOString(),
         rawEndTime: b.endTime.toISOString(),
         meetLink: b.meetLink,
+        roomToken: b.room?.accessToken,
         status: b.status,
         guestNotes: b.guestNotes,
         hostNotes: b.hostNotes,
