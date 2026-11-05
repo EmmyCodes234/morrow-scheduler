@@ -182,6 +182,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const remoteAudioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const [groupParticipants, setGroupParticipants] = useState<GroupParticipant[]>([]);
   const [audioPlaybackBlocked, setAudioPlaybackBlocked] = useState(false);
+  const [isEnablingAudio, setIsEnablingAudio] = useState(false);
 
   // Collaborative Canvas State
   const [notes, setNotes] = useState(room.sharedNotes || "");
@@ -675,27 +676,44 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
 
   // Enable Audio when browser blocks autoplay
   const handleEnableAudio = async () => {
-    if (lkRoomRef.current) {
-      try {
+    setIsEnablingAudio(true);
+    try {
+      if (lkRoomRef.current) {
         await lkRoomRef.current.startAudio();
-      } catch (err) {
-        console.warn("[RoomView] lkRoom.startAudio failed:", err);
+        if (!lkRoomRef.current.canPlaybackAudio) {
+          throw new Error("LiveKit audio playback remains blocked after startAudio attempt.");
+        }
       }
+
+      if (room.type !== "group_meeting") {
+        if (remoteAudioRef.current && remoteAudioRef.current.srcObject) {
+          await remoteAudioRef.current.play();
+        }
+      } else {
+        const playPromises: Promise<void>[] = [];
+        remoteAudioElementsRef.current.forEach((el) => {
+          if (el.srcObject) {
+            playPromises.push(el.play());
+          }
+        });
+        if (playPromises.length > 0) {
+          await Promise.all(playPromises);
+        }
+      }
+
+      // Playback was successfully verified and unlocked
+      setAudioPlaybackBlocked(false);
+    } catch (err) {
+      console.warn("[RoomView] Failed to unblock audio playback:", err);
+      // Strictly preserve audio-blocked state so warning banner remains visible
+      setAudioPlaybackBlocked(true);
+    } finally {
+      setIsEnablingAudio(false);
     }
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.play().catch(() => {});
-    }
-    remoteAudioElementsRef.current.forEach((el) => {
-      el.play().catch(() => {});
-    });
-    setAudioPlaybackBlocked(false);
   };
 
   // Toggle Microphone
   const toggleMic = async () => {
-    if (audioPlaybackBlocked) {
-      handleEnableAudio();
-    }
     const nextState = !isMicMuted;
     setIsMicMuted(nextState);
     if (lkRoomRef.current) {
@@ -1106,10 +1124,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             size="xs"
             variant="primary"
             onClick={handleEnableAudio}
-            leadingIcon={RiVolumeUpLine}
+            disabled={isEnablingAudio}
+            leadingIcon={isEnablingAudio ? RiLoader4Line : RiVolumeUpLine}
             className="shrink-0 cursor-pointer"
           >
-            Enable Audio
+            {isEnablingAudio ? "Enabling..." : "Enable Audio"}
           </Button>
         </div>
       )}

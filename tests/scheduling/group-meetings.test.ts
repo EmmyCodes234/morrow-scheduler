@@ -1139,35 +1139,224 @@ describe("Morrow Group Meetings — Pilot P0 & Early Arrival Engine", () => {
       expect(elB.srcObject).toBeNull();
     });
 
-    it("detects browser autoplay rejection and unblocks on user action", async () => {
-      let audioPlaybackBlocked = false;
-      const setAudioPlaybackBlocked = (val: boolean) => {
-        audioPlaybackBlocked = val;
-      };
-
-      const audioEl = new MockAudioElement();
-      audioEl.playShouldReject = true; // Browser blocks autoplay
-
-      // Initial playback attempt fails
-      try {
-        await audioEl.play();
-      } catch {
-        setAudioPlaybackBlocked(true);
+    // =========================================================================
+    // Audio Recovery & Playback Blocked Preservation Suite
+    // =========================================================================
+    describe("Audio-Blocked State Preservation & Recovery", () => {
+      interface MockLiveKitRoom {
+        canPlaybackAudio: boolean;
+        startAudio: () => Promise<void>;
       }
 
-      expect(audioPlaybackBlocked).toBe(true);
+      const createEnableAudioWorkflow = ({
+        lkRoom,
+        roomType = "group_meeting",
+        remoteAudioElements = new Map<string, MockAudioElement>(),
+        singleRemoteAudioEl = null as MockAudioElement | null,
+        initialBlocked = true,
+      }: {
+        lkRoom?: MockLiveKitRoom;
+        roomType?: "group_meeting" | "booking";
+        remoteAudioElements?: Map<string, MockAudioElement>;
+        singleRemoteAudioEl?: MockAudioElement | null;
+        initialBlocked?: boolean;
+      }) => {
+        let audioPlaybackBlocked = initialBlocked;
+        let isEnablingAudio = false;
 
-      // User clicks "Enable Audio"
-      const handleEnableAudio = async () => {
-        audioEl.playShouldReject = false; // Browser unblocked after gesture
-        await audioEl.play();
-        setAudioPlaybackBlocked(false);
+        const setAudioPlaybackBlocked = (val: boolean) => {
+          audioPlaybackBlocked = val;
+        };
+
+        const handleEnableAudio = async () => {
+          isEnablingAudio = true;
+          try {
+            if (lkRoom) {
+              await lkRoom.startAudio();
+              if (!lkRoom.canPlaybackAudio) {
+                throw new Error("LiveKit audio playback remains blocked after startAudio attempt.");
+              }
+            }
+
+            if (roomType !== "group_meeting") {
+              if (singleRemoteAudioEl && singleRemoteAudioEl.srcObject) {
+                await singleRemoteAudioEl.play();
+              }
+            } else {
+              const playPromises: Promise<void>[] = [];
+              remoteAudioElements.forEach((el) => {
+                if (el.srcObject) {
+                  playPromises.push(el.play());
+                }
+              });
+              if (playPromises.length > 0) {
+                await Promise.all(playPromises);
+              }
+            }
+
+            // Playback was successfully verified and unlocked
+            setAudioPlaybackBlocked(false);
+          } catch (err) {
+            // Strictly preserve audio-blocked state so warning banner remains visible
+            setAudioPlaybackBlocked(true);
+          } finally {
+            isEnablingAudio = false;
+          }
+        };
+
+        return {
+          handleEnableAudio,
+          getIsBlocked: () => audioPlaybackBlocked,
+          getIsEnabling: () => isEnablingAudio,
+        };
       };
 
-      await handleEnableAudio();
+      it("keeps warning visible when LiveKit startAudio() throws an error (unsuccessful recovery)", async () => {
+        const mockLkRoom: MockLiveKitRoom = {
+          canPlaybackAudio: false,
+          startAudio: vi.fn().mockRejectedValue(new Error("DOMException: AudioContext resume was refused")),
+        };
 
-      expect(audioPlaybackBlocked).toBe(false);
-      expect(audioEl.playCalled).toBe(true);
+        const workflow = createEnableAudioWorkflow({ lkRoom: mockLkRoom });
+        expect(workflow.getIsBlocked()).toBe(true);
+
+        await workflow.handleEnableAudio();
+
+        // Must remain blocked because startAudio failed
+        expect(workflow.getIsBlocked()).toBe(true);
+        expect(workflow.getIsEnabling()).toBe(false);
+        expect(mockLkRoom.startAudio).toHaveBeenCalled();
+      });
+
+      it("keeps warning visible when startAudio() resolves but canPlaybackAudio remains false (unsuccessful recovery)", async () => {
+        const mockLkRoom: MockLiveKitRoom = {
+          canPlaybackAudio: false, // Still blocked despite startAudio resolving
+          startAudio: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const workflow = createEnableAudioWorkflow({ lkRoom: mockLkRoom });
+        expect(workflow.getIsBlocked()).toBe(true);
+
+        await workflow.handleEnableAudio();
+
+        // Must remain blocked because playback capability was not acquired
+        expect(workflow.getIsBlocked()).toBe(true);
+        expect(workflow.getIsEnabling()).toBe(false);
+      });
+
+      it("keeps warning visible when media playback play() fails on remote audio elements (unsuccessful recovery)", async () => {
+        const mockLkRoom: MockLiveKitRoom = {
+          canPlaybackAudio: true,
+          startAudio: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const elA = new MockAudioElement();
+        elA.srcObject = {};
+        elA.playShouldReject = false;
+
+        const elB = new MockAudioElement();
+        elB.srcObject = {};
+        elB.playShouldReject = true; // Browser blocks this participant's audio
+
+        const remoteElements = new Map<string, MockAudioElement>();
+        remoteElements.set("track-a", elA);
+        remoteElements.set("track-b", elB);
+
+        const workflow = createEnableAudioWorkflow({
+          lkRoom: mockLkRoom,
+          remoteAudioElements: remoteElements,
+        });
+
+        expect(workflow.getIsBlocked()).toBe(true);
+
+        await workflow.handleEnableAudio();
+
+        // Because elB failed to play, warning remains visible
+        expect(workflow.getIsBlocked()).toBe(true);
+        expect(elA.playCalled).toBe(true);
+        expect(elB.playCalled).toBe(true);
+      });
+
+      it("keeps warning visible in 1-on-1 booking when remoteAudioRef.play() fails (unsuccessful recovery)", async () => {
+        const singleRemoteAudioEl = new MockAudioElement();
+        singleRemoteAudioEl.srcObject = {};
+        singleRemoteAudioEl.playShouldReject = true;
+
+        const workflow = createEnableAudioWorkflow({
+          roomType: "booking",
+          singleRemoteAudioEl,
+        });
+
+        expect(workflow.getIsBlocked()).toBe(true);
+
+        await workflow.handleEnableAudio();
+
+        expect(workflow.getIsBlocked()).toBe(true);
+        expect(singleRemoteAudioEl.playCalled).toBe(true);
+      });
+
+      it("successfully dismisses warning when startAudio() and all media play() calls succeed (successful recovery)", async () => {
+        const mockLkRoom: MockLiveKitRoom = {
+          canPlaybackAudio: true,
+          startAudio: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const elA = new MockAudioElement();
+        elA.srcObject = {};
+        elA.playShouldReject = false;
+
+        const elB = new MockAudioElement();
+        elB.srcObject = {};
+        elB.playShouldReject = false;
+
+        const remoteElements = new Map<string, MockAudioElement>();
+        remoteElements.set("track-a", elA);
+        remoteElements.set("track-b", elB);
+
+        const workflow = createEnableAudioWorkflow({
+          lkRoom: mockLkRoom,
+          remoteAudioElements: remoteElements,
+        });
+
+        expect(workflow.getIsBlocked()).toBe(true);
+
+        await workflow.handleEnableAudio();
+
+        // Audio recovered: warning dismissed
+        expect(workflow.getIsBlocked()).toBe(false);
+        expect(elA.playCalled).toBe(true);
+        expect(elB.playCalled).toBe(true);
+        expect(workflow.getIsEnabling()).toBe(false);
+      });
+
+      it("enables incoming audio independently without touching local microphone permission", async () => {
+        const mockSetMicrophoneEnabled = vi.fn();
+        const mockLkRoom: MockLiveKitRoom & { localParticipant: { setMicrophoneEnabled: any } } = {
+          canPlaybackAudio: true,
+          startAudio: vi.fn().mockResolvedValue(undefined),
+          localParticipant: {
+            setMicrophoneEnabled: mockSetMicrophoneEnabled,
+          },
+        };
+
+        const el = new MockAudioElement();
+        el.srcObject = {};
+        el.playShouldReject = false;
+
+        const remoteElements = new Map<string, MockAudioElement>();
+        remoteElements.set("track-incoming", el);
+
+        const workflow = createEnableAudioWorkflow({
+          lkRoom: mockLkRoom,
+          remoteAudioElements: remoteElements,
+        });
+
+        await workflow.handleEnableAudio();
+
+        expect(workflow.getIsBlocked()).toBe(false);
+        // Microphone permission / enablement is never invoked merely to enable incoming audio
+        expect(mockSetMicrophoneEnabled).not.toHaveBeenCalled();
+      });
     });
 
     it("preserves 1-on-1 booking audio path without appending to group container", () => {
