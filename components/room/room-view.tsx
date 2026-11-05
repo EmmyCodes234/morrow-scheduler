@@ -111,11 +111,14 @@ function VideoTrackView({
       ref={videoRef}
       autoPlay
       playsInline
+      controls={false}
+      disablePictureInPicture
+      disableRemotePlayback
       muted={isLocal}
       onLoadedMetadata={(e) => {
         (e.target as HTMLVideoElement).play().catch(() => {});
       }}
-      className={className}
+      className={cx("pointer-events-none select-none", className)}
     />
   );
 }
@@ -292,8 +295,9 @@ function ParticipantTile({
   isSpeaking?: boolean;
   isMuted?: boolean;
 }) {
+  const cleanName = name.replace(/\s*\(You\)$/i, "").trim() || (isLocal ? "You" : "Guest");
   const initials =
-    name
+    cleanName
       .split(" ")
       .filter(Boolean)
       .map((n) => n[0])
@@ -306,7 +310,10 @@ function ParticipantTile({
   return (
     <div
       className={cx(
-        "relative rounded-2xl overflow-hidden bg-background-primary-default border border-border-button-default flex items-center justify-center transition-all duration-200 aspect-video sm:aspect-auto h-full min-h-[100px] sm:min-h-[180px] shadow-sm",
+        "relative rounded-2xl overflow-hidden flex items-center justify-center transition-all duration-200 aspect-video sm:aspect-auto h-full min-h-[120px] sm:min-h-[180px] shadow-sm",
+        hasActiveVisual
+          ? "bg-background-primary-default border border-border-button-default"
+          : "bg-neutral-900 border border-neutral-800",
         isSpeaking ? "ring-2 ring-accent-500 shadow-md" : ""
       )}
     >
@@ -321,12 +328,12 @@ function ParticipantTile({
           )}
         />
       ) : (
-        <div className="flex flex-col items-center justify-center gap-2 p-3 text-center">
-          <Avatar size="md" initials={initials} color={isLocal ? "blue" : "lime"} />
-          <span className="text-caption-1-semibold text-text-primary max-w-[120px] truncate">
-            {name}
+        <div className="flex flex-col items-center justify-center gap-2.5 p-4 text-center">
+          <Avatar size="lg" initials={initials} color={isLocal ? "blue" : "lime"} className="ring-2 ring-white/10 shadow-md" />
+          <span className="text-body-2-medium font-semibold text-white max-w-[140px] truncate">
+            {cleanName}
           </span>
-          <span className="text-caption-2-medium text-text-tertiary">
+          <span className="text-caption-2-medium text-neutral-400">
             {isLocal
               ? hasVideo
                 ? "Starting camera..."
@@ -341,7 +348,7 @@ function ParticipantTile({
       <div className="absolute bottom-2 start-2 end-2 flex items-center justify-between pointer-events-none z-10">
         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/60 backdrop-blur-xs text-white text-caption-2-medium max-w-[85%] truncate">
           {isMuted && <RiMicOffLine className="size-3 text-status-danger-text shrink-0" />}
-          <span className="truncate">{name} {isLocal ? "(You)" : ""}</span>
+          <span className="truncate">{cleanName} {isLocal ? "(You)" : ""}</span>
         </div>
         {isSpeaking && (
           <div className="size-2 rounded-full bg-status-lime-text animate-pulse shrink-0" />
@@ -364,6 +371,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [localVideoTrack, setLocalVideoTrack] = useState<any | null>(null);
   const [localMediaStream, setLocalMediaStream] = useState<MediaStream | null>(null);
+  const localMediaStreamRef = useRef<MediaStream | null>(null);
   const [mediaPermissionState, setMediaPermissionState] = useState<"pending" | "granted" | "denied" | "not_supported">("pending");
   const [mediaErrorMessage, setMediaErrorMessage] = useState<string | null>(null);
   const [isRequestingMedia, setIsRequestingMedia] = useState(false);
@@ -376,6 +384,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   // In-Room File Presentation & Focus Mode
   const [activeStageFile, setActiveStageFile] = useState<RoomFileItem | null>(null);
   const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isPrepDrawerOpen, setIsPrepDrawerOpen] = useState(false);
 
   // Video / Audio DOM elements
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -850,21 +859,36 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
           setAudioPlaybackBlocked(true);
         }
 
-        // Enable Local Media (Mic & Cam)
-        try {
-          const camPub = await lk.localParticipant.setCameraEnabled(!isCamOff);
-          await lk.localParticipant.setMicrophoneEnabled(!isMicMuted);
+        // Clean up Green Room preview stream so LiveKit takes exclusive ownership of camera & microphone
+        if (localMediaStreamRef.current) {
+          localMediaStreamRef.current.getTracks().forEach((track) => track.stop());
+          localMediaStreamRef.current = null;
+          setLocalMediaStream(null);
+        }
 
-          if (camPub?.videoTrack) {
-            setLocalVideoTrack(camPub.videoTrack);
-          } else {
-            const pub = lk.localParticipant.getTrackPublication(Track.Source.Camera);
-            if (pub?.videoTrack) {
-              setLocalVideoTrack(pub.videoTrack);
+        // Enable Local Media (Mic & Cam) independently with resilient fallbacks
+        try {
+          if (!isCamOff) {
+            const camPub = await lk.localParticipant.setCameraEnabled(true);
+            if (camPub?.videoTrack) {
+              setLocalVideoTrack(camPub.videoTrack);
+            } else {
+              const pub = lk.localParticipant.getTrackPublication(Track.Source.Camera);
+              if (pub?.videoTrack) {
+                setLocalVideoTrack(pub.videoTrack);
+              }
             }
           }
         } catch (mediaErr) {
-          console.warn("[Media] Device initialization notice:", mediaErr);
+          console.warn("[Media] LiveKit camera initialization notice:", mediaErr);
+        }
+
+        try {
+          if (!isMicMuted) {
+            await lk.localParticipant.setMicrophoneEnabled(true);
+          }
+        } catch (micErr) {
+          console.warn("[Media] LiveKit microphone initialization notice:", micErr);
         }
       } catch (err) {
         console.warn("[Connection] Fallback activated:", err);
@@ -941,24 +965,54 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
       return;
     }
 
+    // Stop existing preview stream before acquiring fresh device tracks
+    if (localMediaStreamRef.current) {
+      localMediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      localMediaStreamRef.current = null;
+    }
+
     setIsRequestingMedia(true);
     setMediaPermissionState("pending");
     setMediaErrorMessage(null);
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      } catch (bothErr) {
+        // Resilient fallback 1: try video only if audio is unavailable or blocked
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: "user",
+            },
+          });
+        } catch {
+          // Resilient fallback 2: try audio only if camera is in use or blocked
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+            });
+          } catch {
+            throw bothErr;
+          }
+        }
+      }
 
+      localMediaStreamRef.current = stream;
       setLocalMediaStream(stream);
       setMediaPermissionState("granted");
       setMediaErrorMessage(null);
@@ -982,18 +1036,28 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
     } finally {
       setIsRequestingMedia(false);
     }
-  }, [isCamOff, isMicMuted]);
+  }, []);
 
   useEffect(() => {
     requestLocalMedia();
   }, [requestLocalMedia]);
 
+  // Clean up preview stream on component unmount
+  useEffect(() => {
+    return () => {
+      if (localMediaStreamRef.current) {
+        localMediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        localMediaStreamRef.current = null;
+      }
+    };
+  }, []);
+
   // Toggle Microphone
   const toggleMic = async () => {
     const nextState = !isMicMuted;
     setIsMicMuted(nextState);
-    if (localMediaStream) {
-      localMediaStream.getAudioTracks().forEach((track) => {
+    if (localMediaStreamRef.current) {
+      localMediaStreamRef.current.getAudioTracks().forEach((track) => {
         track.enabled = !nextState;
       });
     }
@@ -1010,8 +1074,8 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const toggleCam = async () => {
     const nextState = !isCamOff;
     setIsCamOff(nextState);
-    if (localMediaStream) {
-      localMediaStream.getVideoTracks().forEach((track) => {
+    if (localMediaStreamRef.current) {
+      localMediaStreamRef.current.getVideoTracks().forEach((track) => {
         track.enabled = !nextState;
       });
     }
@@ -1028,6 +1092,12 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   };
 
   const handleStartCall = async () => {
+    // Release Green Room preview stream so LiveKit can take over hardware camera & mic cleanly
+    if (localMediaStreamRef.current) {
+      localMediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      localMediaStreamRef.current = null;
+      setLocalMediaStream(null);
+    }
     setIsCallActive(true);
     if (isHost && room.type === "group_meeting" && (!room.meeting?.openedEarlyAt && !roomMeeting?.openedEarlyAt)) {
       handleHostOpenEarly().catch(() => {});
@@ -1340,9 +1410,10 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const currentUserName = isHost ? room.booking.host.name : (room.booking.guest.name || "Guest");
   const remoteParticipantName = isHost ? (room.booking.guest.name || "Guest") : room.booking.host.name;
   const isGroupMeeting = room.type === "group_meeting";
-  const localParticipantDisplayName = isHost
+  const rawLocalName = isHost
     ? (room.meeting?.host?.name || room.booking?.host?.name || "Host")
     : (room.booking?.guest?.name || "You");
+  const localParticipantDisplayName = rawLocalName.replace(/\s*\(You\)$/i, "").trim() || (isHost ? "Host" : "You");
   const isBookingCancelled = room.booking.status === "cancelled" || (room.type === "group_meeting" && room.meeting?.status === "cancelled");
   const isBookingRejected = room.booking.status === "rejected";
   const isCancelledOrRejected = isBookingCancelled || isBookingRejected;
@@ -1817,25 +1888,19 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             )}
 
             {/* ----------------------------------------------------------------- */}
-            {/* CASE 4: HOST CAMERA STREAMING (HERO PREVIEW BEFORE GUEST ARRIVAL) */}
+            {/* CASE 4: SOLO CAMERA / PARTICIPANT STAGE (BEFORE GUEST ARRIVAL)    */}
             {/* ----------------------------------------------------------------- */}
-            {!isGroupMeeting && isCallActive && !isDisplayingStageFile && !hasActivePresentation && !remoteHasVideo && !isCamOff && (
-              (localVideoTrack || localMediaStream) ? (
-                <VideoTrackView
-                  track={localVideoTrack}
-                  stream={!localVideoTrack ? localMediaStream : undefined}
+            {!isGroupMeeting && isCallActive && !isDisplayingStageFile && !hasActivePresentation && !remoteHasVideo && (
+              <div className="w-full h-full p-3 sm:p-4 flex items-center justify-center max-w-4xl mx-auto">
+                <ParticipantTile
+                  name={localParticipantDisplayName}
                   isLocal={true}
-                  className="w-full h-full object-cover scale-x-[-1]"
+                  hasVideo={!isCamOff && Boolean(localVideoTrack || localMediaStream)}
+                  videoTrack={localVideoTrack}
+                  localStream={localMediaStream}
+                  isMuted={isMicMuted}
                 />
-              ) : (
-                <div className="flex flex-col items-center justify-center gap-2 p-6">
-                  <Avatar size="lg" initials={hostInitials} color="blue" />
-                  <span className="text-body-2-medium text-text-secondary flex items-center gap-1.5">
-                    <RiLoader4Line className="size-4 animate-spin text-accent-500" />
-                    Starting camera...
-                  </span>
-                </div>
-              )
+              </div>
             )}
 
             {/* ----------------------------------------------------------------- */}
@@ -1906,7 +1971,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
               <div className="w-full h-full p-4 sm:p-6 overflow-y-auto flex flex-col items-center justify-center z-10">
                 <div className="w-full max-w-sm sm:max-w-md flex flex-col items-center gap-3.5 sm:gap-4 text-center my-auto">
                   {/* Camera & Audio Preview Window */}
-                  <div className="relative w-full aspect-video rounded-3xl overflow-hidden border border-border-button-default bg-background-primary-default shadow-md flex items-center justify-center">
+                  <div className="relative w-full aspect-[4/5] sm:aspect-[4/3] md:aspect-video rounded-3xl overflow-hidden border border-border-button-default bg-background-primary-default shadow-md flex items-center justify-center">
                     {!isCamOff && (localVideoTrack || localMediaStream) ? (
                       <VideoTrackView
                         track={localVideoTrack}
@@ -2053,11 +2118,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                     {room.preparationMaterial && (
                       <button
                         type="button"
-                        onClick={() => {
-                          setActiveTab("preparation");
-                          setMobileMode("canvas");
-                          setIsFocusMode(false);
-                        }}
+                        onClick={() => setIsPrepDrawerOpen(true)}
                         className="text-caption-1-semibold text-accent-600 hover:text-accent-500 flex items-center justify-center gap-1 cursor-pointer transition-colors mt-1"
                       >
                         <RiBookOpenLine className="size-3.5" />
@@ -2116,27 +2177,14 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
               </div>
             )}
 
-            {/* Participant Status Watermark */}
-            {!hasActivePresentation && !isDisplayingStageFile && !isConcluded && (
-              <div className="absolute bottom-20 start-4 z-10 flex items-center gap-2 px-3 py-1 rounded-full bg-background-primary-default/80 backdrop-blur-md border border-border-button-default text-caption-1-semibold text-text-primary shadow-2xs">
-                <span className="size-2 rounded-full bg-accent-500" />
-                <span>
-                  {remoteHasVideo ? remoteParticipantName : `${currentUserName} (You)`}
-                </span>
-                {isMicMuted && <RiMicOffLine className="size-3.5 text-text-error-primary" />}
-              </div>
-            )}
-
             {/* =================================================================== */}
             {/* FLOATING ORBIT CONTROL DOCK (ONLY SHOWN DURING ACTIVE CALL)         */}
             {/* =================================================================== */}
             {isCallActive && !isDisplayingStageFile && !isConcluded && (
               <div
                 className={cx(
-                  "absolute start-1/2 -translate-x-1/2 z-30 pointer-events-auto transition-all duration-200",
-                  mobileMode === "canvas"
-                    ? "bottom-1.5 max-w-[calc(100%-1rem)] scale-90 sm:scale-100 origin-bottom"
-                    : "bottom-3 sm:bottom-4 max-w-[calc(100%-1.5rem)]"
+                  "absolute start-1/2 -translate-x-1/2 z-30 pointer-events-auto transition-all duration-200 bottom-3 sm:bottom-4 max-w-[calc(100%-1.5rem)]",
+                  mobileMode === "canvas" ? "hidden lg:flex" : "flex"
                 )}
               >
                 <div className="p-1 sm:p-1.5 rounded-full border border-border-button-default bg-background-primary-default/95 backdrop-blur-xl shadow-2xl flex items-center gap-1 sm:gap-2">
@@ -2267,19 +2315,49 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
           {/* Canvas Navigation Tabs */}
           <div className="p-3 border-b border-border-button-default bg-background-secondary-default/30 shrink-0">
             {/* Back-to-Stage Header */}
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-border-button-default">
-              <span className="text-caption-1-semibold text-text-secondary">Workspace Canvas</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMode("call");
-                  setIsFocusMode(true);
-                }}
-                className="text-caption-1-semibold text-accent-600 hover:text-accent-500 flex items-center gap-1 cursor-pointer transition-colors"
-                title="Return to full stage"
-              >
-                Back to Full Stage →
-              </button>
+            <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-border-button-default">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-body-2-medium font-semibold text-text-primary truncate">Workspace Canvas</span>
+                {isCallActive && (
+                  <span className="hidden xs:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-lime-text/10 text-status-lime-text text-caption-2-medium shrink-0">
+                    <span className="size-1.5 rounded-full bg-status-lime-text animate-pulse" />
+                    In Session
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                {/* Quick mobile mic toggle */}
+                {isCallActive && (
+                  <button
+                    type="button"
+                    onClick={toggleMic}
+                    aria-label={isMicMuted ? "Unmute microphone" : "Mute microphone"}
+                    className={cx(
+                      "size-7 rounded-lg border flex items-center justify-center transition-colors cursor-pointer lg:hidden",
+                      isMicMuted
+                        ? "border-border-error-default bg-status-danger-background text-text-error-primary"
+                        : "border-border-button-default bg-background-primary-default text-text-secondary hover:text-text-primary"
+                    )}
+                    title={isMicMuted ? "Microphone muted" : "Microphone active"}
+                  >
+                    {isMicMuted ? <RiMicOffLine className="size-3.5" /> : <RiMicLine className="size-3.5" />}
+                  </button>
+                )}
+
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  leadingIcon={RiFullscreenLine}
+                  onClick={() => {
+                    setMobileMode("call");
+                    setIsFocusMode(true);
+                  }}
+                  className="font-medium shadow-2xs"
+                >
+                  Back to Full Stage
+                </Button>
+              </div>
             </div>
 
             <div className="w-full flex items-center overflow-x-auto no-scrollbar p-1 rounded-xl bg-background-secondary-default border border-border-button-default gap-1">
@@ -3039,6 +3117,87 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
           )}
         </section>
       </main>
+
+      {/* ========================================================================= */}
+      {/* PRE-MEETING PREPARATION & MINUTES SLIDE-OVER DRAWER (GREEN ROOM)          */}
+      {/* ========================================================================= */}
+      {isPrepDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:justify-end">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
+            onClick={() => setIsPrepDrawerOpen(false)}
+            aria-hidden="true"
+          />
+
+          {/* Drawer Sheet */}
+          <div className="relative w-full sm:max-w-xl h-[88vh] sm:h-full bg-background-primary-default rounded-t-3xl sm:rounded-none sm:rounded-s-3xl border-t sm:border-t-0 sm:border-s border-border-button-default shadow-2xl flex flex-col overflow-hidden z-10 animate-in slide-in-from-bottom sm:slide-in-from-right duration-200">
+            {/* Header */}
+            <div className="p-4 border-b border-border-button-default flex items-center justify-between shrink-0 bg-background-secondary-default/50">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="size-8 rounded-xl bg-accent-500/10 text-accent-600 flex items-center justify-center shrink-0">
+                  <RiBookOpenLine className="size-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-body-1-semibold text-text-primary truncate">
+                    Meeting Preparation & Minutes
+                  </h3>
+                  <p className="text-caption-2-medium text-text-tertiary truncate">
+                    {room.booking.eventTitle || "Official meeting documentation"}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsPrepDrawerOpen(false)}
+                className="size-8 rounded-full border border-border-button-default bg-background-primary-default flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-background-secondary-hover cursor-pointer transition-colors shrink-0"
+                aria-label="Close preparation drawer"
+              >
+                <RiCloseLine className="size-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Content */}
+            <div className="flex-1 p-4 sm:p-6 overflow-y-auto min-h-0">
+              <div className="max-w-prose mx-auto flex flex-col gap-4">
+                <div className="p-3.5 rounded-2xl bg-background-secondary-default border border-border-button-default flex items-center gap-2.5 text-caption-1-semibold text-text-secondary">
+                  <RiFileListLine className="size-4 text-accent-600 shrink-0" />
+                  <span>Read-only preparation records provided by the organiser.</span>
+                </div>
+
+                <div className="p-4 sm:p-5 rounded-2xl bg-background-primary-default border border-border-button-default shadow-xs">
+                  <MarkdownViewer content={room.preparationMaterial || "No preparation material provided."} />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer CTA */}
+            <div className="p-4 border-t border-border-button-default bg-background-secondary-default/50 flex items-center justify-between gap-3 shrink-0">
+              <Button
+                variant="secondary"
+                size="medium"
+                onClick={() => setIsPrepDrawerOpen(false)}
+              >
+                Return to Preview
+              </Button>
+
+              <Button
+                variant="primary"
+                size="medium"
+                leadingIcon={RiVideoOnLine}
+                onClick={() => {
+                  setIsPrepDrawerOpen(false);
+                  handleStartCall();
+                }}
+                disabled={!isBookingEligible}
+              >
+                {isHost ? "Start Session as Host" : "Join Call Now"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
