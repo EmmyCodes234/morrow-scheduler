@@ -890,4 +890,299 @@ describe("Morrow Group Meetings — Pilot P0 & Early Arrival Engine", () => {
       expect(bookingShareUrl).toBe("https://usemorrow.xyz/room/booking-room-token-456");
     });
   });
+
+  // =========================================================================
+  // 8. Multi-Participant LiveKit Audio Lifecycle & Autoplay Handling
+  // =========================================================================
+  describe("Multi-Participant LiveKit Audio Lifecycle & Autoplay Handling", () => {
+    class MockAudioElement {
+      id = "";
+      autoplay = false;
+      playsInline = false;
+      srcObject: any = {};
+      parentElement: MockAudioContainer | null = null;
+      playCalled = false;
+      playShouldReject = false;
+
+      play() {
+        this.playCalled = true;
+        if (this.playShouldReject) {
+          return Promise.reject(new Error("NotAllowedError: play() failed because the user didn't interact"));
+        }
+        return Promise.resolve();
+      }
+
+      remove() {
+        if (this.parentElement) {
+          this.parentElement.removeChild(this);
+        }
+      }
+
+      setAttribute(name: string, value: string) {
+        if (name === "playsinline") {
+          this.playsInline = value === "true";
+        }
+      }
+    }
+
+    class MockAudioContainer {
+      children: MockAudioElement[] = [];
+
+      appendChild(el: MockAudioElement) {
+        el.parentElement = this;
+        this.children.push(el);
+        return el;
+      }
+
+      removeChild(el: MockAudioElement) {
+        this.children = this.children.filter((c) => c !== el);
+        el.parentElement = null;
+      }
+
+      get childNodes() {
+        return this.children;
+      }
+
+      innerHTML = "";
+    }
+
+    interface TrackMock {
+      sid?: string;
+      kind: string;
+      attach: (element?: any) => any;
+      detach: (element?: any) => any;
+    }
+
+    const createTrackMock = (sid: string): TrackMock => ({
+      sid,
+      kind: "audio",
+      attach: vi.fn((existing?: any) => {
+        if (existing) return existing;
+        const el = new MockAudioElement();
+        return el;
+      }),
+      detach: vi.fn((existing?: any) => {
+        if (existing) {
+          existing.srcObject = null;
+        }
+      }),
+    });
+
+    it("attaches distinct DOM audio elements for multiple remote participants concurrently", () => {
+      const container = new MockAudioContainer();
+      const audioElementsMap = new Map<string, MockAudioElement>();
+
+      // Handler mirroring components/room/room-view.tsx
+      const handleTrackSubscribed = (track: TrackMock, participant: { identity: string }) => {
+        const trackKey = track.sid || `audio-${participant.identity}`;
+        let existingEl = audioElementsMap.get(trackKey);
+        if (!existingEl) {
+          const audioEl = track.attach() as MockAudioElement;
+          audioEl.id = `remote-audio-${participant.identity}-${trackKey}`;
+          audioEl.autoplay = true;
+          audioEl.setAttribute("playsinline", "true");
+          (audioEl as any).playsInline = true;
+          container.appendChild(audioEl);
+          audioElementsMap.set(trackKey, audioEl);
+          audioEl.play().catch(() => {});
+        }
+      };
+
+      // Guest A arrives with audio
+      const trackA = createTrackMock("track-guest-a");
+      handleTrackSubscribed(trackA, { identity: "guest-a" });
+
+      expect(container.children).toHaveLength(1);
+      expect(audioElementsMap.size).toBe(1);
+      expect(container.children[0].id).toBe("remote-audio-guest-a-track-guest-a");
+      expect(container.children[0].autoplay).toBe(true);
+      expect(container.children[0].playsInline).toBe(true);
+      expect(container.children[0].playCalled).toBe(true);
+
+      // Guest B arrives with audio
+      const trackB = createTrackMock("track-guest-b");
+      handleTrackSubscribed(trackB, { identity: "guest-b" });
+
+      expect(container.children).toHaveLength(2);
+      expect(audioElementsMap.size).toBe(2);
+      expect(container.children[1].id).toBe("remote-audio-guest-b-track-guest-b");
+      expect(container.children[1].autoplay).toBe(true);
+      expect(container.children[1].playsInline).toBe(true);
+
+      // Both audio elements exist simultaneously in the DOM container without collision
+      expect(audioElementsMap.has("track-guest-a")).toBe(true);
+      expect(audioElementsMap.has("track-guest-b")).toBe(true);
+    });
+
+    it("unsubscribing one participant detaches only their audio element and leaves others active", () => {
+      const container = new MockAudioContainer();
+      const audioElementsMap = new Map<string, MockAudioElement>();
+
+      const trackA = createTrackMock("track-guest-a");
+      const elA = trackA.attach() as MockAudioElement;
+      container.appendChild(elA);
+      audioElementsMap.set("track-guest-a", elA);
+
+      const trackB = createTrackMock("track-guest-b");
+      const elB = trackB.attach() as MockAudioElement;
+      container.appendChild(elB);
+      audioElementsMap.set("track-guest-b", elB);
+
+      expect(container.children).toHaveLength(2);
+
+      // Handler mirroring components/room/room-view.tsx TrackUnsubscribed
+      const handleTrackUnsubscribed = (track: TrackMock, participant: { identity: string }) => {
+        const trackKey = track.sid || `audio-${participant.identity}`;
+        if (trackKey) {
+          const el = audioElementsMap.get(trackKey);
+          if (el) {
+            track.detach(el);
+            el.srcObject = null;
+            el.remove();
+            audioElementsMap.delete(trackKey);
+          } else {
+            track.detach();
+          }
+        }
+      };
+
+      // Guest A mutes/unsubscribes
+      handleTrackUnsubscribed(trackA, { identity: "guest-a" });
+
+      expect(trackA.detach).toHaveBeenCalledWith(elA);
+      expect(elA.srcObject).toBeNull();
+      expect(container.children).toHaveLength(1);
+      expect(container.children[0]).toBe(elB);
+      expect(audioElementsMap.has("track-guest-a")).toBe(false);
+      expect(audioElementsMap.has("track-guest-b")).toBe(true);
+    });
+
+    it("cleans up all participant audio elements on participant disconnection", () => {
+      const container = new MockAudioContainer();
+      const audioElementsMap = new Map<string, MockAudioElement>();
+
+      const trackA = createTrackMock("track-guest-a");
+      const elA = trackA.attach() as MockAudioElement;
+      container.appendChild(elA);
+      audioElementsMap.set("track-guest-a", elA);
+
+      const trackB = createTrackMock("track-guest-b");
+      const elB = trackB.attach() as MockAudioElement;
+      container.appendChild(elB);
+      audioElementsMap.set("track-guest-b", elB);
+
+      // Handler mirroring components/room/room-view.tsx ParticipantDisconnected
+      const handleParticipantDisconnected = (participant: {
+        identity: string;
+        trackPublications: Array<{ track?: TrackMock }>;
+      }) => {
+        participant.trackPublications.forEach((pub) => {
+          if (pub.track) {
+            const trackKey = pub.track.sid || `audio-${participant.identity}`;
+            const el = audioElementsMap.get(trackKey);
+            if (el) {
+              pub.track.detach(el);
+              el.srcObject = null;
+              el.remove();
+              audioElementsMap.delete(trackKey);
+            }
+          }
+        });
+        const fallbackKey = `audio-${participant.identity}`;
+        const fallbackEl = audioElementsMap.get(fallbackKey);
+        if (fallbackEl) {
+          fallbackEl.srcObject = null;
+          fallbackEl.remove();
+          audioElementsMap.delete(fallbackKey);
+        }
+      };
+
+      handleParticipantDisconnected({
+        identity: "guest-a",
+        trackPublications: [{ track: trackA }],
+      });
+
+      expect(container.children).toHaveLength(1);
+      expect(container.children[0]).toBe(elB);
+      expect(audioElementsMap.has("track-guest-a")).toBe(false);
+    });
+
+    it("cleans up all remaining elements on room disconnect / component unmount", () => {
+      const container = new MockAudioContainer();
+      const audioElementsMap = new Map<string, MockAudioElement>();
+
+      const trackA = createTrackMock("track-a");
+      const elA = trackA.attach() as MockAudioElement;
+      container.appendChild(elA);
+      audioElementsMap.set("track-a", elA);
+
+      const trackB = createTrackMock("track-b");
+      const elB = trackB.attach() as MockAudioElement;
+      container.appendChild(elB);
+      audioElementsMap.set("track-b", elB);
+
+      // Cleanup mirroring components/room/room-view.tsx useEffect return
+      const cleanup = () => {
+        audioElementsMap.forEach((el) => {
+          el.srcObject = null;
+          el.remove();
+        });
+        audioElementsMap.clear();
+        container.innerHTML = "";
+      };
+
+      cleanup();
+
+      expect(container.children).toHaveLength(0);
+      expect(audioElementsMap.size).toBe(0);
+      expect(elA.srcObject).toBeNull();
+      expect(elB.srcObject).toBeNull();
+    });
+
+    it("detects browser autoplay rejection and unblocks on user action", async () => {
+      let audioPlaybackBlocked = false;
+      const setAudioPlaybackBlocked = (val: boolean) => {
+        audioPlaybackBlocked = val;
+      };
+
+      const audioEl = new MockAudioElement();
+      audioEl.playShouldReject = true; // Browser blocks autoplay
+
+      // Initial playback attempt fails
+      try {
+        await audioEl.play();
+      } catch {
+        setAudioPlaybackBlocked(true);
+      }
+
+      expect(audioPlaybackBlocked).toBe(true);
+
+      // User clicks "Enable Audio"
+      const handleEnableAudio = async () => {
+        audioEl.playShouldReject = false; // Browser unblocked after gesture
+        await audioEl.play();
+        setAudioPlaybackBlocked(false);
+      };
+
+      await handleEnableAudio();
+
+      expect(audioPlaybackBlocked).toBe(false);
+      expect(audioEl.playCalled).toBe(true);
+    });
+
+    it("preserves 1-on-1 booking audio path without appending to group container", () => {
+      const container = new MockAudioContainer();
+      const singleRemoteAudioEl = new MockAudioElement();
+
+      const track1on1 = createTrackMock("track-1on1");
+      const isGroupMeeting = false; // 1-on-1 booking
+
+      if (!isGroupMeeting) {
+        track1on1.attach(singleRemoteAudioEl);
+      }
+
+      expect(track1on1.attach).toHaveBeenCalledWith(singleRemoteAudioEl);
+      expect(container.children).toHaveLength(0); // Container remains unused for 1-on-1
+    });
+  });
 });

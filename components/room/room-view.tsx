@@ -35,6 +35,7 @@ import {
   RiAddLine,
   RiTimeLine,
   RiVolumeUpLine,
+  RiVolumeMuteLine,
   RiCalendarCloseLine,
   RiRefreshLine,
   RiAlertLine,
@@ -176,9 +177,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const screenShareVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const remoteAudioContainerRef = useRef<HTMLDivElement | null>(null);
   const lkRoomRef = useRef<LiveKitRoomType | null>(null);
   const remoteAudioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const [groupParticipants, setGroupParticipants] = useState<GroupParticipant[]>([]);
+  const [audioPlaybackBlocked, setAudioPlaybackBlocked] = useState(false);
 
   // Collaborative Canvas State
   const [notes, setNotes] = useState(room.sharedNotes || "");
@@ -431,14 +434,35 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             }
             setScreenSharePresenter({ name: participant.name || "Guest", isLocal: false });
           } else if (track.kind === Track.Kind.Audio) {
-            // Concurrent audio playback: every remote audio track gets a dedicated audio element
-            const trackKey = track.sid || `audio-${participant.identity}`;
-            let existingEl = remoteAudioElementsRef.current.get(trackKey);
-            if (!existingEl) {
-              const audioEl = track.attach();
-              audioEl.id = `remote-audio-${participant.identity}-${trackKey}`;
-              audioEl.style.display = "none";
-              remoteAudioElementsRef.current.set(trackKey, audioEl);
+            if (room.type !== "group_meeting") {
+              // 1-on-1 booking audio path: attach to dedicated 1-on-1 remoteAudioRef element
+              if (remoteAudioRef.current) {
+                track.attach(remoteAudioRef.current);
+                remoteAudioRef.current.play().catch((err) => {
+                  console.warn("[RoomView] 1-on-1 audio autoplay blocked:", err);
+                  setAudioPlaybackBlocked(true);
+                });
+              }
+            } else {
+              // Concurrent group meeting audio playback:
+              // Every remote audio track gets a dedicated audio element appended to the stable DOM container
+              const trackKey = track.sid || `audio-${participant.identity}`;
+              let existingEl = remoteAudioElementsRef.current.get(trackKey);
+              if (!existingEl) {
+                const audioEl = track.attach() as HTMLAudioElement;
+                audioEl.id = `remote-audio-${participant.identity}-${trackKey}`;
+                audioEl.autoplay = true;
+                audioEl.setAttribute("playsinline", "true");
+                (audioEl as unknown as { playsInline?: boolean }).playsInline = true;
+                if (remoteAudioContainerRef.current) {
+                  remoteAudioContainerRef.current.appendChild(audioEl);
+                }
+                remoteAudioElementsRef.current.set(trackKey, audioEl);
+                audioEl.play().catch((err) => {
+                  console.warn("[RoomView] Group audio autoplay blocked by browser:", participant.identity, err);
+                  setAudioPlaybackBlocked(true);
+                });
+              }
             }
             syncParticipants();
           } else if (track.kind === Track.Kind.Video) {
@@ -456,19 +480,27 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             track.detach();
             setScreenSharePresenter(null);
           } else if (track.kind === Track.Kind.Audio) {
-            const trackKey = track.sid || (participant ? `audio-${participant.identity}` : undefined);
-            if (trackKey) {
-              const el = remoteAudioElementsRef.current.get(trackKey);
-              if (el) {
-                track.detach(el);
-                el.srcObject = null;
-                el.remove();
-                remoteAudioElementsRef.current.delete(trackKey);
+            if (room.type !== "group_meeting") {
+              if (remoteAudioRef.current) {
+                track.detach(remoteAudioRef.current);
               } else {
                 track.detach();
               }
             } else {
-              track.detach();
+              const trackKey = track.sid || (participant ? `audio-${participant.identity}` : undefined);
+              if (trackKey) {
+                const el = remoteAudioElementsRef.current.get(trackKey);
+                if (el) {
+                  track.detach(el);
+                  el.srcObject = null;
+                  el.remove();
+                  remoteAudioElementsRef.current.delete(trackKey);
+                } else {
+                  track.detach();
+                }
+              } else {
+                track.detach();
+              }
             }
             syncParticipants();
           } else if (track.kind === Track.Kind.Video) {
@@ -494,7 +526,20 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
               }
             }
           });
+          const fallbackKey = `audio-${participant.identity}`;
+          const fallbackEl = remoteAudioElementsRef.current.get(fallbackKey);
+          if (fallbackEl) {
+            fallbackEl.srcObject = null;
+            fallbackEl.remove();
+            remoteAudioElementsRef.current.delete(fallbackKey);
+          }
           syncParticipants();
+        });
+
+        lk.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+          if (lk) {
+            setAudioPlaybackBlocked(!lk.canPlaybackAudio);
+          }
         });
 
         lk.on(RoomEvent.TrackMuted, () => syncParticipants());
@@ -582,6 +627,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         setConnectionStatus("connected");
         syncParticipants();
 
+        // Check if browser blocked autoplay policy
+        if (!lk.canPlaybackAudio) {
+          setAudioPlaybackBlocked(true);
+        }
+
         // Enable Local Media (Mic & Cam)
         try {
           await lk.localParticipant.setCameraEnabled(!isCamOff);
@@ -606,19 +656,46 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
       isCancelled = true;
       if (cleanupRoom) {
         cleanupRoom.disconnect();
-        remoteAudioElementsRef.current.forEach((el, sid) => {
+        if (room.type !== "group_meeting" && remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = null;
+        }
+        remoteAudioElementsRef.current.forEach((el) => {
           el.srcObject = null;
           el.remove();
         });
         remoteAudioElementsRef.current.clear();
+        if (remoteAudioContainerRef.current) {
+          remoteAudioContainerRef.current.innerHTML = "";
+        }
         setGroupParticipants([]);
         lkRoomRef.current = null;
       }
     };
   }, [isCallActive, room.accessToken]);
 
+  // Enable Audio when browser blocks autoplay
+  const handleEnableAudio = async () => {
+    if (lkRoomRef.current) {
+      try {
+        await lkRoomRef.current.startAudio();
+      } catch (err) {
+        console.warn("[RoomView] lkRoom.startAudio failed:", err);
+      }
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.play().catch(() => {});
+    }
+    remoteAudioElementsRef.current.forEach((el) => {
+      el.play().catch(() => {});
+    });
+    setAudioPlaybackBlocked(false);
+  };
+
   // Toggle Microphone
   const toggleMic = async () => {
+    if (audioPlaybackBlocked) {
+      handleEnableAudio();
+    }
     const nextState = !isMicMuted;
     setIsMicMuted(nextState);
     if (lkRoomRef.current) {
@@ -996,8 +1073,46 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
 
   return (
     <div className="h-[100dvh] max-h-[100dvh] w-full max-w-full overflow-hidden flex flex-col bg-background-full text-text-primary selection:bg-accent-500/20 pb-[env(safe-area-inset-bottom)]">
-      {/* Hidden audio element for remote audio track */}
+      {/* 1-on-1 single remote audio element (preserved for 1-on-1 bookings) */}
       <audio ref={remoteAudioRef} autoPlay playsInline />
+
+      {/* Stable DOM container for concurrent multi-participant remote audio elements */}
+      <div
+        ref={remoteAudioContainerRef}
+        id="remote-audio-container"
+        aria-hidden="true"
+        className="fixed top-0 start-0 w-0 h-0 overflow-hidden opacity-0 pointer-events-none -z-50"
+      />
+
+      {/* Browser Autoplay Blocked Banner */}
+      {audioPlaybackBlocked && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="fixed top-16 inset-x-3 sm:inset-x-auto sm:end-6 z-50 p-3 sm:p-4 rounded-2xl bg-background-primary-default border border-border-error-default shadow-xl flex items-center justify-between gap-3 max-w-md animate-in fade-in slide-in-from-top-2"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <RiVolumeMuteLine className="size-5 text-text-error-primary shrink-0" />
+            <div className="flex flex-col min-w-0">
+              <span className="text-body-2-semibold text-text-primary">
+                Audio playback paused by browser
+              </span>
+              <span className="text-caption-2-medium text-text-secondary truncate">
+                Click to unmute and hear meeting participants
+              </span>
+            </div>
+          </div>
+          <Button
+            size="xs"
+            variant="primary"
+            onClick={handleEnableAudio}
+            leadingIcon={RiVolumeUpLine}
+            className="shrink-0 cursor-pointer"
+          >
+            Enable Audio
+          </Button>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* 1. ROOM HEADER BAR */}
