@@ -65,6 +65,47 @@ export interface GroupParticipant {
   audioTrack?: any;
 }
 
+function VideoTrackView({
+  track,
+  isLocal = false,
+  className,
+}: {
+  track?: any;
+  isLocal?: boolean;
+  className?: string;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !track) return;
+
+    try {
+      track.attach(el);
+    } catch (err) {
+      console.warn("[VideoTrackView] attach notice:", err);
+    }
+
+    return () => {
+      try {
+        track.detach(el);
+      } catch (e) {
+        // Safe detach
+      }
+    };
+  }, [track]);
+
+  return (
+    <video
+      ref={videoRef}
+      autoPlay
+      playsInline
+      muted={isLocal}
+      className={className}
+    />
+  );
+}
+
 function ParticipantTile({
   name,
   isLocal = false,
@@ -72,7 +113,6 @@ function ParticipantTile({
   videoTrack,
   isSpeaking,
   isMuted,
-  localVideoRef,
 }: {
   name: string;
   isLocal?: boolean;
@@ -80,21 +120,7 @@ function ParticipantTile({
   videoTrack?: any;
   isSpeaking?: boolean;
   isMuted?: boolean;
-  localVideoRef?: React.RefObject<HTMLVideoElement | null>;
 }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  useEffect(() => {
-    if (!isLocal && videoRef.current && videoTrack) {
-      videoTrack.attach(videoRef.current);
-      return () => {
-        if (videoRef.current) {
-          videoTrack.detach(videoRef.current);
-        }
-      };
-    }
-  }, [isLocal, videoTrack]);
-
   const initials =
     name
       .split(" ")
@@ -111,41 +137,34 @@ function ParticipantTile({
         isSpeaking ? "ring-2 ring-accent-500 shadow-md" : ""
       )}
     >
-      {isLocal ? (
-        hasVideo ? (
-          <video
-            ref={localVideoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover scale-x-[-1]"
-          />
-        ) : null
-      ) : hasVideo && videoTrack ? (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          className="w-full h-full object-cover"
+      {hasVideo && videoTrack ? (
+        <VideoTrackView
+          track={videoTrack}
+          isLocal={isLocal}
+          className={cx(
+            "w-full h-full object-cover",
+            isLocal ? "scale-x-[-1]" : ""
+          )}
         />
-      ) : null}
-
-      {!hasVideo && (
+      ) : (
         <div className="flex flex-col items-center justify-center gap-2 p-3 text-center">
           <Avatar size="md" initials={initials} color={isLocal ? "blue" : "lime"} />
           <span className="text-caption-1-semibold text-text-primary max-w-[120px] truncate">
             {name}
           </span>
+          <span className="text-caption-2-medium text-text-tertiary">
+            {isLocal ? (hasVideo ? "Connecting camera..." : "Camera Off") : (hasVideo ? "Connecting video..." : "Camera Off")}
+          </span>
         </div>
       )}
 
-      <div className="absolute bottom-2 start-2 end-2 flex items-center justify-between pointer-events-none">
+      <div className="absolute bottom-2 start-2 end-2 flex items-center justify-between pointer-events-none z-10">
         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/60 backdrop-blur-xs text-white text-caption-2-medium max-w-[85%] truncate">
           {isMuted && <RiMicOffLine className="size-3 text-status-danger-text shrink-0" />}
           <span className="truncate">{name} {isLocal ? "(You)" : ""}</span>
         </div>
         {isSpeaking && (
-          <div className="size-2 rounded-full bg-accent-500 animate-ping shrink-0" />
+          <div className="size-2 rounded-full bg-status-lime-text animate-pulse shrink-0" />
         )}
       </div>
     </div>
@@ -163,6 +182,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCamOff, setIsCamOff] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [localVideoTrack, setLocalVideoTrack] = useState<any | null>(null);
   const [screenSharePresenter, setScreenSharePresenter] = useState<{ name: string; isLocal: boolean } | null>(null);
   const [isCallActive, setIsCallActive] = useState(room.status === "in_progress");
   const [connectionStatus, setConnectionStatus] = useState<"idle" | "connecting" | "connected" | "disconnected">("idle");
@@ -557,7 +577,19 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         });
 
         // Local Track Unpublished
+        lk.on(RoomEvent.LocalTrackPublished, (pub) => {
+          if (pub.source === Track.Source.Camera && pub.videoTrack) {
+            setLocalVideoTrack(pub.videoTrack);
+          }
+          if (pub.source === Track.Source.ScreenShare) {
+            setIsScreenSharing(true);
+          }
+        });
+
         lk.on(RoomEvent.LocalTrackUnpublished, (pub) => {
+          if (pub.source === Track.Source.Camera) {
+            setLocalVideoTrack(null);
+          }
           if (pub.source === Track.Source.ScreenShare) {
             setScreenSharePresenter(null);
             setIsScreenSharing(false);
@@ -636,12 +668,16 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
 
         // Enable Local Media (Mic & Cam)
         try {
-          await lk.localParticipant.setCameraEnabled(!isCamOff);
+          const camPub = await lk.localParticipant.setCameraEnabled(!isCamOff);
           await lk.localParticipant.setMicrophoneEnabled(!isMicMuted);
 
-          const cameraPub = lk.localParticipant.getTrackPublication(Track.Source.Camera);
-          if (cameraPub?.videoTrack && localVideoRef.current) {
-            cameraPub.videoTrack.attach(localVideoRef.current);
+          if (camPub?.videoTrack) {
+            setLocalVideoTrack(camPub.videoTrack);
+          } else {
+            const pub = lk.localParticipant.getTrackPublication(Track.Source.Camera);
+            if (pub?.videoTrack) {
+              setLocalVideoTrack(pub.videoTrack);
+            }
           }
         } catch (mediaErr) {
           console.warn("[Media] Device initialization notice:", mediaErr);
@@ -732,12 +768,10 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
     setIsCamOff(nextState);
     if (lkRoomRef.current) {
       try {
-        await lkRoomRef.current.localParticipant.setCameraEnabled(!nextState);
+        const camPub = await lkRoomRef.current.localParticipant.setCameraEnabled(!nextState);
         const { Track } = await import("livekit-client");
-        const camPub = lkRoomRef.current.localParticipant.getTrackPublication(Track.Source.Camera);
-        if (!nextState && camPub?.videoTrack && localVideoRef.current) {
-          camPub.videoTrack.attach(localVideoRef.current);
-        }
+        const pub = lkRoomRef.current.localParticipant.getTrackPublication(Track.Source.Camera);
+        setLocalVideoTrack(!nextState && (pub?.videoTrack || camPub?.videoTrack) ? pub?.videoTrack || camPub?.videoTrack : null);
       } catch (err) {
         console.warn("[Video] Toggle notice:", err);
       }
@@ -1488,9 +1522,9 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                   <ParticipantTile
                     name={localParticipantDisplayName}
                     isLocal={true}
-                    hasVideo={!isCamOff}
+                    hasVideo={!isCamOff && Boolean(localVideoTrack)}
+                    videoTrack={localVideoTrack}
                     isMuted={isMicMuted}
-                    localVideoRef={localVideoRef}
                   />
 
                   {groupParticipants.map((peer) => (
@@ -1527,13 +1561,18 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             {/* CASE 4: HOST CAMERA STREAMING (HERO PREVIEW BEFORE GUEST ARRIVAL) */}
             {/* ----------------------------------------------------------------- */}
             {!isGroupMeeting && isCallActive && !isDisplayingStageFile && !hasActivePresentation && !remoteHasVideo && !isCamOff && (
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover scale-x-[-1]"
-              />
+              localVideoTrack ? (
+                <VideoTrackView
+                  track={localVideoTrack}
+                  isLocal={true}
+                  className="w-full h-full object-cover scale-x-[-1]"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2 p-6">
+                  <Avatar size="lg" initials={hostInitials} color="blue" />
+                  <span className="text-body-2-medium text-text-secondary">Starting camera...</span>
+                </div>
+              )
             )}
 
             {/* ----------------------------------------------------------------- */}
@@ -1597,24 +1636,127 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
               </div>
             )}
 
-            {/* ----------------------------------------------------------------- */}
-            {/* CASE 5: PRE-MEETING SCREEN / AWAITING PEER */}
-            {/* ----------------------------------------------------------------- */}
-            {!isConcluded && !isCancelledOrRejected && !isDisplayingStageFile && (!isCallActive || (!isGroupMeeting && !hasActivePresentation && !remoteHasVideo && isCamOff)) && (
-              <div className="flex flex-col items-center justify-center text-center p-6 gap-3 z-10 max-w-sm">
-                <div className="relative">
-                  <Avatar size="lg" initials={isHost ? guestInitials : hostInitials} color={isHost ? "lime" : "blue"} />
-                  <span className="absolute -bottom-1 -end-1 size-3.5 rounded-full bg-status-lime-text ring-2 ring-background-primary-default animate-pulse" />
-                </div>
-                <div>
-                  <h3 className="text-title-3-semibold text-text-primary">
-                    {remoteParticipantName}
-                  </h3>
-                  <p className="text-body-2-regular text-text-secondary mt-1">
-                    {isCallActive
-                      ? `Awaiting ${remoteParticipantName} in Morrow room...`
-                      : "The room is ready. Start the session when you are set."}
-                  </p>
+            {/* ============================================================= */}
+            {/* PRE-CALL GREEN ROOM & DEVICE SETUP COCKPIT                    */}
+            {/* ============================================================= */}
+            {!isCallActive && !isConcluded && !isCancelledOrRejected && !isDisplayingStageFile && (
+              <div className="w-full h-full p-4 sm:p-6 overflow-y-auto flex flex-col items-center justify-center z-10">
+                <div className="w-full max-w-sm sm:max-w-md flex flex-col items-center gap-3.5 sm:gap-4 text-center my-auto">
+                  {/* Camera & Audio Preview Window */}
+                  <div className="relative w-full aspect-video rounded-3xl overflow-hidden border border-border-button-default bg-background-primary-default shadow-md flex items-center justify-center">
+                    {!isCamOff && localVideoTrack ? (
+                      <VideoTrackView
+                        track={localVideoTrack}
+                        isLocal={true}
+                        className="w-full h-full object-cover scale-x-[-1]"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center gap-2 p-6">
+                        <Avatar size="lg" initials={isHost ? hostInitials : guestInitials} color={isHost ? "blue" : "lime"} />
+                        <span className="text-body-2-medium text-text-secondary">
+                          {isCamOff ? "Camera is turned off" : "Starting camera preview..."}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Green Room Floating In-Preview Controls */}
+                    <div className="absolute bottom-2.5 start-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/10 shadow-lg z-20">
+                      <button
+                        type="button"
+                        onClick={toggleMic}
+                        aria-label={isMicMuted ? "Unmute microphone" : "Mute microphone"}
+                        className={cx(
+                          "size-8 sm:size-9 rounded-full flex items-center justify-center transition-colors cursor-pointer",
+                          isMicMuted
+                            ? "bg-status-danger-background text-text-error-primary border border-border-error-default"
+                            : "bg-white/20 text-white hover:bg-white/30"
+                        )}
+                        title={isMicMuted ? "Microphone muted" : "Microphone active"}
+                      >
+                        {isMicMuted ? <RiMicOffLine className="size-4" /> : <RiMicLine className="size-4" />}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={toggleCam}
+                        aria-label={isCamOff ? "Turn on camera" : "Turn off camera"}
+                        className={cx(
+                          "size-8 sm:size-9 rounded-full flex items-center justify-center transition-colors cursor-pointer",
+                          isCamOff
+                            ? "bg-status-danger-background text-text-error-primary border border-border-error-default"
+                            : "bg-white/20 text-white hover:bg-white/30"
+                        )}
+                        title={isCamOff ? "Camera off" : "Camera on"}
+                      >
+                        {isCamOff ? <RiVideoOffLine className="size-4" /> : <RiVideoOnLine className="size-4" />}
+                      </button>
+                    </div>
+
+                    {/* Participant Badge Top-Left */}
+                    <div className="absolute top-2.5 start-2.5 px-2.5 py-0.5 rounded-full bg-black/50 backdrop-blur-xs text-white text-caption-2-medium z-10">
+                      {localParticipantDisplayName} (You)
+                    </div>
+                  </div>
+
+                  {/* Device Status & Welcome */}
+                  <div className="flex flex-col gap-1 items-center">
+                    <h3 className="text-title-3-semibold text-text-primary">
+                      Ready to join?
+                    </h3>
+                    <p className="text-body-2-regular text-text-secondary max-w-xs sm:max-w-sm text-balance">
+                      Check your camera and audio framing before entering the room. You can also review preparation documents anytime.
+                    </p>
+
+                    <div className="flex items-center gap-2 mt-1">
+                      <Chip
+                        color={isMicMuted ? "neutral" : "lime"}
+                        variant="caption"
+                      >
+                        {isMicMuted ? "Mic Muted" : "Mic Active"}
+                      </Chip>
+                      <Chip
+                        color={isCamOff ? "neutral" : "lime"}
+                        variant="caption"
+                      >
+                        {isCamOff ? "Camera Off" : "Camera Ready"}
+                      </Chip>
+                    </div>
+                  </div>
+
+                  {/* Join Action CTA */}
+                  <div className="w-full flex flex-col gap-2 mt-0.5">
+                    <Button
+                      variant="primary"
+                      size="medium"
+                      leadingIcon={RiVideoOnLine}
+                      onClick={() => setIsCallActive(true)}
+                      disabled={!isBookingEligible}
+                      className="w-full justify-center text-body-medium font-semibold shadow-sm py-2.5"
+                    >
+                      {isHost ? "Start Session" : "Join Call Now"}
+                    </Button>
+
+                    {!isBookingEligible && (
+                      <p className="text-caption-2-medium text-text-tertiary">
+                        Room opens automatically 15 minutes before the scheduled time.
+                      </p>
+                    )}
+
+                    {room.preparationMaterial && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab("preparation");
+                          setMobileMode("canvas");
+                          setIsFocusMode(false);
+                        }}
+                        className="text-caption-1-semibold text-accent-600 hover:text-accent-500 flex items-center justify-center gap-1 cursor-pointer transition-colors mt-1"
+                      >
+                        <RiBookOpenLine className="size-3.5" />
+                        <span>Review Meeting Minutes & Prep →</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -1648,11 +1790,9 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             {!isGroupMeeting && isCallActive && !isConcluded && (remoteHasVideo || hasActivePresentation || isDisplayingStageFile) && (
               <div className="absolute top-14 end-3 sm:top-14 sm:end-4 w-32 h-20 sm:w-40 sm:h-24 rounded-2xl border border-border-button-default bg-background-primary-default overflow-hidden shadow-xl z-30">
                 {!isCamOff ? (
-                  <video
-                    ref={localVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
+                  <VideoTrackView
+                    track={localVideoTrack}
+                    isLocal={true}
                     className="w-full h-full object-cover scale-x-[-1]"
                   />
                 ) : (
@@ -1679,25 +1819,24 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             )}
 
             {/* =================================================================== */}
-            {/* FLOATING ORBIT CONTROL DOCK (ONLY SHOWN DURING ACTIVE / PRE-CALL)  */}
-            {/* When a document is presented or call concluded, dock adjusts        */}
+            {/* FLOATING ORBIT CONTROL DOCK (ONLY SHOWN DURING ACTIVE CALL)         */}
             {/* =================================================================== */}
-            {!isDisplayingStageFile && !isConcluded && (
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
-                <div className="p-1.5 sm:p-2 rounded-full border border-border-button-default bg-background-primary-default/95 backdrop-blur-xl shadow-2xl flex items-center gap-2">
+            {isCallActive && !isDisplayingStageFile && !isConcluded && (
+              <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto max-w-[calc(100%-1.5rem)]">
+                <div className="p-1 sm:p-1.5 rounded-full border border-border-button-default bg-background-primary-default/95 backdrop-blur-xl shadow-2xl flex items-center gap-1 sm:gap-2">
                   {/* Microphone Toggle */}
                   <button
                     type="button"
                     onClick={toggleMic}
                     aria-label={isMicMuted ? "Unmute microphone" : "Mute microphone"}
                     className={cx(
-                      "size-10 sm:size-11 rounded-full border flex items-center justify-center transition-colors cursor-pointer",
+                      "size-9 sm:size-10 rounded-full border flex items-center justify-center transition-colors cursor-pointer shrink-0",
                       isMicMuted
                         ? "border-border-error-default bg-status-danger-background text-text-error-primary"
                         : "border-border-button-default bg-background-secondary-default text-text-primary hover:bg-background-secondary-hover"
                     )}
                   >
-                    {isMicMuted ? <RiMicOffLine className="size-5" /> : <RiMicLine className="size-5" />}
+                    {isMicMuted ? <RiMicOffLine className="size-4 sm:size-5" /> : <RiMicLine className="size-4 sm:size-5" />}
                   </button>
 
                   {/* Camera Toggle */}
@@ -1706,28 +1845,28 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                     onClick={toggleCam}
                     aria-label={isCamOff ? "Turn on camera" : "Turn off camera"}
                     className={cx(
-                      "size-10 sm:size-11 rounded-full border flex items-center justify-center transition-colors cursor-pointer",
+                      "size-9 sm:size-10 rounded-full border flex items-center justify-center transition-colors cursor-pointer shrink-0",
                       isCamOff
                         ? "border-border-error-default bg-status-danger-background text-text-error-primary"
                         : "border-border-button-default bg-background-secondary-default text-text-primary hover:bg-background-secondary-hover"
                     )}
                   >
-                    {isCamOff ? <RiVideoOffLine className="size-5" /> : <RiVideoOnLine className="size-5" />}
+                    {isCamOff ? <RiVideoOffLine className="size-4 sm:size-5" /> : <RiVideoOnLine className="size-4 sm:size-5" />}
                   </button>
 
-                  {/* Screen Share Toggle */}
+                  {/* Screen Share Toggle (Desktop/Tablet only) */}
                   <button
                     type="button"
                     onClick={toggleScreenShare}
                     aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
                     className={cx(
-                      "size-10 sm:size-11 rounded-full border flex items-center justify-center transition-colors cursor-pointer",
+                      "hidden sm:flex size-9 sm:size-10 rounded-full border items-center justify-center transition-colors cursor-pointer shrink-0",
                       isScreenSharing
                         ? "border-accent-500 bg-accent-500 text-text-primary shadow-sm"
                         : "border-border-button-default bg-background-secondary-default text-text-primary hover:bg-background-secondary-hover"
-                      )}
+                    )}
                   >
-                    <RiShareForwardBoxLine className="size-5" />
+                    <RiShareForwardBoxLine className="size-4 sm:size-5" />
                   </button>
 
                   {/* In-Room Preparation / Context Button */}
@@ -1741,9 +1880,9 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                       }}
                       aria-label="View meeting preparation"
                       title="Preparation Minutes"
-                      className="size-10 sm:size-11 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer hover:bg-background-secondary-hover"
+                      className="size-9 sm:size-10 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer hover:bg-background-secondary-hover shrink-0"
                     >
-                      <RiBookOpenLine className="size-5 text-accent-600" />
+                      <RiBookOpenLine className="size-4 sm:size-5 text-accent-600" />
                     </button>
                   )}
 
@@ -1762,40 +1901,32 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                     }}
                     aria-label="Toggle workspace canvas"
                     title={isFocusMode || mobileMode === "call" ? "Open Workspace" : "Collapse Workspace"}
-                    className="size-10 sm:size-11 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer hover:bg-background-secondary-hover"
+                    className="size-9 sm:size-10 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer hover:bg-background-secondary-hover shrink-0"
                   >
-                    <RiFileListLine className="size-5" />
+                    <RiFileListLine className="size-4 sm:size-5" />
                   </button>
 
-                  <div className="h-6 w-px bg-border-button-default mx-0.5 hidden sm:block" />
+                  <div className="h-5 sm:h-6 w-px bg-border-button-default mx-0.5" />
 
                   {/* Call State Button */}
-                  {!isCallActive ? (
+                  {isHost ? (
                     <Button
                       variant="primary"
-                      size="small"
-                      leadingIcon={RiVideoOnLine}
-                      onClick={() => setIsCallActive(true)}
-                      disabled={!isBookingEligible}
-                    >
-                      Start Call
-                    </Button>
-                  ) : isHost ? (
-                    <Button
-                      variant="primary"
-                      size="small"
+                      size="xs"
                       onClick={handleConcludeCall}
                       disabled={isSynthesizing}
+                      className="px-2.5 sm:px-4 shrink-0 font-semibold text-caption-1-semibold sm:text-body-2-medium"
                     >
-                      {isSynthesizing ? "Synthesizing..." : "End Meeting"}
+                      {isSynthesizing ? "Synthesizing..." : <><span className="hidden sm:inline">End Meeting</span><span className="sm:hidden">End</span></>}
                     </Button>
                   ) : (
                     <Button
                       variant="secondary"
-                      size="small"
+                      size="xs"
                       onClick={handleLeaveCall}
+                      className="px-2.5 sm:px-4 shrink-0 font-semibold text-caption-1-semibold sm:text-body-2-medium"
                     >
-                      Leave Call
+                      <span className="hidden sm:inline">Leave Call</span><span className="sm:hidden">Leave</span>
                     </Button>
                   )}
                 </div>
@@ -1835,19 +1966,14 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
               </button>
             </div>
 
-            <div
-              className={cx(
-                "w-full grid p-1 rounded-xl bg-background-secondary-default border border-border-button-default gap-0.5",
-                room.preparationMaterial ? "grid-cols-5" : "grid-cols-4"
-              )}
-            >
+            <div className="w-full flex items-center overflow-x-auto no-scrollbar p-1 rounded-xl bg-background-secondary-default border border-border-button-default gap-1">
               {/* Preparation Tab (when available) */}
               {room.preparationMaterial && (
                 <button
                   type="button"
                   onClick={() => setActiveTab("preparation")}
                   className={cx(
-                    "py-1.5 px-1 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1 min-w-0",
+                    "py-1.5 px-2.5 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap",
                     activeTab === "preparation"
                       ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                       : "text-text-secondary hover:text-text-primary"
@@ -1864,7 +1990,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                 type="button"
                 onClick={() => setActiveTab("agenda")}
                 className={cx(
-                  "py-1.5 px-1 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1 min-w-0",
+                  "py-1.5 px-2.5 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap",
                   activeTab === "agenda"
                     ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                     : "text-text-secondary hover:text-text-primary"
@@ -1885,7 +2011,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                 type="button"
                 onClick={() => setActiveTab("notes")}
                 className={cx(
-                  "py-1.5 px-1 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1 min-w-0",
+                  "py-1.5 px-2.5 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap",
                   activeTab === "notes"
                     ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                     : "text-text-secondary hover:text-text-primary"
@@ -1902,7 +2028,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                 type="button"
                 onClick={() => setActiveTab("files")}
                 className={cx(
-                  "py-1.5 px-1 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1 min-w-0",
+                  "py-1.5 px-2.5 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap",
                   activeTab === "files"
                     ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                     : "text-text-secondary hover:text-text-primary"
@@ -1923,7 +2049,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                 type="button"
                 onClick={() => setActiveTab("summary")}
                 className={cx(
-                  "py-1.5 px-1 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1 min-w-0",
+                  "py-1.5 px-2.5 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap",
                   activeTab === "summary"
                     ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                     : "text-text-secondary hover:text-text-primary"
