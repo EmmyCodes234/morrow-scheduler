@@ -1231,8 +1231,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         <section
           className={cx(
             "flex flex-col relative rounded-3xl border border-border-button-default bg-background-tertiary-default overflow-hidden shadow-sm transition-all duration-300",
-            mobileMode === "canvas" ? "h-48 sm:h-64 lg:h-full shrink-0 flex" : "h-full flex-1 min-w-0 flex",
-            isFocusMode ? "w-full flex-1" : "flex-1 min-w-0"
+            isFocusMode
+              ? "w-full flex-1 h-full"
+              : mobileMode === "canvas"
+              ? "h-48 sm:h-64 lg:h-full shrink-0 lg:flex-1 lg:min-w-0"
+              : "h-full flex-1 min-w-0"
           )}
         >
           {/* Main Stage Viewport */}
@@ -1734,6 +1737,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                       onClick={() => {
                         setActiveTab("preparation");
                         setMobileMode("canvas");
+                        setIsFocusMode(false);
                       }}
                       aria-label="View meeting preparation"
                       title="Preparation Minutes"
@@ -1743,16 +1747,22 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                     </button>
                   )}
 
-                  {/* Mobile View Toggle */}
+                  {/* Collaborative Canvas / Workspace Toggle */}
                   <button
                     type="button"
                     onClick={() => {
                       if (activeTab === "preparation" && !room.preparationMaterial) setActiveTab("agenda");
-                      setMobileMode("canvas");
+                      if (isFocusMode || mobileMode === "call") {
+                        setMobileMode("canvas");
+                        setIsFocusMode(false);
+                      } else {
+                        setMobileMode("call");
+                        setIsFocusMode(true);
+                      }
                     }}
-                    aria-label="Open collaborative canvas"
-                    title="Agenda & Notes"
-                    className="lg:hidden size-10 sm:size-11 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer hover:bg-background-secondary-hover"
+                    aria-label="Toggle workspace canvas"
+                    title={isFocusMode || mobileMode === "call" ? "Open Workspace" : "Collapse Workspace"}
+                    className="size-10 sm:size-11 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer hover:bg-background-secondary-hover"
                   >
                     <RiFileListLine className="size-5" />
                   </button>
@@ -1800,19 +1810,26 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         <section
           className={cx(
             "w-full lg:w-[400px] xl:w-[440px] shrink-0 h-full flex flex-col rounded-3xl border border-border-button-default bg-background-primary-default overflow-hidden shadow-sm min-h-0 transition-all duration-300",
-            mobileMode === "call" ? "hidden lg:flex" : "flex flex-1 min-h-0",
-            isFocusMode ? "hidden" : "flex"
+            isFocusMode
+              ? "hidden"
+              : mobileMode === "call"
+              ? "hidden lg:flex"
+              : "flex flex-1 min-h-0"
           )}
         >
           {/* Canvas Navigation Tabs */}
           <div className="p-3 border-b border-border-button-default bg-background-secondary-default/30 shrink-0">
-            {/* Mobile Back-to-Stage Header (only visible on mobile screens) */}
-            <div className="lg:hidden flex items-center justify-between pb-2 mb-2 border-b border-border-button-default">
+            {/* Back-to-Stage Header */}
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-border-button-default">
               <span className="text-caption-1-semibold text-text-secondary">Workspace Canvas</span>
               <button
                 type="button"
-                onClick={() => setMobileMode("call")}
-                className="text-caption-1-semibold text-accent-600 hover:text-accent-500 flex items-center gap-1 cursor-pointer"
+                onClick={() => {
+                  setMobileMode("call");
+                  setIsFocusMode(true);
+                }}
+                className="text-caption-1-semibold text-accent-600 hover:text-accent-500 flex items-center gap-1 cursor-pointer transition-colors"
+                title="Return to full stage"
               >
                 Back to Full Stage →
               </button>
