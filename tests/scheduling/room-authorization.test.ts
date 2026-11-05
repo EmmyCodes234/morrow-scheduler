@@ -439,14 +439,44 @@ describe("Morrow Rooms — Participant Identity, Authorization & Lifecycle Secur
       expect(data.success).toBe(false);
       expect(data.error).toBe("DeepSeek API rate limit reached");
     });
+
+    it("returns HTTP 409 Conflict when a stale worker attempt is detected", async () => {
+      vi.spyOn(authModule, "auth").mockResolvedValue({
+        user: { id: mockHostId },
+      } as any);
+      vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(createMockRoom() as any);
+      vi.spyOn(roomService, "concludeRoomAndSynthesize").mockResolvedValue({
+        success: false,
+        status: "stale_worker",
+        error: "Synthesis completed but lease had expired.",
+      });
+
+      const req = new NextRequest(`http://localhost:3000/api/room/${mockToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "conclude" }),
+      });
+
+      const res = await roomRoute.PATCH(req, {
+        params: Promise.resolve({ token: mockToken }),
+      });
+
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("lease had expired");
+    });
   });
 
   // =========================================================================
   // 4. Public DTO Data Protection Verification
   // =========================================================================
   describe("Public DTO Data Exposure Review", () => {
-    it("ensures public room DTO does not leak host or guest private emails", async () => {
-      const room = createMockRoom();
+    it("ensures public room DTO does not leak host or guest private emails, synthesis tokens, or private errors", async () => {
+      const room = {
+        ...createMockRoom(),
+        synthesisStatus: "idle",
+      };
       vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(room as any);
 
       const req = new NextRequest(`http://localhost:3000/api/room/${mockToken}`, {
@@ -464,6 +494,10 @@ describe("Morrow Rooms — Participant Identity, Authorization & Lifecycle Secur
       expect(data.room.booking.guest.email).toBeUndefined();
       expect(data.room.booking.host.id).toBe(mockHostId);
       expect(data.room.booking.status).toBe("confirmed");
+      // Check that internal claim token is never leaked
+      expect(data.room.synthesisClaimToken).toBeUndefined();
+      expect(data.room.synthesisLastError).toBeUndefined();
+      expect(data.room.synthesisStatus).toBe("idle");
     });
   });
 });

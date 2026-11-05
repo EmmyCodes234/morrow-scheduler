@@ -36,6 +36,10 @@ import {
   RiTimeLine,
   RiVolumeUpLine,
   RiCalendarCloseLine,
+  RiRefreshLine,
+  RiAlertLine,
+  RiSparklingLine,
+  RiLoader4Line,
 } from "@remixicon/react";
 import type { RoomDetails, RoomFileItem } from "@/lib/room/room-service";
 import type { VeraAgendaItem, VeraLedger } from "@/lib/intelligence/vera";
@@ -81,6 +85,17 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [synthesisState, setSynthesisState] = useState<
+    "idle" | "synthesizing" | "completed" | "failed" | "timed_out_waiting"
+  >(
+    room.veraLedger
+      ? "completed"
+      : room.synthesisStatus === "synthesizing"
+      ? "synthesizing"
+      : room.synthesisStatus === "failed"
+      ? "failed"
+      : "idle"
+  );
   const [summary, setSummary] = useState<VeraLedger | null>(
     room.veraLedger
       ? {
@@ -97,6 +112,56 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         }
       : null
   );
+
+  // Background polling when room is actively synthesizing
+  // Ensures browser refresh does not re-trigger synthesis, but safely tracks completion
+  useEffect(() => {
+    if (synthesisState !== "synthesizing") return;
+
+    let isMounted = true;
+    let attempts = 0;
+    const maxAttempts = 16; // 16 * 2500ms = 40 seconds (covers 25s timeout + db write)
+
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const checkRes = await fetch(`/api/room/${room.accessToken}`);
+        const checkData = await checkRes.json().catch(() => ({}));
+
+        if (!isMounted) return;
+
+        if (checkData.success && checkData.room) {
+          if (checkData.room.veraLedger) {
+            setSummary(checkData.room.veraLedger);
+            setSynthesisState("completed");
+            setIsSynthesizing(false);
+            clearInterval(interval);
+            return;
+          }
+
+          if (checkData.room.synthesisStatus === "failed") {
+            setSynthesisState("failed");
+            setIsSynthesizing(false);
+            clearInterval(interval);
+            return;
+          }
+        }
+
+        if (attempts >= maxAttempts) {
+          clearInterval(interval);
+          setSynthesisState("timed_out_waiting");
+          setIsSynthesizing(false);
+        }
+      } catch (err) {
+        console.warn("[Room] Error polling synthesis status:", err);
+      }
+    }, 2500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [synthesisState, room.accessToken]);
 
   // Scroll fades for internal scroll regions (BoardUI compliance)
   const summaryFade = useScrollFade();
@@ -450,7 +515,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
 
   // Conclude Call and trigger Vera Summary Synthesis
   const handleConcludeCall = async () => {
+    if (!isHost) return;
     setIsSynthesizing(true);
+    setSynthesisState("synthesizing");
+    setActiveTab("summary");
+
     try {
       if (lkRoomRef.current) {
         lkRoomRef.current.disconnect();
@@ -464,27 +533,21 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         body: JSON.stringify({ action: "conclude" }),
       });
 
-      const data = await res.json();
-      if (data.success && data.veraLedger) {
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 200 && data.success && data.veraLedger) {
         setSummary(data.veraLedger);
-        setActiveTab("summary");
-      } else if (data.processing) {
-        let attempts = 0;
-        while (attempts < 10) {
-          await new Promise((r) => setTimeout(r, 1500));
-          const checkRes = await fetch(`/api/room/${room.accessToken}`);
-          const checkData = await checkRes.json().catch(() => ({}));
-          if (checkData.success && checkData.room?.veraLedger) {
-            setSummary(checkData.room.veraLedger);
-            setActiveTab("summary");
-            break;
-          }
-          attempts++;
-        }
+        setSynthesisState("completed");
+        setIsSynthesizing(false);
+      } else if (res.status === 202 || data.processing) {
+        // Synthesis is currently processing on server. Polling effect handles waiting.
+        setSynthesisState("synthesizing");
+      } else {
+        setSynthesisState("failed");
+        setIsSynthesizing(false);
       }
     } catch (err) {
       console.error("[Room] Error concluding call with Vera:", err);
-    } finally {
+      setSynthesisState("failed");
       setIsSynthesizing(false);
     }
   };
@@ -1465,29 +1528,117 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
           {activeTab === "summary" && (
             <div className="relative min-h-0 flex-1 h-full flex flex-col overflow-hidden">
               {!summary ? (
-                <div className="p-8 rounded-3xl border border-dashed border-border-button-default flex flex-col items-center text-center gap-3 bg-background-secondary-default/20 my-auto m-4">
-                  <Avatar size="lg" initials="V" color="neutral" />
-                  <h4 className="text-title-3-semibold text-text-primary">
-                    Summary Awaiting Call Conclusion
-                  </h4>
-                  <p className="text-body-2-regular text-text-secondary max-w-sm">
-                    Once the discussion wraps, conclude the call to have Vera extract key decisions, assign action items, and generate the executive summary.
-                  </p>
-                  {isHost ? (
-                    <Button
-                      variant="primary"
-                      size="small"
-                      onClick={handleConcludeCall}
-                      disabled={isSynthesizing}
-                    >
-                      {isSynthesizing ? "Vera Generating Summary..." : "End Meeting & Generate Summary"}
-                    </Button>
-                  ) : (
-                    <p className="text-caption-1-medium text-text-tertiary">
-                      Meeting takeaways and action items will be generated once the host concludes the call.
-                    </p>
+                <>
+                  {synthesisState === "synthesizing" && (
+                    <div className="p-8 rounded-3xl border border-border-button-default flex flex-col items-center text-center gap-4 bg-background-secondary-default/20 my-auto m-4">
+                      <div className="size-12 rounded-2xl bg-accent-500/10 border border-accent-500/20 flex items-center justify-center text-accent-500 animate-pulse">
+                        <RiSparklingLine className="size-6" />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <h4 className="text-title-3-semibold text-text-primary">
+                          Vera is Synthesizing the Record
+                        </h4>
+                        <p className="text-body-2-regular text-text-secondary max-w-sm">
+                          Analyzing conversation context, notes, and agenda to extract definitive decisions and action items.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 text-caption-1-medium text-text-tertiary">
+                        <RiLoader4Line className="size-4 animate-spin" />
+                        <span>Processing with Vera Intelligence...</span>
+                      </div>
+                    </div>
                   )}
-                </div>
+
+                  {synthesisState === "timed_out_waiting" && (
+                    <div className="p-8 rounded-3xl border border-border-button-default flex flex-col items-center text-center gap-4 bg-background-secondary-default/20 my-auto m-4">
+                      <Avatar size="lg" initials="V" color="neutral" />
+                      <div className="flex flex-col gap-1">
+                        <h4 className="text-title-3-semibold text-text-primary">
+                          Synthesis Still in Progress
+                        </h4>
+                        <p className="text-body-2-regular text-text-secondary max-w-sm">
+                          Vera is taking a bit longer than usual to analyze this session. You can safely close or revisit this room at any time; your record will be preserved when ready.
+                        </p>
+                      </div>
+                      {isHost && (
+                        <Button
+                          variant="secondary"
+                          size="small"
+                          leadingIcon={RiRefreshLine}
+                          onClick={async () => {
+                            const res = await fetch(`/api/room/${room.accessToken}`);
+                            const data = await res.json().catch(() => ({}));
+                            if (data.success && data.room?.veraLedger) {
+                              setSummary(data.room.veraLedger);
+                              setSynthesisState("completed");
+                            } else if (data.success && data.room?.synthesisStatus === "failed") {
+                              setSynthesisState("failed");
+                            }
+                          }}
+                        >
+                          Check Status
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {synthesisState === "failed" && (
+                    <div className="p-8 rounded-3xl border border-border-button-default flex flex-col items-center text-center gap-4 bg-background-secondary-default/20 my-auto m-4">
+                      <div className="size-12 rounded-2xl bg-border-error-default/10 border border-border-error-default/20 flex items-center justify-center text-text-error-primary">
+                        <RiAlertLine className="size-6" />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <h4 className="text-title-3-semibold text-text-primary">
+                          Summary Generation Incomplete
+                        </h4>
+                        <p className="text-body-2-regular text-text-secondary max-w-sm">
+                          Vera encountered an error while synthesizing the meeting record. No decisions or action items were invented or assumed.
+                        </p>
+                      </div>
+                      {isHost ? (
+                        <Button
+                          variant="primary"
+                          size="small"
+                          leadingIcon={RiRefreshLine}
+                          onClick={handleConcludeCall}
+                          disabled={isSynthesizing}
+                        >
+                          {isSynthesizing ? "Retrying Synthesis..." : "Retry Vera Synthesis"}
+                        </Button>
+                      ) : (
+                        <p className="text-caption-1-medium text-text-tertiary">
+                          The host can retry summary generation from this room.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {synthesisState === "idle" && (
+                    <div className="p-8 rounded-3xl border border-dashed border-border-button-default flex flex-col items-center text-center gap-3 bg-background-secondary-default/20 my-auto m-4">
+                      <Avatar size="lg" initials="V" color="neutral" />
+                      <h4 className="text-title-3-semibold text-text-primary">
+                        Summary Awaiting Call Conclusion
+                      </h4>
+                      <p className="text-body-2-regular text-text-secondary max-w-sm">
+                        Once the discussion wraps, conclude the call to have Vera extract key decisions, assign action items, and generate the executive summary.
+                      </p>
+                      {isHost ? (
+                        <Button
+                          variant="primary"
+                          size="small"
+                          onClick={handleConcludeCall}
+                          disabled={isSynthesizing}
+                        >
+                          {isSynthesizing ? "Vera Generating Summary..." : "End Meeting & Generate Summary"}
+                        </Button>
+                      ) : (
+                        <p className="text-caption-1-medium text-text-tertiary">
+                          Meeting takeaways and action items will be generated once the host concludes the call.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="relative min-h-0 flex-1 h-full">
                   <div

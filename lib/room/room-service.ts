@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { db } from "@/db";
+import { db as defaultDb } from "@/db";
 import { rooms, bookings, eventTypes, users } from "@/db/schema";
 import { eq, and, or, inArray, ne, lt } from "drizzle-orm";
 import {
@@ -8,6 +8,8 @@ import {
   type VeraAgendaItem,
   type VeraLedger,
 } from "@/lib/intelligence/vera";
+
+export type RoomDb = typeof defaultDb;
 
 export interface RoomParticipant {
   name: string;
@@ -31,6 +33,7 @@ export interface RoomDetails {
   id: string;
   accessToken: string;
   status: "pre_meeting" | "in_progress" | "concluded";
+  synthesisStatus?: "idle" | "synthesizing" | "completed" | "failed";
   booking: {
     id: string;
     status: string;
@@ -63,7 +66,7 @@ export interface RoomDetails {
   } | null;
   veraLedger?: {
     executiveSummary?: string[];
-    actionItems?: Array<{ id: string; task: string; assignee: string; priority: "high" | "medium" | "low"; done: boolean }>;
+    actionItems?: Array<{ id: string; task: string; assignee: string; priority: "high" | "medium" | "low"; done: boolean; deadline?: string }>;
     keyDecisions?: string[];
     suggestedFollowUp?: string;
   } | null;
@@ -71,9 +74,13 @@ export interface RoomDetails {
 
 /**
  * Creates or retrieves the associated Room for a booking.
+ * Supports explicit database dependency injection for isolated testing.
  */
-export async function getOrCreateRoomForBooking(bookingId: string): Promise<typeof rooms.$inferSelect> {
-  const existing = await db.query.rooms.findFirst({
+export async function getOrCreateRoomForBooking(
+  bookingId: string,
+  dbClient: RoomDb = defaultDb
+): Promise<typeof rooms.$inferSelect> {
+  const existing = await dbClient.query.rooms.findFirst({
     where: eq(rooms.bookingId, bookingId),
   });
 
@@ -82,7 +89,7 @@ export async function getOrCreateRoomForBooking(bookingId: string): Promise<type
   }
 
   // Load booking with host and eventType
-  const booking = await db.query.bookings.findFirst({
+  const booking = await dbClient.query.bookings.findFirst({
     where: eq(bookings.id, bookingId),
     with: {
       host: true,
@@ -106,7 +113,7 @@ export async function getOrCreateRoomForBooking(bookingId: string): Promise<type
   });
 
   try {
-    const [newRoom] = await db
+    const [newRoom] = await dbClient
       .insert(rooms)
       .values({
         bookingId: booking.id,
@@ -132,7 +139,7 @@ export async function getOrCreateRoomForBooking(bookingId: string): Promise<type
     console.warn(`[RoomProvisioning] Conflict on insert for booking ${bookingId}:`, err);
   }
 
-  const winningRoom = await db.query.rooms.findFirst({
+  const winningRoom = await dbClient.query.rooms.findFirst({
     where: eq(rooms.bookingId, bookingId),
   });
 
@@ -145,11 +152,15 @@ export async function getOrCreateRoomForBooking(bookingId: string): Promise<type
 
 /**
  * Retrieves public room state using the secure room access token.
+ * Supports explicit database dependency injection for isolated testing.
  */
-export async function getRoomByAccessToken(token: string): Promise<RoomDetails | null> {
+export async function getRoomByAccessToken(
+  token: string,
+  dbClient: RoomDb = defaultDb
+): Promise<RoomDetails | null> {
   if (!token || typeof token !== "string") return null;
 
-  const room = await db.query.rooms.findFirst({
+  const room = await dbClient.query.rooms.findFirst({
     where: eq(rooms.accessToken, token.trim()),
     with: {
       booking: {
@@ -173,6 +184,7 @@ export async function getRoomByAccessToken(token: string): Promise<RoomDetails |
     id: room.id,
     accessToken: room.accessToken,
     status: (room.status as "pre_meeting" | "in_progress" | "concluded") || "pre_meeting",
+    synthesisStatus: (room.synthesisStatus as "idle" | "synthesizing" | "completed" | "failed") || "idle",
     booking: {
       id: b.id,
       status: b.status,
@@ -204,8 +216,12 @@ export async function getRoomByAccessToken(token: string): Promise<RoomDetails |
 /**
  * Updates the shared notes surface in the room.
  */
-export async function updateRoomNotes(token: string, notes: string): Promise<boolean> {
-  const result = await db
+export async function updateRoomNotes(
+  token: string,
+  notes: string,
+  dbClient: RoomDb = defaultDb
+): Promise<boolean> {
+  const result = await dbClient
     .update(rooms)
     .set({
       sharedNotes: notes,
@@ -220,8 +236,12 @@ export async function updateRoomNotes(token: string, notes: string): Promise<boo
 /**
  * Adds or updates an agenda item in the room.
  */
-export async function updateRoomAgenda(token: string, agenda: VeraAgendaItem[]): Promise<boolean> {
-  const result = await db
+export async function updateRoomAgenda(
+  token: string,
+  agenda: VeraAgendaItem[],
+  dbClient: RoomDb = defaultDb
+): Promise<boolean> {
+  const result = await dbClient
     .update(rooms)
     .set({
       agenda,
@@ -236,8 +256,12 @@ export async function updateRoomAgenda(token: string, agenda: VeraAgendaItem[]):
 /**
  * Adds a shared document/file to the room.
  */
-export async function addRoomFile(token: string, file: RoomFileItem): Promise<RoomFileItem[] | null> {
-  const room = await db.query.rooms.findFirst({
+export async function addRoomFile(
+  token: string,
+  file: RoomFileItem,
+  dbClient: RoomDb = defaultDb
+): Promise<RoomFileItem[] | null> {
+  const room = await dbClient.query.rooms.findFirst({
     where: eq(rooms.accessToken, token),
   });
   if (!room) return null;
@@ -245,7 +269,7 @@ export async function addRoomFile(token: string, file: RoomFileItem): Promise<Ro
   const currentFiles = (room.files as RoomFileItem[]) || [];
   const nextFiles = [file, ...currentFiles.filter((f) => f.id !== file.id)];
 
-  await db
+  await dbClient
     .update(rooms)
     .set({
       files: nextFiles,
@@ -271,14 +295,18 @@ export interface ConcludeRoomResult {
 /**
  * Concludes meeting and requests Vera to synthesize the permanent record
  * using atomic database-level lease claiming to eliminate race conditions.
+ * Supports explicit database dependency injection for isolated testing.
  */
-export async function concludeRoomAndSynthesize(token: string): Promise<ConcludeRoomResult> {
+export async function concludeRoomAndSynthesize(
+  token: string,
+  dbClient: RoomDb = defaultDb
+): Promise<ConcludeRoomResult> {
   if (!token || typeof token !== "string") {
     return { success: false, status: "not_found", error: "Invalid token." };
   }
 
   // 1. Fast check if already concluded
-  const existing = await db.query.rooms.findFirst({
+  const existing = await dbClient.query.rooms.findFirst({
     where: eq(rooms.accessToken, token.trim()),
     with: {
       booking: {
@@ -310,7 +338,7 @@ export async function concludeRoomAndSynthesize(token: string): Promise<Conclude
   // 2. Atomic claim via conditional SQL update
   let claimedRoom: typeof rooms.$inferSelect | undefined;
   try {
-    const [claimed] = await db
+    const [claimed] = await dbClient
       .update(rooms)
       .set({
         synthesisStatus: "synthesizing",
@@ -323,6 +351,7 @@ export async function concludeRoomAndSynthesize(token: string): Promise<Conclude
         and(
           eq(rooms.accessToken, token.trim()),
           ne(rooms.status, "concluded"),
+          ne(rooms.synthesisStatus, "completed"),
           or(
             inArray(rooms.synthesisStatus, ["idle", "failed"]),
             and(
@@ -346,7 +375,7 @@ export async function concludeRoomAndSynthesize(token: string): Promise<Conclude
 
   // 3. If not claimed, inspect current state to return precise status
   if (!claimedRoom) {
-    const fresh = await db.query.rooms.findFirst({
+    const fresh = await dbClient.query.rooms.findFirst({
       where: eq(rooms.accessToken, token.trim()),
     });
 
@@ -392,7 +421,7 @@ export async function concludeRoomAndSynthesize(token: string): Promise<Conclude
     });
 
     // 5. Fenced completion write: only commit if claimToken still matches
-    const [finalized] = await db
+    const [finalized] = await dbClient
       .update(rooms)
       .set({
         status: "concluded",
@@ -425,8 +454,8 @@ export async function concludeRoomAndSynthesize(token: string): Promise<Conclude
     };
   } catch (err) {
     console.error("[Vera Synthesis] Error during LLM generation:", err);
-    // Release claim on failure so host can retry immediately
-    await db
+    // 6. Release claim on failure ONLY if this worker still holds the claimToken
+    await dbClient
       .update(rooms)
       .set({
         synthesisStatus: "failed",

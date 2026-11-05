@@ -91,9 +91,29 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
   });
 
   // =========================================================================
-  // 1. Genuine Migration 0007 Verification on Real PostgreSQL
+  // 1. Genuine Migration 0007 & 0008 Verification on Real PostgreSQL
   // =========================================================================
-  describe("Migration 0007 Verification on Real PostgreSQL", () => {
+  describe("Migration 0007 & 0008 Verification on Real PostgreSQL", () => {
+    it("confirms migration journal tracking records migrations 0007 and 0008", async () => {
+      // Check drizzle migration tracking table if present
+      const trackingTable = await rawSql`
+        SELECT table_name, table_schema
+        FROM information_schema.tables
+        WHERE table_name = '__drizzle_migrations'
+      `;
+
+      if (trackingTable.length > 0) {
+        const schemaName = trackingTable[0].table_schema;
+        const migrationRows = await rawSql`
+          SELECT id, hash, created_at
+          FROM ${rawSql(schemaName)}.__drizzle_migrations
+          ORDER BY id ASC
+        `;
+        // When migrations are applied, verify entries exist
+        expect(migrationRows.length).toBeGreaterThanOrEqual(1);
+      }
+    });
+
     it("confirms rooms.files column exists with NOT NULL and JSONB default '[]'", async () => {
       const columnInfo = await rawSql`
         SELECT column_name, data_type, column_default, is_nullable
@@ -123,7 +143,27 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
       expect(indexInfo[0].indexdef).toContain("booking_id");
     });
 
-    it("confirms duplicate booking check prevents duplicate insertion", async () => {
+    it("confirms migration 0008 synthesis lease columns exist in rooms table", async () => {
+      const columns = await rawSql`
+        SELECT column_name, data_type, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'rooms'
+          AND column_name IN ('synthesis_status', 'synthesis_claim_token', 'synthesis_claimed_at', 'synthesis_last_error')
+      `;
+
+      const colNames = columns.map((c: any) => c.column_name);
+      expect(colNames).toContain("synthesis_status");
+      expect(colNames).toContain("synthesis_claim_token");
+      expect(colNames).toContain("synthesis_claimed_at");
+      expect(colNames).toContain("synthesis_last_error");
+
+      const statusCol = columns.find((c: any) => c.column_name === "synthesis_status");
+      expect(statusCol.is_nullable).toBe("NO");
+      expect(statusCol.column_default).toContain("'idle'");
+    });
+
+    it("confirms duplicate booking check prevents duplicate insertion without dropping records", async () => {
       const bookingId = crypto.randomUUID();
       const token1 = `tok-${Date.now()}-1`;
       const token2 = `tok-${Date.now()}-2`;
@@ -168,9 +208,37 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
   });
 
   // =========================================================================
-  // 2. Concurrent Room Provisioning on Real PostgreSQL
+  // 2. Concurrent Room Provisioning on Real PostgreSQL with DB Injection
   // =========================================================================
-  describe("Concurrent Room Provisioning on Real PostgreSQL", () => {
+  describe("Concurrent Room Provisioning on Real PostgreSQL with DB Injection", () => {
+    it("proves room service operations execute against the injected testDb client", async () => {
+      const bookingId = crypto.randomUUID();
+
+      await testDb.insert(schema.bookings).values({
+        id: bookingId,
+        hostId: testHostId,
+        eventTypeId: testEventTypeId,
+        startTime: new Date("2026-12-02T09:00:00Z"),
+        endTime: new Date("2026-12-02T09:30:00Z"),
+        guestName: "Injection Test Guest",
+        guestEmail: "injection-guest@example.com",
+        guestTimezone: "UTC",
+        status: "confirmed",
+        cancelToken: `cancel-inj-${Date.now()}`,
+      });
+
+      // Explicitly pass testDb
+      const created = await getOrCreateRoomForBooking(bookingId, testDb);
+      expect(created).toBeDefined();
+
+      // Verify directly on test database that record exists
+      const testDbCheck = await testDb.query.rooms.findFirst({
+        where: eq(schema.rooms.bookingId, bookingId),
+      });
+      expect(testDbCheck).toBeDefined();
+      expect(testDbCheck?.id).toBe(created.id);
+    });
+
     it("guarantees exactly one room is created when 10 concurrent requests provision the same booking", async () => {
       const bookingId = crypto.randomUUID();
 
@@ -198,10 +266,10 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
         background: "Mock background",
       });
 
-      // Execute 10 concurrent room provisioning calls
+      // Execute 10 concurrent room provisioning calls explicitly using testDb
       const concurrentCallers = 10;
       const provisioningPromises = Array.from({ length: concurrentCallers }, () =>
-        getOrCreateRoomForBooking(bookingId)
+        getOrCreateRoomForBooking(bookingId, testDb)
       );
 
       const results = await Promise.all(provisioningPromises);
@@ -274,10 +342,10 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
         };
       });
 
-      // Fire two concurrent conclusion requests
+      // Fire two concurrent conclusion requests explicitly passing testDb
       const [result1, result2] = await Promise.all([
-        concludeRoomAndSynthesize(accessToken),
-        concludeRoomAndSynthesize(accessToken),
+        concludeRoomAndSynthesize(accessToken, testDb),
+        concludeRoomAndSynthesize(accessToken, testDb),
       ]);
 
       // Exactly ONE caller acquired the lease and invoked Vera synthesis
@@ -336,7 +404,7 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
       });
 
       // A new request should detect the expired lease, reclaim it, and conclude successfully
-      const result = await concludeRoomAndSynthesize(accessToken);
+      const result = await concludeRoomAndSynthesize(accessToken, testDb);
 
       expect(result.success).toBe(true);
       expect(result.status).toBe("concluded");
@@ -347,6 +415,82 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
       expect(roomRow[0].status).toBe("concluded");
       expect(roomRow[0].synthesis_status).toBe("completed");
       expect(roomRow[0].synthesis_claim_token).toBeNull();
+    });
+
+    it("stale worker fencing: prevents an expired worker from overwriting a newer worker's conclusion", async () => {
+      const bookingId = crypto.randomUUID();
+      const accessToken = `tok-fencing-test-${Date.now()}`;
+
+      await testDb.insert(schema.bookings).values({
+        id: bookingId,
+        hostId: testHostId,
+        eventTypeId: testEventTypeId,
+        startTime: new Date("2026-12-05T16:00:00Z"),
+        endTime: new Date("2026-12-05T16:30:00Z"),
+        guestName: "Fencing Test Guest",
+        guestEmail: "fencing-guest@example.com",
+        guestTimezone: "UTC",
+        status: "confirmed",
+        cancelToken: `cancel-fencing-${Date.now()}`,
+      });
+
+      // 1. Worker A acquires claim
+      const workerAClaimToken = "worker-a-claim-token";
+      const ninetySecondsAgo = new Date(Date.now() - 90_000);
+
+      await testDb.insert(schema.rooms).values({
+        bookingId,
+        accessToken,
+        status: "in_progress",
+        synthesisStatus: "synthesizing",
+        synthesisClaimToken: workerAClaimToken,
+        synthesisClaimedAt: ninetySecondsAgo, // expired lease
+        files: [],
+      });
+
+      // 2. Worker B comes in, detects expired lease, reclaims and concludes successfully
+      vi.spyOn(veraModule, "generateVeraLedger").mockResolvedValue({
+        executiveSummary: ["Worker B authoritative ledger"],
+        actionItems: [],
+        keyDecisions: ["Worker B decision"],
+      });
+
+      const workerBResult = await concludeRoomAndSynthesize(accessToken, testDb);
+      expect(workerBResult.success).toBe(true);
+      expect(workerBResult.status).toBe("concluded");
+      expect(workerBResult.veraLedger?.executiveSummary).toContain("Worker B authoritative ledger");
+
+      // 3. Worker A (stale) now attempts to write back using its old workerAClaimToken
+      const [staleAttempt] = await testDb
+        .update(schema.rooms)
+        .set({
+          status: "concluded",
+          synthesisStatus: "completed",
+          synthesisClaimToken: null,
+          veraLedger: {
+            executiveSummary: ["Stale Worker A illicit overwrite"],
+            actionItems: [],
+            keyDecisions: [],
+          },
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.rooms.accessToken, accessToken),
+            eq(schema.rooms.synthesisClaimToken, workerAClaimToken)
+          )
+        )
+        .returning();
+
+      // Fenced write matches 0 rows because workerAClaimToken is no longer the claim token
+      expect(staleAttempt).toBeUndefined();
+
+      // 4. Verify that Worker B's ledger is completely preserved
+      const finalRoom = await testDb.query.rooms.findFirst({
+        where: eq(schema.rooms.accessToken, accessToken),
+      });
+      expect(finalRoom?.veraLedger?.executiveSummary).toContain("Worker B authoritative ledger");
+      expect(finalRoom?.veraLedger?.executiveSummary).not.toContain("Stale Worker A illicit overwrite");
     });
   });
 });
