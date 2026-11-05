@@ -57,6 +57,13 @@
       "when": 1793856839006,
       "tag": "0007_loose_toro",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793858399549,
+      "tag": "0008_long_ezekiel",
+      "breakpoints": true
     }
   ]
 }

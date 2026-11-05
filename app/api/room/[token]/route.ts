@@ -88,17 +88,31 @@ export async function PATCH(
         );
       }
 
-      const concluded = await concludeRoomAndSynthesize(token);
-      if (!concluded) {
+      const result = await concludeRoomAndSynthesize(token);
+
+      if (result.processing) {
         return NextResponse.json(
-          { success: false, error: "Failed to conclude room." },
-          { status: 400 }
+          {
+            success: true,
+            status: "synthesizing",
+            processing: true,
+            message: result.message || "Vera summary synthesis is currently in progress.",
+          },
+          { status: 202 }
         );
       }
+
+      if (!result.success) {
+        return NextResponse.json(
+          { success: false, error: result.error || "Failed to conclude room." },
+          { status: result.status === "stale_worker" ? 409 : 500 }
+        );
+      }
+
       return NextResponse.json({
         success: true,
         status: "concluded",
-        veraLedger: concluded.veraLedger,
+        veraLedger: result.veraLedger,
       });
     }
 

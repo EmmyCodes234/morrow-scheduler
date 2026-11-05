@@ -206,6 +206,10 @@ export const rooms = pgTable(
       suggestedFollowUp?: string;
     }>(),
     transcript: text("transcript"),
+    synthesisStatus: text("synthesis_status").notNull().default("idle"), // idle, synthesizing, completed, failed
+    synthesisClaimToken: text("synthesis_claim_token"),
+    synthesisClaimedAt: timestamp("synthesis_claimed_at", { withTimezone: true }),
+    synthesisLastError: text("synthesis_last_error"),
     files: jsonb("files").$type<Array<{
       id: string;
       name: string;

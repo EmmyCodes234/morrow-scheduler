@@ -286,6 +286,7 @@ describe("Morrow Rooms — Participant Identity, Authorization & Lifecycle Secur
       } as any);
       vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(createMockRoom() as any);
       vi.spyOn(roomService, "concludeRoomAndSynthesize").mockResolvedValue({
+        success: true,
         status: "concluded",
         veraLedger: { executiveSummary: ["Success"], actionItems: [] },
       } as any);
@@ -383,6 +384,61 @@ describe("Morrow Rooms — Participant Identity, Authorization & Lifecycle Secur
       expect(res.status).toBe(200);
       expect(updateNotesSpy).toHaveBeenCalledWith(mockToken, "New collaborative notes");
     });
+    it("returns 202 Accepted when a concurrent host request encounters synthesis already in progress", async () => {
+      vi.spyOn(authModule, "auth").mockResolvedValue({
+        user: { id: mockHostId },
+      } as any);
+      vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(createMockRoom() as any);
+      vi.spyOn(roomService, "concludeRoomAndSynthesize").mockResolvedValue({
+        success: true,
+        status: "synthesizing",
+        processing: true,
+        message: "Vera summary synthesis is currently in progress.",
+      });
+
+      const req = new NextRequest(`http://localhost:3000/api/room/${mockToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "conclude" }),
+      });
+
+      const res = await roomRoute.PATCH(req, {
+        params: Promise.resolve({ token: mockToken }),
+      });
+
+      expect(res.status).toBe(202);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.status).toBe("synthesizing");
+      expect(data.processing).toBe(true);
+    });
+
+    it("returns HTTP 500 when synthesis fails, ensuring the room is not marked concluded", async () => {
+      vi.spyOn(authModule, "auth").mockResolvedValue({
+        user: { id: mockHostId },
+      } as any);
+      vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(createMockRoom() as any);
+      vi.spyOn(roomService, "concludeRoomAndSynthesize").mockResolvedValue({
+        success: false,
+        status: "failed",
+        error: "DeepSeek API rate limit reached",
+      });
+
+      const req = new NextRequest(`http://localhost:3000/api/room/${mockToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "conclude" }),
+      });
+
+      const res = await roomRoute.PATCH(req, {
+        params: Promise.resolve({ token: mockToken }),
+      });
+
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("DeepSeek API rate limit reached");
+    });
   });
 
   // =========================================================================
@@ -408,18 +464,6 @@ describe("Morrow Rooms — Participant Identity, Authorization & Lifecycle Secur
       expect(data.room.booking.guest.email).toBeUndefined();
       expect(data.room.booking.host.id).toBe(mockHostId);
       expect(data.room.booking.status).toBe("confirmed");
-    });
-  });
-
-  // =========================================================================
-  // 5. Database Integration Guard
-  // =========================================================================
-  describe("PostgreSQL Concurrency Integration Guard", () => {
-    it("reports real database concurrency tests as skipped if TEST_DATABASE_URL is not set", () => {
-      if (!process.env.TEST_DATABASE_URL) {
-        console.log("[NOTICE] Real PostgreSQL room provisioning concurrency test skipped (TEST_DATABASE_URL unconfigured).");
-        expect(true).toBe(true);
-      }
     });
   });
 });

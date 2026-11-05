@@ -468,6 +468,19 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
       if (data.success && data.veraLedger) {
         setSummary(data.veraLedger);
         setActiveTab("summary");
+      } else if (data.processing) {
+        let attempts = 0;
+        while (attempts < 10) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const checkRes = await fetch(`/api/room/${room.accessToken}`);
+          const checkData = await checkRes.json().catch(() => ({}));
+          if (checkData.success && checkData.room?.veraLedger) {
+            setSummary(checkData.room.veraLedger);
+            setActiveTab("summary");
+            break;
+          }
+          attempts++;
+        }
       }
     } catch (err) {
       console.error("[Room] Error concluding call with Vera:", err);

@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { db } from "@/db";
 import { rooms, bookings, eventTypes, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, or, inArray, ne, lt } from "drizzle-orm";
 import {
   generateVeraPreMeetingBrief,
   generateVeraLedger,
@@ -256,12 +256,30 @@ export async function addRoomFile(token: string, file: RoomFileItem): Promise<Ro
   return nextFiles;
 }
 
+export const SYNTHESIS_LEASE_MS = 60_000; // 60 seconds
+
+export interface ConcludeRoomResult {
+  success: boolean;
+  status: "concluded" | "synthesizing" | "failed" | "not_found" | "stale_worker";
+  processing?: boolean;
+  alreadyConcluded?: boolean;
+  veraLedger?: VeraLedger | null;
+  error?: string;
+  message?: string;
+}
+
 /**
- * Concludes meeting and requests Vera to synthesize the permanent record.
+ * Concludes meeting and requests Vera to synthesize the permanent record
+ * using atomic database-level lease claiming to eliminate race conditions.
  */
-export async function concludeRoomAndSynthesize(token: string): Promise<typeof rooms.$inferSelect | null> {
-  const room = await db.query.rooms.findFirst({
-    where: eq(rooms.accessToken, token),
+export async function concludeRoomAndSynthesize(token: string): Promise<ConcludeRoomResult> {
+  if (!token || typeof token !== "string") {
+    return { success: false, status: "not_found", error: "Invalid token." };
+  }
+
+  // 1. Fast check if already concluded
+  const existing = await db.query.rooms.findFirst({
+    where: eq(rooms.accessToken, token.trim()),
     with: {
       booking: {
         with: {
@@ -272,32 +290,161 @@ export async function concludeRoomAndSynthesize(token: string): Promise<typeof r
     },
   });
 
-  if (!room || !room.booking) return null;
-
-  // Prevent duplicate Vera synthesis if room is already concluded
-  if (room.status === "concluded") {
-    return room;
+  if (!existing || !existing.booking) {
+    return { success: false, status: "not_found", error: "Room not found." };
   }
 
-  const b = room.booking;
-  const ledger = await generateVeraLedger({
-    eventTitle: b.eventType?.title || "Meeting",
-    hostName: b.host?.name || "Host",
-    guestName: b.guestName,
-    agenda: room.agenda || [],
-    sharedNotes: room.sharedNotes || undefined,
-    transcript: room.transcript || undefined,
-  });
-
-  const [updated] = await db
-    .update(rooms)
-    .set({
+  if (existing.status === "concluded" || existing.synthesisStatus === "completed") {
+    return {
+      success: true,
       status: "concluded",
-      veraLedger: ledger,
-      updatedAt: new Date(),
-    })
-    .where(eq(rooms.accessToken, token))
-    .returning();
+      alreadyConcluded: true,
+      veraLedger: existing.veraLedger as VeraLedger | null,
+    };
+  }
 
-  return updated;
+  const claimToken = crypto.randomUUID();
+  const now = new Date();
+  const leaseCutoff = new Date(now.getTime() - SYNTHESIS_LEASE_MS);
+
+  // 2. Atomic claim via conditional SQL update
+  let claimedRoom: typeof rooms.$inferSelect | undefined;
+  try {
+    const [claimed] = await db
+      .update(rooms)
+      .set({
+        synthesisStatus: "synthesizing",
+        synthesisClaimToken: claimToken,
+        synthesisClaimedAt: now,
+        synthesisLastError: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(rooms.accessToken, token.trim()),
+          ne(rooms.status, "concluded"),
+          or(
+            inArray(rooms.synthesisStatus, ["idle", "failed"]),
+            and(
+              eq(rooms.synthesisStatus, "synthesizing"),
+              lt(rooms.synthesisClaimedAt, leaseCutoff)
+            )
+          )
+        )
+      )
+      .returning();
+
+    claimedRoom = claimed;
+  } catch (claimErr) {
+    console.error("[Vera Synthesis] Error during atomic claim:", claimErr);
+    return {
+      success: false,
+      status: "failed",
+      error: claimErr instanceof Error ? claimErr.message : String(claimErr),
+    };
+  }
+
+  // 3. If not claimed, inspect current state to return precise status
+  if (!claimedRoom) {
+    const fresh = await db.query.rooms.findFirst({
+      where: eq(rooms.accessToken, token.trim()),
+    });
+
+    if (!fresh) {
+      return { success: false, status: "not_found", error: "Room not found." };
+    }
+
+    if (fresh.status === "concluded" || fresh.synthesisStatus === "completed") {
+      return {
+        success: true,
+        status: "concluded",
+        alreadyConcluded: true,
+        veraLedger: fresh.veraLedger as VeraLedger | null,
+      };
+    }
+
+    if (fresh.synthesisStatus === "synthesizing") {
+      return {
+        success: true,
+        status: "synthesizing",
+        processing: true,
+        message: "Vera summary synthesis is currently in progress.",
+      };
+    }
+
+    return {
+      success: false,
+      status: "failed",
+      error: "Unable to acquire synthesis claim.",
+    };
+  }
+
+  // 4. This request holds the exclusive lease. Execute Vera synthesis.
+  const b = existing.booking;
+  try {
+    const ledger = await generateVeraLedger({
+      eventTitle: b.eventType?.title || "Meeting",
+      hostName: b.host?.name || "Host",
+      guestName: b.guestName,
+      agenda: (claimedRoom.agenda as VeraAgendaItem[]) || [],
+      sharedNotes: claimedRoom.sharedNotes || undefined,
+      transcript: claimedRoom.transcript || undefined,
+    });
+
+    // 5. Fenced completion write: only commit if claimToken still matches
+    const [finalized] = await db
+      .update(rooms)
+      .set({
+        status: "concluded",
+        synthesisStatus: "completed",
+        synthesisClaimToken: null,
+        veraLedger: ledger,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(rooms.accessToken, token.trim()),
+          eq(rooms.synthesisClaimToken, claimToken)
+        )
+      )
+      .returning();
+
+    if (!finalized) {
+      console.warn("[Vera Synthesis] Stale worker write ignored — lease expired and was claimed by another worker.");
+      return {
+        success: false,
+        status: "stale_worker",
+        error: "Synthesis completed but lease had expired.",
+      };
+    }
+
+    return {
+      success: true,
+      status: "concluded",
+      veraLedger: finalized.veraLedger as VeraLedger | null,
+    };
+  } catch (err) {
+    console.error("[Vera Synthesis] Error during LLM generation:", err);
+    // Release claim on failure so host can retry immediately
+    await db
+      .update(rooms)
+      .set({
+        synthesisStatus: "failed",
+        synthesisClaimToken: null,
+        synthesisLastError: err instanceof Error ? err.message : String(err),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(rooms.accessToken, token.trim()),
+          eq(rooms.synthesisClaimToken, claimToken)
+        )
+      );
+
+    return {
+      success: false,
+      status: "failed",
+      error: err instanceof Error ? err.message : "Vera synthesis failed",
+    };
+  }
 }
