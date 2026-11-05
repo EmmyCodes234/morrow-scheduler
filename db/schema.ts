@@ -200,8 +200,16 @@ export const rooms = pgTable(
       background?: string;
     }>(),
     veraLedger: jsonb("vera_ledger").$type<{
-      executiveSummary?: string[];
-      actionItems?: Array<{ id: string; task: string; assignee: string; priority: "high" | "medium" | "low"; done: boolean }>;
+      executiveSummary?: Array<string | { claim: string; evidence: string }>;
+      actionItems?: Array<{
+        id: string;
+        task: string;
+        assignee: string;
+        priority: "high" | "medium" | "low";
+        done: boolean;
+        deadline?: string;
+        evidence?: string;
+      }>;
       keyDecisions?: string[];
       suggestedFollowUp?: string;
     }>(),

@@ -109,6 +109,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             priority: (a.priority || "medium") as "high" | "medium" | "low",
             done: Boolean(a.done),
             deadline: a.deadline,
+            evidence: a.evidence,
           })),
           keyDecisions: room.veraLedger.keyDecisions || [],
           suggestedFollowUp: room.veraLedger.suggestedFollowUp,
@@ -501,31 +502,113 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
     }
   };
 
-  // Auto-save notes debounce
-  useEffect(() => {
-    if (notes === room.sharedNotes) return;
+  // Notes auto-save & flush synchronization
+  const lastSavedNotesRef = useRef(room.sharedNotes || "");
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const saveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [notesSaveError, setNotesSaveError] = useState<string | null>(null);
+
+  const persistNotesToServer = async (textToSave: string): Promise<boolean> => {
+    if (textToSave === lastSavedNotesRef.current) {
+      setNotesSaveError(null);
+      return true;
+    }
 
     setIsSavingNotes(true);
-    const timer = setTimeout(async () => {
-      try {
-        await fetch(`/api/room/${room.accessToken}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ notes }),
-        });
-      } catch (err) {
-        console.error("[Room] Error auto-saving notes:", err);
-      } finally {
-        setIsSavingNotes(false);
+    setNotesSaveError(null);
+    try {
+      const res = await fetch(`/api/room/${room.accessToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: textToSave }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Notes save failed with status ${res.status}`);
+      }
+
+      lastSavedNotesRef.current = textToSave;
+      setNotesSaveError(null);
+      return true;
+    } catch (err) {
+      console.error("[Room] Error persisting notes:", err);
+      setNotesSaveError("Failed to save latest notes. Please check connection.");
+      return false;
+    } finally {
+      setIsSavingNotes(false);
+    }
+  };
+
+  const flushNotesSave = async (): Promise<boolean> => {
+    // 1. Clear any pending debounce timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+
+    // 2. Await in-flight save if one exists
+    if (saveInFlightRef.current) {
+      const inFlightOk = await saveInFlightRef.current;
+      if (!inFlightOk) {
+        return false;
+      }
+    }
+
+    // 3. If latest notes state differs from last saved, save immediately
+    const currentNotes = notesRef.current;
+    if (currentNotes !== lastSavedNotesRef.current) {
+      const promise = persistNotesToServer(currentNotes);
+      saveInFlightRef.current = promise;
+      const ok = await promise;
+      saveInFlightRef.current = null;
+      return ok;
+    }
+
+    return true;
+  };
+
+  // Debounced auto-save effect
+  useEffect(() => {
+    if (notes === lastSavedNotesRef.current) return;
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    setIsSavingNotes(true);
+    debounceTimerRef.current = setTimeout(async () => {
+      if (saveInFlightRef.current) {
+        await saveInFlightRef.current.catch(() => {});
+      }
+      const currentNotes = notesRef.current;
+      if (currentNotes !== lastSavedNotesRef.current) {
+        const promise = persistNotesToServer(currentNotes);
+        saveInFlightRef.current = promise;
+        await promise;
+        saveInFlightRef.current = null;
       }
     }, 1200);
 
-    return () => clearTimeout(timer);
-  }, [notes, room.accessToken, room.sharedNotes]);
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [notes, room.accessToken]);
 
   // Conclude Call and trigger Vera Summary Synthesis
   const handleConcludeCall = async () => {
     if (!isHost) return;
+
+    // Flush and await pending note changes before synthesis starts
+    const notesSaved = await flushNotesSave();
+    if (!notesSaved) {
+      setNotesSaveError("Could not save latest notes. Please check connection and retry.");
+      return;
+    }
+
     setIsSynthesizing(true);
     setSynthesisState("synthesizing");
     setActiveTab("summary");
@@ -1403,9 +1486,21 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                   </p>
                 </div>
                 <span className="text-caption-2-medium text-text-tertiary">
-                  {isSavingNotes ? "Saving..." : "All changes saved"}
+                  {isSavingNotes ? "Saving..." : notesSaveError ? "Save error" : "All changes saved"}
                 </span>
               </div>
+
+              {notesSaveError && (
+                <div className="p-2.5 rounded-xl border border-border-error-default bg-background-error-default/10 text-caption-1-medium text-text-error-primary flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <RiAlertLine className="size-4 shrink-0 text-text-error-primary" />
+                    <span className="truncate">{notesSaveError}</span>
+                  </div>
+                  <Button variant="secondary" size="xs" onClick={() => flushNotesSave()}>
+                    Retry Save
+                  </Button>
+                </div>
+              )}
 
               <textarea
                 value={notes}
@@ -1608,6 +1703,12 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                           Vera needs actual meeting notes or a transcript before it can create a reliable meeting record. Add the missing context and try again.
                         </p>
                       </div>
+                      {notesSaveError && (
+                        <div className="p-2.5 rounded-xl border border-border-error-default bg-background-error-default/10 text-caption-1-medium text-text-error-primary max-w-sm flex items-center gap-2 text-start">
+                          <RiAlertLine className="size-4 shrink-0" />
+                          <span className="flex-1">{notesSaveError}</span>
+                        </div>
+                      )}
                       {isHost ? (
                         <div className="flex items-center gap-2">
                           <Button
@@ -1704,12 +1805,34 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                       <span className="text-caption-1-semibold text-text-tertiary uppercase tracking-wider">
                         Executive Summary
                       </span>
-                      <div className="flex flex-col gap-2">
-                        {summary.executiveSummary.map((item, idx) => (
-                          <p key={idx} className="text-body-medium text-text-primary leading-relaxed">
-                            {item}
-                          </p>
-                        ))}
+                      <div className="flex flex-col gap-2.5">
+                        {summary.executiveSummary.map((item, idx) => {
+                          const isObject = typeof item === "object" && item !== null;
+                          const claimText = isObject ? (item as any).claim : item;
+                          const evidenceText = isObject ? (item as any).evidence : null;
+
+                          return (
+                            <div
+                              key={idx}
+                              className="flex flex-col gap-1 pb-2 border-b border-border-button-default/30 last:border-b-0 last:pb-0"
+                            >
+                              <p className="text-body-medium text-text-primary leading-relaxed">
+                                {claimText}
+                              </p>
+                              {evidenceText && (
+                                <details className="group cursor-pointer select-none">
+                                  <summary className="text-caption-2-medium text-text-tertiary hover:text-text-secondary flex items-center gap-1 list-none focus:outline-none">
+                                    <span className="group-open:hidden">▸ Inspect source excerpt</span>
+                                    <span className="hidden group-open:inline">▾ Hide source excerpt</span>
+                                  </summary>
+                                  <p className="mt-1 ps-2.5 py-1 text-caption-1-regular text-text-secondary border-s-2 border-accent-500/40 bg-background-tertiary-default/40 rounded-e-md italic font-normal">
+                                    &ldquo;{evidenceText}&rdquo;
+                                  </p>
+                                </details>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -1750,6 +1873,17 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                               <span className="text-body-medium text-text-primary font-medium leading-snug break-words">
                                 {action.task}
                               </span>
+                              {action.evidence && (
+                                <details className="group cursor-pointer select-none">
+                                  <summary className="text-caption-2-medium text-text-tertiary hover:text-text-secondary flex items-center gap-1 list-none focus:outline-none">
+                                    <span className="group-open:hidden">▸ Source quote</span>
+                                    <span className="hidden group-open:inline">▾ Hide quote</span>
+                                  </summary>
+                                  <p className="mt-1 ps-2 py-0.5 text-caption-2-medium text-text-secondary border-s-2 border-accent-500/40 bg-background-tertiary-default/30 rounded-e-md italic font-normal">
+                                    &ldquo;{action.evidence}&rdquo;
+                                  </p>
+                                </details>
+                              )}
                               <div className="flex items-center justify-between pt-2 border-t border-border-button-default/50 text-caption-1-semibold">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <Avatar size="xs" initials={action.assignee.slice(0, 2).toUpperCase()} color="neutral" />

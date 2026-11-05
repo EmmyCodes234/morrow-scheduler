@@ -1,13 +1,14 @@
 import crypto from "crypto";
 import { db as defaultDb } from "@/db";
 import { rooms, bookings, eventTypes, users } from "@/db/schema";
-import { eq, and, or, inArray, ne, lt } from "drizzle-orm";
+import { eq, and, or, inArray, ne, lt, isNull } from "drizzle-orm";
 import {
   generateVeraPreMeetingBrief,
   generateVeraLedger,
   VeraInsufficientEvidenceError,
   type VeraAgendaItem,
   type VeraLedger,
+  type VeraSummaryClaim,
 } from "@/lib/intelligence/vera";
 
 export type RoomDb = typeof defaultDb;
@@ -66,8 +67,8 @@ export interface RoomDetails {
     background?: string;
   } | null;
   veraLedger?: {
-    executiveSummary?: string[];
-    actionItems?: Array<{ id: string; task: string; assignee: string; priority: "high" | "medium" | "low"; done: boolean; deadline?: string }>;
+    executiveSummary?: Array<string | VeraSummaryClaim>;
+    actionItems?: Array<{ id: string; task: string; assignee: string; priority: "high" | "medium" | "low"; done: boolean; deadline?: string; evidence?: string }>;
     keyDecisions?: string[];
     suggestedFollowUp?: string;
   } | null;
@@ -355,7 +356,8 @@ export async function concludeRoomAndSynthesize(
           ne(rooms.status, "concluded"),
           ne(rooms.synthesisStatus, "completed"),
           or(
-            inArray(rooms.synthesisStatus, ["idle", "failed"]),
+            isNull(rooms.synthesisStatus),
+            inArray(rooms.synthesisStatus, ["idle", "failed", "insufficient_evidence"]),
             and(
               eq(rooms.synthesisStatus, "synthesizing"),
               lt(rooms.synthesisClaimedAt, leaseCutoff)

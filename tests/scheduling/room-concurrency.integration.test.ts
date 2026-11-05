@@ -5,7 +5,11 @@ import * as schema from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
 import crypto from "crypto";
 import { isSameDatabase } from "@/lib/database/url-safety";
-import { getOrCreateRoomForBooking, concludeRoomAndSynthesize } from "@/lib/room/room-service";
+import {
+  getOrCreateRoomForBooking,
+  concludeRoomAndSynthesize,
+  updateRoomNotes,
+} from "@/lib/room/room-service";
 import * as veraModule from "@/lib/intelligence/vera";
 
 /**
@@ -518,6 +522,96 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
       expect(finalRoom?.synthesisStatus).toBe("completed");
       expect(finalRoom?.veraLedger?.executiveSummary).toContain("Worker B authoritative ledger");
       expect(finalRoom?.veraLedger?.executiveSummary).not.toContain("Worker A stale attempt");
+    });
+  });
+
+  // =========================================================================
+  // 4. Recovery and Retry from Insufficient Evidence on Real PostgreSQL
+  // =========================================================================
+  describe("Recovery and Retry from Insufficient Evidence", () => {
+    it("enters insufficient_evidence without substantive notes and successfully concludes on retry after notes are added", async () => {
+      const retryBookingId = crypto.randomUUID();
+      const retryBookingStartTime = new Date(Date.now() + 86400000);
+      const retryBookingEndTime = new Date(retryBookingStartTime.getTime() + 1800000);
+
+      // 1. Create booking in test database
+      await testDb.insert(schema.bookings).values({
+        id: retryBookingId,
+        eventTypeId: testEventTypeId,
+        hostId: testHostId,
+        guestName: "Retry Participant",
+        guestEmail: "retry-guest@example.com",
+        guestTimezone: "UTC",
+        startTime: retryBookingStartTime,
+        endTime: retryBookingEndTime,
+        status: "confirmed",
+      });
+
+      // 1. Creates a room using testDb
+      const room = await getOrCreateRoomForBooking(retryBookingId, testDb);
+      const accessToken = room.accessToken;
+
+      // 2. Attempts synthesis without evidence (room has empty sharedNotes)
+      const firstAttempt = await concludeRoomAndSynthesize(accessToken, testDb);
+
+      // 3. Verifies the room enters insufficient_evidence
+      expect(firstAttempt.success).toBe(false);
+      expect(firstAttempt.status).toBe("insufficient_evidence");
+      expect(firstAttempt.code).toBe("INSUFFICIENT_EVIDENCE");
+
+      const roomAfterFirst = await testDb.query.rooms.findFirst({
+        where: eq(schema.rooms.accessToken, accessToken),
+      });
+      expect(roomAfterFirst?.synthesisStatus).toBe("insufficient_evidence");
+      expect(roomAfterFirst?.status).not.toBe("concluded");
+      expect(roomAfterFirst?.synthesisClaimToken).toBeNull(); // Lease safely released
+
+      // 4. Adds substantive notes
+      const substantiveNotes =
+        "Integration Test Host and Retry Participant agreed to proceed with full rollout on Friday.\n" +
+        "Retry Participant will deploy the application by Friday afternoon.";
+
+      const updateSuccess = await updateRoomNotes(accessToken, substantiveNotes, testDb);
+      expect(updateSuccess).toBe(true);
+
+      // Mock successful Vera generation for retry
+      vi.spyOn(veraModule, "generateVeraLedger").mockResolvedValueOnce({
+        executiveSummary: [
+          {
+            claim: "Integration Test Host and Retry Participant agreed to proceed with full rollout on Friday.",
+            evidence: "agreed to proceed with full rollout on Friday",
+          },
+        ],
+        keyDecisions: ["Proceed with full rollout on Friday"],
+        actionItems: [
+          {
+            id: "act-retry-1",
+            task: "Deploy the application",
+            assignee: "Retry Participant",
+            priority: "high",
+            done: false,
+            deadline: "Friday afternoon",
+            evidence: "Retry Participant will deploy the application by Friday afternoon.",
+          },
+        ],
+        suggestedFollowUp: "Review deployment status on Monday.",
+      });
+
+      // 5. Attempts synthesis again
+      const secondAttempt = await concludeRoomAndSynthesize(accessToken, testDb);
+
+      // 6. Verifies the second attempt obtains a lease and can successfully conclude the room
+      expect(secondAttempt.success).toBe(true);
+      expect(secondAttempt.status).toBe("concluded");
+      expect(secondAttempt.veraLedger).toBeDefined();
+
+      const finalRoom = await testDb.query.rooms.findFirst({
+        where: eq(schema.rooms.accessToken, accessToken),
+      });
+      expect(finalRoom?.status).toBe("concluded");
+      expect(finalRoom?.synthesisStatus).toBe("completed");
+      expect(finalRoom?.synthesisClaimToken).toBeNull();
+      expect(finalRoom?.veraLedger?.keyDecisions).toContain("Proceed with full rollout on Friday");
     });
   });
 });

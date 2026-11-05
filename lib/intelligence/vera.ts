@@ -5,6 +5,11 @@ export interface VeraAgendaItem {
   addedBy: "host" | "guest" | "vera";
 }
 
+export interface VeraSummaryClaim {
+  claim: string;
+  evidence: string;
+}
+
 export interface VeraActionItem {
   id: string;
   task: string;
@@ -23,7 +28,7 @@ export interface VeraPreMeetingBrief {
 }
 
 export interface VeraLedger {
-  executiveSummary: string[];
+  executiveSummary: Array<VeraSummaryClaim | string>;
   actionItems: VeraActionItem[];
   keyDecisions: string[];
   suggestedFollowUp?: string;
@@ -201,6 +206,178 @@ export function resolveParticipantAssignee(
   return "Unassigned";
 }
 
+const STOP_WORDS = new Set([
+  "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
+  "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but",
+  "by", "can", "cannot", "could", "did", "do", "does", "doing", "down", "during", "each",
+  "few", "for", "from", "further", "had", "has", "have", "having", "he", "her", "here",
+  "hers", "herself", "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it",
+  "its", "itself", "let", "me", "more", "most", "my", "myself", "no", "nor", "not", "of",
+  "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out",
+  "over", "own", "same", "she", "should", "so", "some", "such", "than", "that", "the",
+  "their", "theirs", "them", "themselves", "then", "there", "these", "they", "this", "those",
+  "through", "to", "too", "under", "until", "up", "very", "was", "we", "were", "what",
+  "when", "where", "which", "while", "who", "whom", "why", "with", "would", "you", "your",
+  "yours", "yourself", "yourselves", "standard", "scheduled", "meeting", "call", "discussion",
+  "notes", "agenda", "completed", "outlined", "conversation", "sync", "team", "today", "yesterday",
+  "tomorrow"
+]);
+
+/**
+ * Extracts non-trivial content words from text for semantic overlap checks.
+ */
+export function extractContentKeywords(text: string): string[] {
+  const norm = normalizeForEvidenceComparison(text);
+  return norm.split(/\s+/).filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+}
+
+function getWordStems(word: string): string[] {
+  const stems = [word];
+  if (word.endsWith("ed") && word.length > 4) stems.push(word.slice(0, -2));
+  if (word.endsWith("ing") && word.length > 5) stems.push(word.slice(0, -3));
+  if (word.endsWith("es") && word.length > 4) stems.push(word.slice(0, -2));
+  if (word.endsWith("s") && word.length > 3) stems.push(word.slice(0, -1));
+  return stems;
+}
+
+/**
+ * Verifies that a source excerpt actually pertains to the claim / decision / task,
+ * rather than being an unrelated quote that happens to exist in the source text.
+ */
+export function isEvidenceRelevantToClaim(claim: string, evidence: string): boolean {
+  if (!claim || !evidence) return false;
+  const claimWords = extractContentKeywords(claim);
+  const evidenceNorm = normalizeForEvidenceComparison(evidence);
+
+  if (claimWords.length === 0) {
+    const claimNorm = normalizeForEvidenceComparison(claim);
+    return claimNorm.length > 0 && evidenceNorm.includes(claimNorm);
+  }
+
+  // Count how many significant claim keywords (or their base stems) appear in the evidence
+  let matchingWords = 0;
+  for (const word of claimWords) {
+    const stems = getWordStems(word);
+    if (stems.some((s) => evidenceNorm.includes(s))) {
+      matchingWords++;
+    }
+  }
+
+  // At least 1 significant content word if short, or at least 25% of content words
+  const minRequired = Math.max(1, Math.ceil(claimWords.length * 0.25));
+  return matchingWords >= minRequired;
+}
+
+/**
+ * Verifies that a decision represents an explicitly confirmed agreement,
+ * rejecting tentative proposals, exploratory ideas, or open questions.
+ */
+export function isConfirmedDecision(decision: string, evidence: string, status?: string): boolean {
+  if (status && status.toLowerCase() !== "confirmed") {
+    return false;
+  }
+
+  const normDecision = normalizeForEvidenceComparison(decision);
+  const normEvidence = normalizeForEvidenceComparison(evidence);
+
+  // Proposal, speculative, or tentative language without definitive consensus
+  const proposalPatterns = /\b(propose|proposed|proposal|suggest|suggested|suggestion|consider|considering|might|could|tentative|tentatively|maybe|perhaps|tbd|unresolved|undecided|discuss\s+further|open\s+question|\?)\b/i;
+
+  if (proposalPatterns.test(normDecision) || proposalPatterns.test(normEvidence)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Verifies that an action item's evidence excerpt establishes active ownership or commitment,
+ * rather than merely mentioning the participant's name in an unrelated or passive context.
+ */
+export function verifyAssigneeOwnership(
+  assigneeName: string,
+  evidence: string
+): boolean {
+  if (!assigneeName || assigneeName === "Unassigned") return false;
+  const normEvidence = normalizeForEvidenceComparison(evidence);
+  const firstName = assigneeName.toLowerCase().split(/\s+/)[0];
+  const fullName = normalizeForEvidenceComparison(assigneeName);
+
+  // Participant name must occur in evidence
+  if (!normEvidence.includes(firstName) && !normEvidence.includes(fullName)) {
+    return false;
+  }
+
+  // 1. Speaker line in transcript: "Name: ...", "Name: I will..."
+  if (
+    new RegExp(`\\b${firstName}\\s*:\\s*(i\\s+will|i'll|i\\s+can|let\\s+me|i\\s+shall|we\\s+can)?`, "i").test(evidence) ||
+    new RegExp(`\\b${firstName}\\s*:`, "i").test(evidence)
+  ) {
+    return true;
+  }
+
+  // 2. Ownership patterns on normalized evidence
+  const ownershipPatterns = [
+    new RegExp(`\\b${firstName}\\s+(i\\s+will|i'll|i\\s+can|let\\s+me|will|shall|to|agreed|commits|committed|is\\s+handling|handles|taking|takes|volunteered)\\b`, "i"),
+    new RegExp(`\\b(assigned\\s+to|action\\s+item\\s+for|ownership\\s+by|responsible\\s+for|responsible)\\s+(:\\s*)?${firstName}\\b`, "i"),
+  ];
+
+  return ownershipPatterns.some((pattern) => pattern.test(normEvidence));
+}
+
+/**
+ * Validates that an action item deadline is grounded in the source notes or transcript,
+ * rejecting invented calendar dates or arbitrary model timestamps.
+ */
+export function verifyDeadlineGrounding(
+  deadline: string,
+  evidence: string,
+  source: string
+): string | undefined {
+  if (!deadline || typeof deadline !== "string") return undefined;
+  const trimmed = deadline.trim();
+  if (!trimmed) return undefined;
+
+  const normDeadline = normalizeForEvidenceComparison(trimmed);
+  const normEvidence = normalizeForEvidenceComparison(evidence);
+  const normSource = normalizeForEvidenceComparison(source);
+
+  // Verbatim or normalized inclusion
+  if (normEvidence.includes(normDeadline) || normSource.includes(normDeadline)) {
+    return trimmed;
+  }
+
+  // Check temporal keywords in deadline (e.g. "friday", "tomorrow", "next week", "eod")
+  const temporalWords = trimmed
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+
+  if (temporalWords.length > 0) {
+    const allFound = temporalWords.every(
+      (tw) => normEvidence.includes(tw) || normSource.includes(tw)
+    );
+    if (allFound) {
+      return trimmed;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Normalizes an executive summary claim for reading, preserving backward compatibility
+ * with previously saved plain strings.
+ */
+export function normalizeExecutiveSummaryClaim(
+  item: string | VeraSummaryClaim
+): { claim: string; evidence?: string } {
+  if (typeof item === "string") {
+    return { claim: item };
+  }
+  return { claim: item.claim, evidence: item.evidence };
+}
+
 export async function callDeepSeek(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
   options?: { timeoutMs?: number }
@@ -280,44 +457,55 @@ export function validateVeraLedger(
   const rawObj = raw as Record<string, unknown>;
   const source = context.sourceEvidence || "";
 
-  // 1. executiveSummary: must be a valid array of non-empty strings or claim objects
+  // 1. executiveSummary: newly generated output must contain { claim, evidence } objects with verifiable evidence
   if (!Array.isArray(rawObj.executiveSummary) || rawObj.executiveSummary.length === 0) {
-    throw new VeraValidationError("executiveSummary must be a non-empty array of strings.");
+    throw new VeraValidationError("executiveSummary must be a non-empty array.");
   }
 
-  const executiveSummary: string[] = [];
+  const executiveSummary: VeraSummaryClaim[] = [];
   for (let i = 0; i < rawObj.executiveSummary.length; i++) {
     const item = rawObj.executiveSummary[i];
-    let claimText = "";
-    let evidenceQuote = "";
 
+    // Reject plain strings without evidence (newly generated output requires inspectable evidence)
     if (typeof item === "string") {
-      claimText = item.trim();
-    } else if (item && typeof item === "object") {
-      const obj = item as Record<string, unknown>;
-      claimText = typeof obj.claim === "string" ? obj.claim.trim() : typeof obj.text === "string" ? obj.text.trim() : "";
-      evidenceQuote = typeof obj.evidence === "string" ? obj.evidence.trim() : "";
+      console.warn(`[Vera] Rejecting plain string summary claim without evidence at index ${i}: "${item}"`);
+      continue;
     }
 
-    if (!claimText) {
-      throw new VeraValidationError(`executiveSummary item at index ${i} is not a valid non-empty string or claim.`);
+    if (!item || typeof item !== "object") {
+      continue;
     }
 
-    // If sourceEvidence is provided, verify evidence quote occurs in source if provided
-    if (source && evidenceQuote) {
-      if (!evidenceOccursInSource(evidenceQuote, source)) {
-        continue;
-      }
+    const obj = item as Record<string, unknown>;
+    const claim = typeof obj.claim === "string" ? obj.claim.trim() : typeof obj.text === "string" ? obj.text.trim() : "";
+    const evidence = typeof obj.evidence === "string" ? obj.evidence.trim() : "";
+
+    // Reject missing claim or missing evidence
+    if (!claim || !evidence) {
+      console.warn(`[Vera] Rejecting summary claim missing claim or evidence at index ${i}`);
+      continue;
     }
 
-    executiveSummary.push(claimText);
+    // Check evidence occurs in source
+    if (source && !evidenceOccursInSource(evidence, source)) {
+      console.warn(`[Vera] Rejecting summary claim whose evidence is absent from source: "${claim}"`);
+      continue;
+    }
+
+    // Check that evidence is actually relevant to the claim (not an unrelated source excerpt)
+    if (!isEvidenceRelevantToClaim(claim, evidence)) {
+      console.warn(`[Vera] Rejecting summary claim because evidence does not support the claim: "${claim}"`);
+      continue;
+    }
+
+    executiveSummary.push({ claim, evidence });
   }
 
   if (executiveSummary.length === 0) {
     throw new VeraValidationError("No executive summary claims could be verified against the supplied meeting evidence.");
   }
 
-  // 2. keyDecisions: must be a valid array of strings or decision objects
+  // 2. keyDecisions: must be a valid array of decision objects or confirmed strings
   if (!Array.isArray(rawObj.keyDecisions)) {
     throw new VeraValidationError("keyDecisions must be an array of strings.");
   }
@@ -327,6 +515,7 @@ export function validateVeraLedger(
     const item = rawObj.keyDecisions[i];
     let decisionText = "";
     let evidenceQuote = "";
+    let status = "confirmed";
 
     if (typeof item === "string") {
       decisionText = item.trim();
@@ -335,18 +524,38 @@ export function validateVeraLedger(
       const obj = item as Record<string, unknown>;
       decisionText = typeof obj.decision === "string" ? obj.decision.trim() : typeof obj.text === "string" ? obj.text.trim() : "";
       evidenceQuote = typeof obj.evidence === "string" ? obj.evidence.trim() : "";
+      if (typeof obj.status === "string" && obj.status.trim()) {
+        status = obj.status.trim().toLowerCase();
+      }
     }
 
     if (!decisionText) {
       continue;
     }
 
-    // Explicit supporting evidence required: if source evidence is provided,
-    // verify that evidenceQuote (or decisionText) exists in the source text.
+    // Proposals and unresolved open questions must NOT enter confirmed decisions
+    if (status !== "confirmed") {
+      console.warn(`[Vera] Rejecting non-confirmed decision (${status}): "${decisionText}"`);
+      continue;
+    }
+
+    // Explicit supporting evidence required
     if (source) {
       const quoteToCheck = evidenceQuote || decisionText;
       if (!evidenceOccursInSource(quoteToCheck, source)) {
         console.warn(`[Vera] Rejecting decision without source evidence: "${decisionText}"`);
+        continue;
+      }
+
+      // Check evidence relevance: an unrelated quote cannot prove a decision
+      if (!isEvidenceRelevantToClaim(decisionText, quoteToCheck)) {
+        console.warn(`[Vera] Rejecting decision because evidence is unrelated: "${decisionText}"`);
+        continue;
+      }
+
+      // Check whether excerpt or decision language is tentative/proposal
+      if (!isConfirmedDecision(decisionText, quoteToCheck, status)) {
+        console.warn(`[Vera] Rejecting tentative proposal from confirmed decisions: "${decisionText}"`);
         continue;
       }
     }
@@ -381,6 +590,12 @@ export function validateVeraLedger(
         console.warn(`[Vera] Rejecting action item without source evidence: "${task}"`);
         continue;
       }
+
+      // Check evidence relevance: an unrelated quote cannot prove an action item
+      if (!isEvidenceRelevantToClaim(task, quoteToCheck)) {
+        console.warn(`[Vera] Rejecting action item because evidence is unrelated: "${task}"`);
+        continue;
+      }
     }
 
     // Priority
@@ -396,19 +611,19 @@ export function validateVeraLedger(
     // Participant grounding: strictly resolved to host, guest, or "Unassigned"
     let assignee = resolveParticipantAssignee(itemObj.assignee as string | undefined, context);
 
-    // If evidence does not establish who owns the task, preserve as "Unassigned"
-    if (assignee !== "Unassigned" && evidenceQuote && source) {
-      const normEvidence = normalizeForEvidenceComparison(evidenceQuote);
-      const assigneeFirst = assignee.toLowerCase().split(/\s+/)[0];
-      if (!normEvidence.includes(assigneeFirst)) {
+    // Verify ownership: evidence must establish that this person takes/owns the task,
+    // not merely contain the person's name casually in passing
+    if (assignee !== "Unassigned" && evidenceQuote) {
+      const hasOwnership = verifyAssigneeOwnership(assignee, evidenceQuote);
+      if (!hasOwnership) {
         assignee = "Unassigned";
       }
     }
 
-    // Deadline: missing deadlines must remain unspecified rather than invented
+    // Deadline: must be grounded in source evidence, not invented
     let deadline: string | undefined = undefined;
     if (typeof itemObj.deadline === "string" && itemObj.deadline.trim()) {
-      deadline = itemObj.deadline.trim();
+      deadline = verifyDeadlineGrounding(itemObj.deadline, evidenceQuote, source);
     }
 
     actionItems.push({
@@ -557,12 +772,16 @@ Never use emojis. Never use hype. Use clear, exact business language.
 Return a valid JSON object matching this schema:
 {
   "executiveSummary": [
-    "Summary claim grounded directly in the discussion"
+    {
+      "claim": "Direct summary claim grounded strictly in the discussion",
+      "evidence": "Direct verbatim excerpt from notes or transcript proving this claim"
+    }
   ],
   "keyDecisions": [
     {
-      "decision": "Confirmed agreed decision",
-      "evidence": "Direct excerpt from notes or transcript proving agreement"
+      "decision": "Explicitly agreed, confirmed decision",
+      "status": "confirmed", // Note: Set to "confirmed" ONLY if participants explicitly agreed. Use "proposed" or "open_question" for unresolved topics.
+      "evidence": "Direct verbatim excerpt from notes or transcript proving agreement"
     }
   ],
   "actionItems": [
@@ -570,8 +789,8 @@ Return a valid JSON object matching this schema:
       "task": "Specific task description",
       "assignee": "${params.hostName}" or "${params.guestName}" or "Unassigned",
       "priority": "high" | "medium" | "low",
-      "deadline": "explicit deadline if mentioned in source, otherwise omit",
-      "evidence": "Direct excerpt from notes or transcript proving task and ownership"
+      "deadline": "exact wording used in source if mentioned (e.g. 'by Friday'), otherwise omit",
+      "evidence": "Direct verbatim excerpt from notes or transcript proving task and ownership"
     }
   ],
   "suggestedFollowUp": "Clear single recommendation for when they should sync next or what triggers the next meeting."

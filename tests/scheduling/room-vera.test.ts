@@ -7,12 +7,19 @@ import {
   extractSubstantiveEvidence,
   evidenceOccursInSource,
   resolveParticipantAssignee,
+  isEvidenceRelevantToClaim,
+  isConfirmedDecision,
+  verifyAssigneeOwnership,
+  verifyDeadlineGrounding,
+  normalizeExecutiveSummaryClaim,
   VeraError,
   VeraTimeoutError,
   VeraValidationError,
   VeraInsufficientEvidenceError,
   DEEPSEEK_TIMEOUT_MS,
+  type VeraSummaryClaim,
 } from "@/lib/intelligence/vera";
+import { concludeRoomAndSynthesize, updateRoomNotes } from "@/lib/room/room-service";
 
 describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Grounding", () => {
   const originalEnv = process.env;
@@ -117,11 +124,15 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
               message: {
                 content: JSON.stringify({
                   executiveSummary: [
-                    "Emmanuel and Sarah agreed to launch the beta trial next Friday.",
+                    {
+                      claim: "Emmanuel and Sarah agreed to launch the beta trial next Friday.",
+                      evidence: "agreed to launch the beta trial next Friday, November 14th",
+                    },
                   ],
                   keyDecisions: [
                     {
                       decision: "Launch beta trial on November 14th",
+                      status: "confirmed",
                       evidence: "agreed to launch the beta trial next Friday, November 14th",
                     },
                   ],
@@ -130,8 +141,8 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
                       task: "Launch the beta trial",
                       assignee: "Emmanuel Enyi",
                       priority: "high",
-                      deadline: "2026-11-14",
-                      evidence: "Emmanuel and Sarah agreed to launch the beta trial next Friday",
+                      deadline: "next Friday",
+                      evidence: "Emmanuel and Sarah agreed to launch the beta trial next Friday, November 14th",
                     },
                   ],
                   suggestedFollowUp: "Review beta metrics following launch.",
@@ -157,25 +168,136 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
   });
 
   // =========================================================================
-  // 2. Traceable Decisions & Evidence Verification
+  // 2. Executive Summary Evidence Grounding & Traceability
   // =========================================================================
-  describe("Traceable Claims & Evidence Verification", () => {
+  describe("Executive Summary Evidence Grounding", () => {
     const context = {
       hostName: "Emmanuel Enyi",
       guestName: "Sarah Connor",
       sourceEvidence:
         "Emmanuel: We agree to proceed with the Postgres schema migration on Friday.\n" +
         "Sarah: I will review the Drizzle pull request by Thursday afternoon.\n" +
-        "Emmanuel: We could perhaps look into Redis caching next quarter.",
+        "Emmanuel: We had lunch at 12pm and discussed the weather.",
     };
 
-    it("accepts decisions that have verbatim supporting evidence in the source text", () => {
+    it("rejects executive-summary strings without evidence", () => {
+      expect(() =>
+        validateVeraLedger(
+          {
+            executiveSummary: [
+              "Emmanuel and Sarah agreed on Postgres schema migration schedule.",
+            ],
+            keyDecisions: [],
+            actionItems: [],
+          },
+          context
+        )
+      ).toThrowError(VeraValidationError);
+    });
+
+    it("rejects summary objects without evidence", () => {
+      expect(() =>
+        validateVeraLedger(
+          {
+            executiveSummary: [
+              { claim: "Team agreed on migration schedule." }, // Missing evidence
+            ],
+            keyDecisions: [],
+            actionItems: [],
+          },
+          context
+        )
+      ).toThrowError(VeraValidationError);
+    });
+
+    it("rejects summary claims whose evidence does not exist in the source", () => {
+      expect(() =>
+        validateVeraLedger(
+          {
+            executiveSummary: [
+              {
+                claim: "Team agreed on migration schedule.",
+                evidence: "We signed a contract with an external firm for database work.", // Fabricated quote
+              },
+            ],
+            keyDecisions: [],
+            actionItems: [],
+          },
+          context
+        )
+      ).toThrowError(VeraValidationError);
+    });
+
+    it("rejects an unrelated but genuine source excerpt as sufficient proof of a claim", () => {
+      // The excerpt "We had lunch at 12pm" exists in source, but has zero relevance to adopting DynamoDB
+      expect(() =>
+        validateVeraLedger(
+          {
+            executiveSummary: [
+              {
+                claim: "Adopt AWS DynamoDB for the primary data layer",
+                evidence: "We had lunch at 12pm and discussed the weather.",
+              },
+            ],
+            keyDecisions: [],
+            actionItems: [],
+          },
+          context
+        )
+      ).toThrowError(VeraValidationError);
+    });
+
+    it("accepts valid source-grounded summary claims and persists supporting evidence", () => {
       const validated = validateVeraLedger(
         {
-          executiveSummary: ["Team agreed on migration schedule."],
+          executiveSummary: [
+            {
+              claim: "Emmanuel and Sarah agreed to proceed with the Postgres schema migration on Friday.",
+              evidence: "agree to proceed with the Postgres schema migration on Friday",
+            },
+          ],
+          keyDecisions: [],
+          actionItems: [],
+        },
+        context
+      );
+
+      expect(validated.executiveSummary).toHaveLength(1);
+      const firstClaim = validated.executiveSummary[0] as VeraSummaryClaim;
+      expect(firstClaim.claim).toBe(
+        "Emmanuel and Sarah agreed to proceed with the Postgres schema migration on Friday."
+      );
+      expect(firstClaim.evidence).toBe("agree to proceed with the Postgres schema migration on Friday");
+    });
+  });
+
+  // =========================================================================
+  // 3. Traceable Decisions & Proposal Rejection
+  // =========================================================================
+  describe("Traceable Decisions & Proposal Rejection", () => {
+    const context = {
+      hostName: "Emmanuel Enyi",
+      guestName: "Sarah Connor",
+      sourceEvidence:
+        "Emmanuel: We agree to proceed with the Postgres schema migration on Friday.\n" +
+        "Sarah: I will review the Drizzle pull request by Thursday afternoon.\n" +
+        "Emmanuel: We could perhaps look into Redis caching next quarter.\n" +
+        "Sarah: We had coffee at 9am.",
+    };
+
+    it("accepts confirmed decisions with appropriate evidence and status", () => {
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [
+            {
+              claim: "Team agreed on migration schedule.",
+              evidence: "agree to proceed with the Postgres schema migration on Friday",
+            },
+          ],
           keyDecisions: [
             {
               decision: "Proceed with Postgres schema migration on Friday",
+              status: "confirmed",
               evidence: "agree to proceed with the Postgres schema migration on Friday",
             },
           ],
@@ -191,10 +313,16 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
     it("rejects unsupported decisions when evidence is absent from the source material", () => {
       const validated = validateVeraLedger(
         {
-          executiveSummary: ["Meeting concluded."],
+          executiveSummary: [
+            {
+              claim: "Discussed migration.",
+              evidence: "agree to proceed with the Postgres schema migration on Friday",
+            },
+          ],
           keyDecisions: [
             {
               decision: "Adopt Kubernetes cluster immediately",
+              status: "confirmed",
               evidence: "We decided to deploy to Kubernetes cluster immediately", // Fabricated quote
             },
           ],
@@ -203,19 +331,28 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
         context
       );
 
-      // Unsupported decision is discarded
       expect(validated.keyDecisions).toHaveLength(0);
     });
 
-    it("rejects tentative proposals from being classified as decisions", () => {
-      // "We could perhaps look into Redis caching next quarter" is a tentative suggestion, not an agreement
+    it("rejects tentative proposals from being classified as confirmed decisions", () => {
       const validated = validateVeraLedger(
         {
-          executiveSummary: ["Explored caching possibilities."],
+          executiveSummary: [
+            {
+              claim: "Reviewed caching options.",
+              evidence: "We could perhaps look into Redis caching next quarter",
+            },
+          ],
           keyDecisions: [
             {
               decision: "Migrate database to Redis caching",
-              evidence: "We decided to migrate completely to Redis", // Absent
+              status: "proposed",
+              evidence: "We could perhaps look into Redis caching next quarter",
+            },
+            {
+              decision: "Adopt Redis caching next quarter",
+              status: "confirmed", // Falsely claimed confirmed, but evidence shows tentative proposal
+              evidence: "We could perhaps look into Redis caching next quarter",
             },
           ],
           actionItems: [],
@@ -226,10 +363,54 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
       expect(validated.keyDecisions).toHaveLength(0);
     });
 
+    it("rejects decisions when evidence is an unrelated but genuine source excerpt", () => {
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [
+            {
+              claim: "Agreed to proceed with the Postgres schema migration.",
+              evidence: "agree to proceed with the Postgres schema migration on Friday",
+            },
+          ],
+          keyDecisions: [
+            {
+              decision: "Adopt Apache Kafka for streaming data pipelines",
+              status: "confirmed",
+              evidence: "We had coffee at 9am.", // Exists in source, but completely unrelated
+            },
+          ],
+          actionItems: [],
+        },
+        context
+      );
+
+      expect(validated.keyDecisions).toHaveLength(0);
+    });
+  });
+
+  // =========================================================================
+  // 4. Action Items Ownership Grounding & Deadline Grounding
+  // =========================================================================
+  describe("Action Items Ownership & Deadline Grounding", () => {
+    const context = {
+      hostName: "Emmanuel Enyi",
+      guestName: "Sarah Connor",
+      sourceEvidence:
+        "Emmanuel: We agree to proceed with the Postgres schema migration on Friday.\n" +
+        "Sarah: I will review the Drizzle pull request by Thursday afternoon.\n" +
+        "Emmanuel: We talked about Emmanuel's past project, but Sarah will handle the migration.\n" +
+        "Sarah: We also had coffee at 9am.",
+    };
+
     it("accepts action items with valid supporting evidence in the source", () => {
       const validated = validateVeraLedger(
         {
-          executiveSummary: ["Review schedule set."],
+          executiveSummary: [
+            {
+              claim: "Sarah will review the Drizzle pull request.",
+              evidence: "Sarah: I will review the Drizzle pull request by Thursday afternoon.",
+            },
+          ],
           keyDecisions: [],
           actionItems: [
             {
@@ -248,12 +429,48 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
       expect(validated.actionItems[0].task).toBe("Review the Drizzle pull request");
       expect(validated.actionItems[0].assignee).toBe("Sarah Connor");
       expect(validated.actionItems[0].deadline).toBe("Thursday afternoon");
+      expect(validated.actionItems[0].evidence).toBe(
+        "Sarah: I will review the Drizzle pull request by Thursday afternoon."
+      );
+    });
+
+    it("cannot assign an action item solely because assignee's name appears in evidence", () => {
+      // In "We talked about Emmanuel's past project, but Sarah will handle the migration.",
+      // Emmanuel is mentioned, but does NOT own the task.
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [
+            {
+              claim: "Sarah will handle the migration.",
+              evidence: "Sarah will handle the migration.",
+            },
+          ],
+          keyDecisions: [],
+          actionItems: [
+            {
+              task: "Handle the migration",
+              assignee: "Emmanuel Enyi", // Casual mention, not owner
+              priority: "high",
+              evidence: "We talked about Emmanuel's past project, but Sarah will handle the migration.",
+            },
+          ],
+        },
+        context
+      );
+
+      expect(validated.actionItems).toHaveLength(1);
+      expect(validated.actionItems[0].assignee).toBe("Unassigned");
     });
 
     it("rejects action items whose supporting evidence does not exist in the source", () => {
       const validated = validateVeraLedger(
         {
-          executiveSummary: ["Reviewed items."],
+          executiveSummary: [
+            {
+              claim: "Sarah will review the Drizzle pull request.",
+              evidence: "Sarah: I will review the Drizzle pull request by Thursday afternoon.",
+            },
+          ],
           keyDecisions: [],
           actionItems: [
             {
@@ -268,6 +485,81 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
       );
 
       expect(validated.actionItems).toHaveLength(0);
+    });
+
+    it("rejects action items when evidence is an unrelated source excerpt", () => {
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [
+            {
+              claim: "Sarah will review the Drizzle pull request.",
+              evidence: "Sarah: I will review the Drizzle pull request by Thursday afternoon.",
+            },
+          ],
+          keyDecisions: [],
+          actionItems: [
+            {
+              task: "Deploy production cluster to Google Cloud",
+              assignee: "Sarah Connor",
+              priority: "high",
+              evidence: "Sarah: We also had coffee at 9am.", // Exists in source, but unrelated to cluster deployment
+            },
+          ],
+        },
+        context
+      );
+
+      expect(validated.actionItems).toHaveLength(0);
+    });
+
+    it("rejects invented deadlines and preserves source-grounded deadlines", () => {
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [
+            {
+              claim: "Sarah will review the Drizzle pull request.",
+              evidence: "Sarah: I will review the Drizzle pull request by Thursday afternoon.",
+            },
+          ],
+          keyDecisions: [],
+          actionItems: [
+            {
+              task: "Review the Drizzle pull request",
+              assignee: "Sarah Connor",
+              priority: "high",
+              deadline: "2026-11-25T18:00:00Z", // Invented timestamp not in source
+              evidence: "Sarah: I will review the Drizzle pull request by Thursday afternoon.",
+            },
+          ],
+        },
+        context
+      );
+
+      expect(validated.actionItems).toHaveLength(1);
+      // Invented deadline is discarded
+      expect(validated.actionItems[0].deadline).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
+  // 5. Backward Compatibility for Legacy Ledgers
+  // =========================================================================
+  describe("Backward Compatibility for Legacy Ledgers", () => {
+    it("normalizes legacy plain-string summary items without crashing", () => {
+      const legacyItem = "This is a previously saved plain summary string from an older ledger.";
+      const normalized = normalizeExecutiveSummaryClaim(legacyItem);
+      expect(normalized.claim).toBe(legacyItem);
+      expect(normalized.evidence).toBeUndefined();
+    });
+
+    it("normalizes new claim-evidence summary objects accurately", () => {
+      const newItem: VeraSummaryClaim = {
+        claim: "Decided to adopt Neon PostgreSQL.",
+        evidence: "agreed to adopt Neon PostgreSQL",
+      };
+      const normalized = normalizeExecutiveSummaryClaim(newItem);
+      expect(normalized.claim).toBe("Decided to adopt Neon PostgreSQL.");
+      expect(normalized.evidence).toBe("agreed to adopt Neon PostgreSQL");
     });
   });
 
@@ -423,6 +715,258 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
           sharedNotes: validNotes,
         })
       ).rejects.toThrowError(VeraError);
+    });
+  });
+
+  // =========================================================================
+  // 7. Room Service Synthesis Retry & Concurrency Suite
+  // =========================================================================
+  describe("Room Service Synthesis Retry & Concurrency Suite", () => {
+    it("allows a room in insufficient_evidence state to be claimed and retried", async () => {
+      let currentRoom: any = {
+        id: "room-1",
+        bookingId: "b-1",
+        accessToken: "token-retry-123",
+        status: "in_progress",
+        synthesisStatus: "insufficient_evidence",
+        synthesisClaimToken: null as string | null,
+        synthesisClaimedAt: null as Date | null,
+        sharedNotes: "Emmanuel and Sarah agreed to launch next Friday, November 14th.",
+        transcript: null,
+        agenda: [],
+        veraLedger: null,
+        booking: {
+          id: "b-1",
+          status: "confirmed",
+          guestName: "Sarah Connor",
+          host: { id: "u-1", name: "Emmanuel Enyi" },
+          eventType: { title: "Strategy Sync" },
+        },
+      };
+
+      const mockDb: any = {
+        query: {
+          rooms: {
+            findFirst: vi.fn().mockImplementation(async () => currentRoom),
+          },
+        },
+        update: vi.fn().mockReturnValue({
+          set: vi.fn().mockImplementation((setValues) => ({
+            where: vi.fn().mockReturnValue({
+              returning: vi.fn().mockImplementation(async () => {
+                currentRoom = { ...currentRoom, ...setValues };
+                return [currentRoom];
+              }),
+            }),
+          })),
+        }),
+      };
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  executiveSummary: [
+                    {
+                      claim: "Emmanuel and Sarah agreed to launch next Friday.",
+                      evidence: "agreed to launch next Friday, November 14th",
+                    },
+                  ],
+                  keyDecisions: [
+                    {
+                      decision: "Launch next Friday",
+                      status: "confirmed",
+                      evidence: "agreed to launch next Friday, November 14th",
+                    },
+                  ],
+                  actionItems: [],
+                }),
+              },
+            },
+          ],
+        }),
+      } as any);
+
+      process.env.DEEPSEEK_API_KEY = "test-key";
+
+      const result = await concludeRoomAndSynthesize("token-retry-123", mockDb);
+      expect(result.success).toBe(true);
+      expect(result.status).toBe("concluded");
+      expect(result.veraLedger).toBeDefined();
+    });
+
+    it("prevents duplicate synthesis when room is already concluded", async () => {
+      const existingLedger = {
+        executiveSummary: [{ claim: "Already concluded claim", evidence: "source quote" }],
+        actionItems: [],
+        keyDecisions: ["Confirmed decision"],
+      };
+
+      const mockDb: any = {
+        query: {
+          rooms: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: "room-concluded",
+              status: "concluded",
+              synthesisStatus: "completed",
+              veraLedger: existingLedger,
+              booking: {
+                id: "b-concluded",
+                status: "confirmed",
+                host: { id: "u-1", name: "Host" },
+              },
+            }),
+          },
+        },
+      };
+
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+      const result = await concludeRoomAndSynthesize("token-concluded", mockDb);
+      expect(result.success).toBe(true);
+      expect(result.status).toBe("concluded");
+      expect(result.alreadyConcluded).toBe(true);
+      expect(result.veraLedger).toEqual(existingLedger);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects concurrent second worker when lease is actively held", async () => {
+      let isFirstCall = true;
+      const mockDb: any = {
+        query: {
+          rooms: {
+            findFirst: vi.fn().mockImplementation(async () => ({
+              id: "room-active",
+              status: "in_progress",
+              synthesisStatus: isFirstCall ? "idle" : "synthesizing",
+              synthesisClaimToken: isFirstCall ? null : "worker-1-token",
+              synthesisClaimedAt: new Date(), // Active lease
+              booking: {
+                id: "b-active",
+                status: "confirmed",
+                host: { id: "u-1", name: "Host" },
+              },
+            })),
+          },
+        },
+        update: vi.fn().mockImplementation(() => {
+          if (isFirstCall) {
+            isFirstCall = false;
+            return {
+              set: vi.fn().mockReturnValue({
+                where: vi.fn().mockReturnValue({
+                  returning: vi.fn().mockResolvedValue([
+                    {
+                      id: "room-active",
+                      synthesisStatus: "synthesizing",
+                      synthesisClaimToken: "worker-1-token",
+                      sharedNotes: "Valid meeting notes between Emmanuel and Sarah.",
+                      booking: { id: "b-active", guestName: "Sarah", host: { name: "Emmanuel" } },
+                    },
+                  ]),
+                }),
+              }),
+            };
+          } else {
+            // Second worker update where clause matches nothing because lease is active
+            return {
+              set: vi.fn().mockReturnValue({
+                where: vi.fn().mockReturnValue({
+                  returning: vi.fn().mockResolvedValue([]),
+                }),
+              }),
+            };
+          }
+        }),
+      };
+
+      // Worker 2 calls concludeRoomAndSynthesize while Worker 1 holds lease
+      isFirstCall = false; // Worker 2 view
+      const result2 = await concludeRoomAndSynthesize("token-active", mockDb);
+      expect(result2.success).toBe(true);
+      expect(result2.status).toBe("synthesizing");
+      expect(result2.processing).toBe(true);
+    });
+
+    it("fences out a stale worker whose claim was superseded", async () => {
+      const activeClaimToken = "active-token-999";
+      const staleClaimToken = "stale-token-111";
+
+      let writeAttempts = 0;
+      const mockDb: any = {
+        query: {
+          rooms: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: "room-stale",
+              status: "in_progress",
+              synthesisStatus: "synthesizing",
+              synthesisClaimToken: activeClaimToken, // superseded in db
+              booking: { id: "b-stale", status: "confirmed", host: { id: "h-1", name: "Host" } },
+            }),
+          },
+        },
+        update: vi.fn().mockImplementation(() => {
+          writeAttempts++;
+          if (writeAttempts === 1) {
+            // Lease claim succeeds initially
+            return {
+              set: vi.fn().mockReturnValue({
+                where: vi.fn().mockReturnValue({
+                  returning: vi.fn().mockResolvedValue([
+                    {
+                      id: "room-stale",
+                      synthesisStatus: "synthesizing",
+                      synthesisClaimToken: staleClaimToken,
+                      sharedNotes: "Emmanuel and Sarah agreed to proceed with testing.",
+                      booking: { id: "b-stale", guestName: "Sarah", host: { name: "Emmanuel" } },
+                    },
+                  ]),
+                }),
+              }),
+            };
+          } else {
+            // Final commit fails because lease expired / superseded
+            return {
+              set: vi.fn().mockReturnValue({
+                where: vi.fn().mockReturnValue({
+                  returning: vi.fn().mockResolvedValue([]), // 0 rows updated
+                }),
+              }),
+            };
+          }
+        }),
+      };
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  executiveSummary: [
+                    {
+                      claim: "Emmanuel and Sarah agreed to proceed with testing.",
+                      evidence: "agreed to proceed with testing",
+                    },
+                  ],
+                  keyDecisions: [],
+                  actionItems: [],
+                }),
+              },
+            },
+          ],
+        }),
+      } as any);
+
+      process.env.DEEPSEEK_API_KEY = "test-key";
+
+      const result = await concludeRoomAndSynthesize("token-stale", mockDb);
+      expect(result.success).toBe(false);
+      expect(result.status).toBe("stale_worker");
     });
   });
 });
