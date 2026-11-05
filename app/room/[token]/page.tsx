@@ -15,7 +15,8 @@ async function RoomContent({ token }: { token: string }) {
   }
 
   const session = await auth();
-  const isHost = Boolean(session?.user?.id && session.user.id === room.booking.host.id);
+  const hostId = room.meeting?.host?.id || room.booking.host.id;
+  const isHost = Boolean(session?.user?.id && session.user.id === hostId);
 
   return <RoomView initialRoom={room} isHost={isHost} />;
 }

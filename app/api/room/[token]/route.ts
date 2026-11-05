@@ -1,3 +1,4 @@
+import { isMeetingCallOpen } from "@/lib/meetings/meeting-service";
 import { NextRequest, NextResponse } from "next/server";
 import {
   getRoomByAccessToken,
@@ -24,9 +25,15 @@ export async function GET(
       );
     }
 
+    const callAccessStatus =
+      room.type === "group_meeting" && room.meeting
+        ? isMeetingCallOpen(room.meeting)
+        : null;
+
     return NextResponse.json({
       success: true,
       room,
+      callAccessStatus,
     });
   } catch (err) {
     console.error("[Room API] GET error:", err);
@@ -52,7 +59,19 @@ export async function PATCH(
       );
     }
 
-    // Lifecycle check: Cancelled or rejected bookings become non-operational for mutations
+    const hostId = room.meeting?.host?.id || room.booking.host.id;
+
+    // Lifecycle check: Cancelled bookings or meetings become non-operational for mutations
+    if (room.meeting && room.meeting.status === "cancelled") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Cannot modify room for a cancelled meeting. Historical view is read-only.",
+        },
+        { status: 403 }
+      );
+    }
+
     const bookingStatus = room.booking.status;
     if (bookingStatus === "cancelled" || bookingStatus === "rejected") {
       return NextResponse.json(
@@ -79,7 +98,7 @@ export async function PATCH(
 
       // Verify server-side authenticated host ownership
       const session = await auth();
-      if (!session?.user?.id || session.user.id !== room.booking.host.id) {
+      if (!session?.user?.id || session.user.id !== hostId) {
         return NextResponse.json(
           {
             success: false,
@@ -142,7 +161,7 @@ export async function PATCH(
         );
       }
 
-      if (session.user.id !== room.booking.host.id) {
+      if (session.user.id !== hostId) {
         return NextResponse.json(
           {
             success: false,

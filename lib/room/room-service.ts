@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { db as defaultDb } from "@/db";
-import { rooms, bookings, eventTypes, users } from "@/db/schema";
+import { rooms, bookings, eventTypes, users, meetings } from "@/db/schema";
 import { eq, and, or, inArray, ne, lt, isNull } from "drizzle-orm";
 import {
   generateVeraPreMeetingBrief,
@@ -37,6 +37,35 @@ export interface RoomDetails {
   accessToken: string;
   status: "pre_meeting" | "in_progress" | "concluded";
   synthesisStatus?: "idle" | "synthesizing" | "completed" | "failed" | "insufficient_evidence";
+  type?: "booking" | "group_meeting";
+  preparationMaterial?: string | null;
+  meeting?: {
+    id: string;
+    status: string;
+    title: string;
+    description?: string | null;
+    startTime: string;
+    endTime: string;
+    timezone: string;
+    invitationToken: string;
+    preparationMaterial?: string | null;
+    openedEarlyAt?: string | null;
+    host: {
+      id: string;
+      name: string;
+      email?: string;
+      slug: string;
+      avatarUrl?: string | null;
+      timezone: string;
+    };
+    attendees?: Array<{
+      id: string;
+      name: string;
+      email: string;
+      status: "registered" | "joined" | "declined";
+      joinedAt?: string | null;
+    }>;
+  };
   booking: {
     id: string;
     status: string;
@@ -157,6 +186,83 @@ export async function getOrCreateRoomForBooking(
 }
 
 /**
+ * Creates or retrieves the associated Room for a group meeting.
+ * Ensures provisioning idempotency via unique meetingId constraint.
+ */
+export async function getOrCreateRoomForMeeting(
+  meetingId: string,
+  dbClient: RoomDb = defaultDb
+): Promise<typeof rooms.$inferSelect> {
+  const existing = await dbClient.query.rooms.findFirst({
+    where: eq(rooms.meetingId, meetingId),
+  });
+
+  if (existing) {
+    return existing;
+  }
+
+  const meeting = await dbClient.query.meetings.findFirst({
+    where: eq(meetings.id, meetingId),
+    with: {
+      host: true,
+    },
+  });
+
+  if (!meeting) {
+    throw new Error(`Meeting ${meetingId} not found.`);
+  }
+
+  const accessToken = crypto.randomBytes(16).toString("hex");
+
+  const initialAgenda: VeraAgendaItem[] =
+    meeting.agenda && Array.isArray(meeting.agenda) && meeting.agenda.length > 0
+      ? (meeting.agenda as VeraAgendaItem[])
+      : [
+          { id: "1", text: "Welcome & Context", done: false, addedBy: "host" },
+          { id: "2", text: "Discussion & Updates", done: false, addedBy: "host" },
+          { id: "3", text: "Action Items & Next Steps", done: false, addedBy: "host" },
+        ];
+
+  try {
+    const [newRoom] = await dbClient
+      .insert(rooms)
+      .values({
+        bookingId: null,
+        meetingId: meeting.id,
+        accessToken,
+        status: "pre_meeting",
+        agenda: initialAgenda,
+        sharedNotes: "",
+        files: [],
+        veraBrief: {
+          intent: meeting.title,
+          talkingPoints: [meeting.description || "Group discussion"].filter(Boolean),
+          background: meeting.preparationMaterial || "",
+        },
+        veraLedger: null,
+      })
+      .onConflictDoNothing({ target: rooms.meetingId })
+      .returning();
+
+    if (newRoom) {
+      return newRoom;
+    }
+  } catch (err) {
+    console.warn(`[RoomProvisioning] Conflict on insert for meeting ${meetingId}:`, err);
+  }
+
+  const winningRoom = await dbClient.query.rooms.findFirst({
+    where: eq(rooms.meetingId, meetingId),
+  });
+
+  if (!winningRoom) {
+    throw new Error(`Failed to provision or retrieve room for meeting ${meetingId}`);
+  }
+
+  return winningRoom;
+}
+
+/**
  * Retrieves public room state using the secure room access token.
  * Supports explicit database dependency injection for isolated testing.
  */
@@ -175,48 +281,129 @@ export async function getRoomByAccessToken(
           eventType: true,
         },
       },
+      meeting: {
+        with: {
+          host: true,
+          attendees: true,
+        },
+      },
     },
   });
 
-  if (!room || !room.booking || !room.booking.host) {
-    return null;
+  if (!room) return null;
+
+  // 1. Handle Booking-based room
+  if (room.booking && room.booking.host) {
+    const b = room.booking;
+    const h = b.host;
+    const et = b.eventType;
+
+    return {
+      id: room.id,
+      accessToken: room.accessToken,
+      status: (room.status as "pre_meeting" | "in_progress" | "concluded") || "pre_meeting",
+      synthesisStatus: (room.synthesisStatus as "idle" | "synthesizing" | "completed" | "failed" | "insufficient_evidence") || "idle",
+      type: "booking",
+      booking: {
+        id: b.id,
+        status: b.status,
+        startTime: b.startTime.toISOString(),
+        endTime: b.endTime.toISOString(),
+        eventTitle: et?.title || "Strategy Call",
+        durationMins: et?.durationMins || 30,
+        host: {
+          id: h.id,
+          name: h.name,
+          slug: h.slug,
+          avatarUrl: h.avatarUrl,
+          timezone: h.timezone || "UTC",
+        },
+        guest: {
+          name: b.guestName,
+          timezone: b.guestTimezone || "UTC",
+          notes: b.guestNotes,
+        },
+      },
+      agenda: room.agenda || [],
+      sharedNotes: room.sharedNotes || "",
+      files: (room.files as RoomFileItem[]) || [],
+      veraBrief: room.veraBrief,
+      veraLedger: room.veraLedger,
+    };
   }
 
-  const b = room.booking;
-  const h = b.host;
-  const et = b.eventType;
+  // 2. Handle Group Meeting-based room
+  if (room.meeting && room.meeting.host) {
+    const m = room.meeting;
+    const h = m.host;
+    const durationMins = Math.max(
+      15,
+      Math.round((m.endTime.getTime() - m.startTime.getTime()) / (1000 * 60))
+    );
 
-  return {
-    id: room.id,
-    accessToken: room.accessToken,
-    status: (room.status as "pre_meeting" | "in_progress" | "concluded") || "pre_meeting",
-    synthesisStatus: (room.synthesisStatus as "idle" | "synthesizing" | "completed" | "failed" | "insufficient_evidence") || "idle",
-    booking: {
-      id: b.id,
-      status: b.status,
-      startTime: b.startTime.toISOString(),
-      endTime: b.endTime.toISOString(),
-      eventTitle: et?.title || "Strategy Call",
-      durationMins: et?.durationMins || 30,
-      host: {
-        id: h.id,
-        name: h.name,
-        slug: h.slug,
-        avatarUrl: h.avatarUrl,
-        timezone: h.timezone || "UTC",
+    return {
+      id: room.id,
+      accessToken: room.accessToken,
+      status: (room.status as "pre_meeting" | "in_progress" | "concluded") || "pre_meeting",
+      synthesisStatus: (room.synthesisStatus as "idle" | "synthesizing" | "completed" | "failed" | "insufficient_evidence") || "idle",
+      type: "group_meeting",
+      preparationMaterial: m.preparationMaterial,
+      meeting: {
+        id: m.id,
+        status: m.status,
+        title: m.title,
+        description: m.description,
+        startTime: m.startTime.toISOString(),
+        endTime: m.endTime.toISOString(),
+        timezone: m.timezone || "UTC",
+        invitationToken: m.invitationToken,
+        preparationMaterial: m.preparationMaterial,
+        openedEarlyAt: m.openedEarlyAt?.toISOString() || null,
+        host: {
+          id: h.id,
+          name: h.name,
+          slug: h.slug,
+          avatarUrl: h.avatarUrl,
+          timezone: h.timezone || "UTC",
+        },
+        attendees: m.attendees?.map((a) => ({
+          id: a.id,
+          name: a.name,
+          email: a.email,
+          status: a.status as "registered" | "joined" | "declined",
+          joinedAt: a.joinedAt?.toISOString() || null,
+        })),
       },
-      guest: {
-        name: b.guestName,
-        timezone: b.guestTimezone || "UTC",
-        notes: b.guestNotes,
+      // Backward-compatible booking shim so existing host/title access continues working
+      booking: {
+        id: m.id,
+        status: m.status === "scheduled" ? "confirmed" : m.status,
+        startTime: m.startTime.toISOString(),
+        endTime: m.endTime.toISOString(),
+        eventTitle: m.title,
+        durationMins,
+        host: {
+          id: h.id,
+          name: h.name,
+          slug: h.slug,
+          avatarUrl: h.avatarUrl,
+          timezone: h.timezone || "UTC",
+        },
+        guest: {
+          name: "Group Meeting Attendees",
+          timezone: m.timezone || "UTC",
+          notes: m.description,
+        },
       },
-    },
-    agenda: room.agenda || [],
-    sharedNotes: room.sharedNotes || "",
-    files: (room.files as RoomFileItem[]) || [],
-    veraBrief: room.veraBrief,
-    veraLedger: room.veraLedger,
-  };
+      agenda: room.agenda || [],
+      sharedNotes: room.sharedNotes || "",
+      files: (room.files as RoomFileItem[]) || [],
+      veraBrief: room.veraBrief,
+      veraLedger: room.veraLedger,
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -322,10 +509,15 @@ export async function concludeRoomAndSynthesize(
           eventType: true,
         },
       },
+      meeting: {
+        with: {
+          host: true,
+        },
+      },
     },
   });
 
-  if (!existing || !existing.booking) {
+  if (!existing || (!existing.booking && !existing.meeting)) {
     return { success: false, status: "not_found", error: "Room not found." };
   }
 
@@ -418,11 +610,16 @@ export async function concludeRoomAndSynthesize(
 
   // 4. This request holds the exclusive lease. Execute Vera synthesis.
   const b = existing.booking;
+  const m = existing.meeting;
+  const eventTitle = m?.title || b?.eventType?.title || "Meeting";
+  const hostName = m?.host?.name || b?.host?.name || "Host";
+  const guestName = m ? "Meeting Attendees" : b?.guestName || "Guest";
+
   try {
     const ledger = await generateVeraLedger({
-      eventTitle: b.eventType?.title || "Meeting",
-      hostName: b.host?.name || "Host",
-      guestName: b.guestName,
+      eventTitle,
+      hostName,
+      guestName,
       agenda: (claimedRoom.agenda as VeraAgendaItem[]) || [],
       sharedNotes: claimedRoom.sharedNotes || undefined,
       transcript: claimedRoom.transcript || undefined,
@@ -529,14 +726,20 @@ export async function approveRoomLedger(
           host: true,
         },
       },
+      meeting: {
+        with: {
+          host: true,
+        },
+      },
     },
   });
 
-  if (!room || !room.booking || !room.booking.host) {
+  const hostUser = room?.booking?.host || room?.meeting?.host;
+  if (!room || !hostUser) {
     return { success: false, status: "not_found", error: "Room not found." };
   }
 
-  if (room.booking.host.id !== hostUserId) {
+  if (hostUser.id !== hostUserId) {
     return {
       success: false,
       status: "forbidden",

@@ -183,13 +183,67 @@ export const contacts = pgTable(
   ]
 );
 
+export const meetings = pgTable(
+  "meetings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    hostId: uuid("host_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description"),
+    startTime: timestamp("start_time", { withTimezone: true }).notNull(),
+    endTime: timestamp("end_time", { withTimezone: true }).notNull(),
+    timezone: text("timezone").notNull().default("UTC"),
+    status: text("status").notNull().default("scheduled"), // scheduled, in_progress, concluded, cancelled
+    invitationToken: text("invitation_token").notNull().unique(),
+    invitationTokenHash: text("invitation_token_hash").notNull().unique(),
+    preparationMaterial: text("preparation_material"),
+    agenda: jsonb("agenda").$type<Array<{ id: string; text: string; done: boolean; addedBy: "host" | "guest" | "vera" }>>().default([]),
+    openedEarlyAt: timestamp("opened_early_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("meetings_host_idx").on(table.hostId),
+    index("meetings_status_idx").on(table.status),
+    index("meetings_start_time_idx").on(table.startTime),
+    uniqueIndex("meetings_invitation_token_idx").on(table.invitationToken),
+    uniqueIndex("meetings_invitation_token_hash_idx").on(table.invitationTokenHash),
+  ]
+);
+
+export const meetingAttendees = pgTable(
+  "meeting_attendees",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    meetingId: uuid("meeting_id")
+      .notNull()
+      .references(() => meetings.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    emailNormalized: text("email_normalized").notNull(),
+    status: text("status").notNull().default("registered"), // registered, joined, declined
+    sessionToken: text("session_token").notNull().unique(),
+    joinedAt: timestamp("joined_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("attendees_meeting_idx").on(table.meetingId),
+    uniqueIndex("attendees_meeting_email_idx").on(table.meetingId, table.emailNormalized),
+    uniqueIndex("attendees_session_token_idx").on(table.sessionToken),
+  ]
+);
+
 export const rooms = pgTable(
   "rooms",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     bookingId: uuid("booking_id")
-      .notNull()
       .references(() => bookings.id, { onDelete: "cascade" }),
+    meetingId: uuid("meeting_id")
+      .references(() => meetings.id, { onDelete: "cascade" }),
     accessToken: text("access_token").notNull().unique(),
     status: text("status").notNull().default("pre_meeting"), // pre_meeting, in_progress, concluded
     agenda: jsonb("agenda").$type<Array<{ id: string; text: string; done: boolean; addedBy: "host" | "guest" | "vera" }>>().default([]),
@@ -236,6 +290,7 @@ export const rooms = pgTable(
   },
   (table) => [
     uniqueIndex("rooms_booking_idx").on(table.bookingId),
+    uniqueIndex("rooms_meeting_idx").on(table.meetingId),
     uniqueIndex("rooms_access_token_idx").on(table.accessToken),
   ]
 );
@@ -261,6 +316,23 @@ export const usersRelations = relations(users, ({ many }) => ({
   availabilityOverrides: many(availabilityOverrides),
   bookings: many(bookings),
   contacts: many(contacts),
+  meetings: many(meetings),
+}));
+
+export const meetingsRelations = relations(meetings, ({ one, many }) => ({
+  host: one(users, {
+    fields: [meetings.hostId],
+    references: [users.id],
+  }),
+  room: one(rooms),
+  attendees: many(meetingAttendees),
+}));
+
+export const meetingAttendeesRelations = relations(meetingAttendees, ({ one }) => ({
+  meeting: one(meetings, {
+    fields: [meetingAttendees.meetingId],
+    references: [meetings.id],
+  }),
 }));
 
 export const eventTypesRelations = relations(eventTypes, ({ one, many }) => ({
@@ -309,6 +381,10 @@ export const roomsRelations = relations(rooms, ({ one }) => ({
     fields: [rooms.bookingId],
     references: [bookings.id],
   }),
+  meeting: one(meetings, {
+    fields: [rooms.meetingId],
+    references: [meetings.id],
+  }),
 }));
 
 // TYPE EXPORTS
@@ -326,6 +402,12 @@ export type NewAvailabilityOverride = typeof availabilityOverrides.$inferInsert;
 
 export type Booking = typeof bookings.$inferSelect;
 export type NewBooking = typeof bookings.$inferInsert;
+
+export type Meeting = typeof meetings.$inferSelect;
+export type NewMeeting = typeof meetings.$inferInsert;
+
+export type MeetingAttendee = typeof meetingAttendees.$inferSelect;
+export type NewMeetingAttendee = typeof meetingAttendees.$inferInsert;
 
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;

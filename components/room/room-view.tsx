@@ -53,7 +53,9 @@ export interface RoomViewProps {
 
 export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const [room, setRoom] = useState<RoomDetails>(initialRoom);
-  const [activeTab, setActiveTab] = useState<"agenda" | "notes" | "files" | "summary">("agenda");
+  const [activeTab, setActiveTab] = useState<"preparation" | "agenda" | "notes" | "files" | "summary">(
+    initialRoom.preparationMaterial ? "preparation" : "agenda"
+  );
   const [mobileMode, setMobileMode] = useState<"call" | "canvas">("call");
 
   // Call & Media State
@@ -122,6 +124,32 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
 
   const [isApprovingLedger, setIsApprovingLedger] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [earlyAccessState, setEarlyAccessState] = useState<{
+    opensAt: string | null;
+    scheduledStartTime: string | null;
+    isOpen: boolean;
+  } | null>(null);
+  const [isOpeningEarly, setIsOpeningEarly] = useState(false);
+  const [roomMeeting, setRoomMeeting] = useState(room.meeting);
+
+  const handleHostOpenEarly = async () => {
+    if (!isHost || isOpeningEarly) return;
+    setIsOpeningEarly(true);
+    try {
+      const res = await fetch(`/api/room/${room.accessToken}/open-early`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setRoomMeeting((prev) => (prev ? { ...prev, openedEarlyAt: data.openedEarlyAt } : prev));
+        setEarlyAccessState(null);
+      }
+    } catch (err) {
+      console.error("[Room] Error opening room early:", err);
+    } finally {
+      setIsOpeningEarly(false);
+    }
+  };
 
   const handleApproveLedger = async () => {
     if (!isHost || isApprovingLedger) return;
@@ -205,10 +233,35 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
     };
   }, [synthesisState, room.accessToken]);
 
+  // When early access is pending, poll room status so entry automatically activates
+  useEffect(() => {
+    if (!earlyAccessState || earlyAccessState.isOpen) return;
+
+    let active = true;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/room/${room.accessToken}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!active) return;
+        if (data.callAccessStatus?.isOpen || data.room?.meeting?.openedEarlyAt) {
+          setEarlyAccessState(null);
+          setIsCallActive(true);
+        }
+      } catch {}
+    }, 4000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [earlyAccessState, room.accessToken]);
+
   // Scroll fades for internal scroll regions (BoardUI compliance)
   const summaryFade = useScrollFade();
   const agendaFade = useScrollFade();
   const filesFade = useScrollFade();
+  const prepFade = useScrollFade();
 
   // =========================================================================
   // LiveKit WebRTC Session Lifecycle & Real-Time Sync
@@ -310,6 +363,16 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
           method: "POST",
         });
         if (!res.ok) {
+          if (res.status === 425) {
+            const earlyData = await res.json().catch(() => ({}));
+            setEarlyAccessState({
+              opensAt: earlyData.opensAt || null,
+              scheduledStartTime: earlyData.scheduledStartTime || null,
+              isOpen: false,
+            });
+            setConnectionStatus("disconnected");
+            return;
+          }
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || "Could not acquire room connection token");
         }
@@ -723,23 +786,25 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const isDisplayingStageFile = Boolean(activeStageFile);
 
   return (
-    <div className="h-screen max-h-screen w-screen overflow-hidden flex flex-col bg-background-full text-text-primary selection:bg-accent-500/20">
+    <div className="h-[100dvh] max-h-[100dvh] w-full max-w-full overflow-hidden flex flex-col bg-background-full text-text-primary selection:bg-accent-500/20 pb-[env(safe-area-inset-bottom)]">
       {/* Hidden audio element for remote audio track */}
       <audio ref={remoteAudioRef} autoPlay playsInline />
 
       {/* ========================================================================= */}
       {/* 1. ROOM HEADER BAR */}
       {/* ========================================================================= */}
-      <header className="h-14 px-4 sm:px-6 border-b border-border-button-default bg-background-primary-default/80 backdrop-blur-md flex items-center justify-between shrink-0 z-30">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="h-14 px-3 sm:px-6 border-b border-border-button-default bg-background-primary-default/80 backdrop-blur-md flex items-center justify-between shrink-0 z-30">
+        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
           <MorrowLogo size={22} />
           <div className="h-4 w-px bg-border-button-default shrink-0" />
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-body-medium font-semibold text-text-primary truncate">
-              {room.booking.eventTitle}
+            <span className="text-body-2-medium sm:text-body-medium font-semibold text-text-primary truncate">
+              {room.meeting?.title || room.booking.eventTitle}
             </span>
             <span className="text-caption-2-medium text-text-tertiary hidden sm:inline truncate">
-              ({room.booking.host.name} and {room.booking.guest.name})
+              {room.meeting
+                ? `(Organised by ${room.meeting.host.name})`
+                : `(${room.booking.host.name} and ${room.booking.guest.name})`}
             </span>
           </div>
         </div>
@@ -747,7 +812,18 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         {/* Participant Strip & Vera Identity */}
         <div className="hidden md:flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-secondary-default text-caption-1-semibold">
-            <Avatar size="xs" initials={hostInitials} color="blue" />
+            {isHost && room.type === "group_meeting" && roomMeeting && !roomMeeting.openedEarlyAt && (
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={handleHostOpenEarly}
+              disabled={isOpeningEarly}
+              className="mr-2"
+            >
+              {isOpeningEarly ? "Opening..." : "Open Call Early"}
+            </Button>
+          )}
+          <Avatar size="xs" initials={hostInitials} color="blue" />
             <span className="text-text-secondary">{room.booking.host.name} {isHost ? "(Host, You)" : "(Host)"}</span>
           </div>
 
@@ -796,8 +872,8 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         {/* ======================================================================= */}
         <section
           className={cx(
-            "h-full flex flex-col relative rounded-3xl border border-border-button-default bg-background-tertiary-default overflow-hidden shadow-sm transition-all duration-300",
-            mobileMode === "canvas" ? "hidden lg:flex" : "flex",
+            "flex flex-col relative rounded-3xl border border-border-button-default bg-background-tertiary-default overflow-hidden shadow-sm transition-all duration-300",
+            mobileMode === "canvas" ? "h-48 sm:h-64 lg:h-full shrink-0 flex" : "h-full flex-1 min-w-0 flex",
             isFocusMode ? "w-full flex-1" : "flex-1 min-w-0"
           )}
         >
@@ -1253,12 +1329,32 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                     <RiShareForwardBoxLine className="size-5" />
                   </button>
 
+                  {/* In-Room Preparation / Context Button */}
+                  {room.preparationMaterial && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab("preparation");
+                        setMobileMode("canvas");
+                      }}
+                      aria-label="View meeting preparation"
+                      title="Preparation Minutes"
+                      className="size-10 sm:size-11 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer hover:bg-background-secondary-hover"
+                    >
+                      <RiBookOpenLine className="size-5 text-accent-600" />
+                    </button>
+                  )}
+
                   {/* Mobile View Toggle */}
                   <button
                     type="button"
-                    onClick={() => setMobileMode("canvas")}
+                    onClick={() => {
+                      if (activeTab === "preparation" && !room.preparationMaterial) setActiveTab("agenda");
+                      setMobileMode("canvas");
+                    }}
                     aria-label="Open collaborative canvas"
-                    className="lg:hidden size-10 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer"
+                    title="Agenda & Notes"
+                    className="lg:hidden size-10 sm:size-11 rounded-full border border-border-button-default bg-background-secondary-default text-text-primary flex items-center justify-center cursor-pointer hover:bg-background-secondary-hover"
                   >
                     <RiFileListLine className="size-5" />
                   </button>
@@ -1306,11 +1402,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         <section
           className={cx(
             "w-full lg:w-[400px] xl:w-[440px] shrink-0 h-full flex flex-col rounded-3xl border border-border-button-default bg-background-primary-default overflow-hidden shadow-sm min-h-0 transition-all duration-300",
-            mobileMode === "call" ? "hidden lg:flex" : "flex",
+            mobileMode === "call" ? "hidden lg:flex" : "flex flex-1 min-h-0",
             isFocusMode ? "hidden" : "flex"
           )}
         >
-          {/* Canvas Navigation Tabs — Rock-solid 4-column Segmented Control */}
+          {/* Canvas Navigation Tabs */}
           <div className="p-3 border-b border-border-button-default bg-background-secondary-default/30 shrink-0">
             {/* Mobile Back-to-Stage Header (only visible on mobile screens) */}
             <div className="lg:hidden flex items-center justify-between pb-2 mb-2 border-b border-border-button-default">
@@ -1320,11 +1416,34 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                 onClick={() => setMobileMode("call")}
                 className="text-caption-1-semibold text-accent-600 hover:text-accent-500 flex items-center gap-1 cursor-pointer"
               >
-                Back to Stage →
+                Back to Full Stage →
               </button>
             </div>
 
-            <div className="w-full grid grid-cols-4 p-1 rounded-xl bg-background-secondary-default border border-border-button-default gap-0.5">
+            <div
+              className={cx(
+                "w-full grid p-1 rounded-xl bg-background-secondary-default border border-border-button-default gap-0.5",
+                room.preparationMaterial ? "grid-cols-5" : "grid-cols-4"
+              )}
+            >
+              {/* Preparation Tab (when available) */}
+              {room.preparationMaterial && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("preparation")}
+                  className={cx(
+                    "py-1.5 px-1 rounded-lg text-caption-1-semibold transition-all cursor-pointer flex items-center justify-center gap-1 min-w-0",
+                    activeTab === "preparation"
+                      ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
+                      : "text-text-secondary hover:text-text-primary"
+                  )}
+                  title="Meeting Context & Minutes"
+                >
+                  <RiBookOpenLine className="size-3.5 shrink-0" />
+                  <span className="truncate">Prep</span>
+                </button>
+              )}
+
               {/* Agenda Tab */}
               <button
                 type="button"
@@ -1402,6 +1521,35 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
               </button>
             </div>
           </div>
+
+          {/* ===================================================================== */}
+          {/* TAB: PREPARATION & CONTEXT VIEW */}
+          {/* ===================================================================== */}
+          {activeTab === "preparation" && (
+            <div className="relative min-h-0 flex-1 h-full overflow-hidden">
+              <div
+                onScroll={prepFade.onScroll}
+                className="h-full overflow-y-auto p-4 sm:p-5 flex flex-col gap-4"
+              >
+                <div className="p-3.5 rounded-2xl bg-background-secondary-default/50 border border-border-button-default">
+                  <div className="flex items-center gap-2 mb-1 text-text-primary font-semibold text-caption-1-semibold">
+                    <RiBookOpenLine className="size-4 text-accent-600 shrink-0" />
+                    <span>Previous Meeting Minutes & Preparation</span>
+                  </div>
+                  <p className="text-caption-2-medium text-text-secondary leading-normal">
+                    Cleaned official preparation records supplied by the organiser. Read-only context for participants.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-background-secondary-default border border-border-button-default">
+                  <div className="prose prose-sm dark:prose-invert max-w-none text-body-2-medium text-text-secondary leading-relaxed whitespace-pre-wrap font-sans">
+                    {room.preparationMaterial || "No previous meeting preparation material was provided."}
+                  </div>
+                </div>
+              </div>
+              <ScrollFade progress={prepFade.progress} surfaceClassName="from-background-primary-default" />
+            </div>
+          )}
 
           {/* ===================================================================== */}
           {/* TAB 1: AGENDA & INTENT VIEW */}
