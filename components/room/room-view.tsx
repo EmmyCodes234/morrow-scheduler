@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Avatar } from "@/components/base/avatar/avatar";
 import { Badge } from "@/components/base/badges/badge";
 import { Chip } from "@/components/base/badges/chip";
@@ -67,10 +67,12 @@ export interface GroupParticipant {
 
 function VideoTrackView({
   track,
+  stream,
   isLocal = false,
   className,
 }: {
   track?: any;
+  stream?: MediaStream | null;
   isLocal?: boolean;
   className?: string;
 }) {
@@ -78,22 +80,31 @@ function VideoTrackView({
 
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !track) return;
+    if (!el) return;
 
-    try {
-      track.attach(el);
-    } catch (err) {
-      console.warn("[VideoTrackView] attach notice:", err);
-    }
-
-    return () => {
+    if (track && typeof track.attach === "function") {
       try {
-        track.detach(el);
-      } catch (e) {
-        // Safe detach
+        track.attach(el);
+      } catch (err) {
+        console.warn("[VideoTrackView] attach notice:", err);
       }
-    };
-  }, [track]);
+      return () => {
+        try {
+          track.detach(el);
+        } catch (e) {
+          // Safe detach
+        }
+      };
+    } else if (stream) {
+      el.srcObject = stream;
+      el.play().catch((err) => {
+        console.warn("[VideoTrackView] stream play notice:", err);
+      });
+      return () => {
+        if (el) el.srcObject = null;
+      };
+    }
+  }, [track, stream]);
 
   return (
     <video
@@ -101,8 +112,166 @@ function VideoTrackView({
       autoPlay
       playsInline
       muted={isLocal}
+      onLoadedMetadata={(e) => {
+        (e.target as HTMLVideoElement).play().catch(() => {});
+      }}
       className={className}
     />
+  );
+}
+
+function MicVolumeMeter({
+  stream,
+  isMuted,
+  className,
+}: {
+  stream?: MediaStream | null;
+  isMuted?: boolean;
+  className?: string;
+}) {
+  const [volume, setVolume] = useState(0); // 0 to 100
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+  useEffect(() => {
+    if (!stream || isMuted) {
+      setVolume(0);
+      setIsSpeaking(false);
+      return;
+    }
+
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length === 0 || !audioTracks[0].enabled) {
+      setVolume(0);
+      setIsSpeaking(false);
+      return;
+    }
+
+    let audioCtx: AudioContext | null = null;
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      audioCtx = new AudioContextClass();
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume().catch(() => {});
+      }
+      audioContextRef.current = audioCtx;
+
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.4;
+      analyserRef.current = analyser;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      sourceRef.current = source;
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      const checkVolume = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(dataArray);
+
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / dataArray.length;
+        // Normalize average volume into 0-100 range
+        const normalized = Math.min(100, Math.round((avg / 48) * 100));
+
+        setVolume(normalized);
+        setIsSpeaking(normalized > 10);
+
+        animFrameRef.current = requestAnimationFrame(checkVolume);
+      };
+
+      animFrameRef.current = requestAnimationFrame(checkVolume);
+    } catch (err) {
+      console.warn("[MicVolumeMeter] Web Audio setup notice:", err);
+    }
+
+    return () => {
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
+      if (sourceRef.current) {
+        try {
+          sourceRef.current.disconnect();
+        } catch {}
+        sourceRef.current = null;
+      }
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        try {
+          audioContextRef.current.close().catch(() => {});
+        } catch {}
+        audioContextRef.current = null;
+      }
+    };
+  }, [stream, isMuted]);
+
+  return (
+    <div className={cx("flex flex-col gap-2 w-full", className)}>
+      <div className="flex items-center justify-between text-caption-2-medium">
+        <span className="flex items-center gap-1.5 text-text-secondary">
+          {isMuted ? (
+            <RiMicOffLine className="size-3.5 text-status-danger-text shrink-0" />
+          ) : (
+            <RiMicLine className={cx("size-3.5 shrink-0", isSpeaking ? "text-status-lime-text" : "text-text-secondary")} />
+          )}
+          <span>Microphone:</span>
+        </span>
+        <span
+          className={cx(
+            "font-medium",
+            isMuted
+              ? "text-status-danger-text"
+              : isSpeaking
+              ? "text-status-lime-text font-semibold flex items-center gap-1"
+              : "text-text-tertiary"
+          )}
+        >
+          {isMuted ? (
+            "Muted"
+          ) : isSpeaking ? (
+            <>
+              <span className="size-1.5 rounded-full bg-status-lime-text animate-pulse" />
+              Voice Detected
+            </>
+          ) : (
+            "Speak to test"
+          )}
+        </span>
+      </div>
+
+      {/* Multi-segment Equalizer / Level Meter */}
+      <div className="flex items-center gap-1 w-full h-2.5 px-1.5 py-0.5 rounded-full bg-background-secondary-default border border-border-button-default">
+        {Array.from({ length: 16 }).map((_, idx) => {
+          const segmentThreshold = ((idx + 1) / 16) * 100;
+          const isLit = !isMuted && volume >= segmentThreshold - 5;
+          return (
+            <div
+              key={idx}
+              className={cx(
+                "flex-1 h-full rounded-full transition-all duration-75",
+                isLit
+                  ? idx >= 13
+                    ? "bg-status-danger-text"
+                    : idx >= 10
+                    ? "bg-accent-500"
+                    : "bg-status-lime-text"
+                  : "bg-background-tertiary-default opacity-30"
+              )}
+            />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -111,6 +280,7 @@ function ParticipantTile({
   isLocal = false,
   hasVideo,
   videoTrack,
+  localStream,
   isSpeaking,
   isMuted,
 }: {
@@ -118,6 +288,7 @@ function ParticipantTile({
   isLocal?: boolean;
   hasVideo: boolean;
   videoTrack?: any;
+  localStream?: MediaStream | null;
   isSpeaking?: boolean;
   isMuted?: boolean;
 }) {
@@ -130,16 +301,19 @@ function ParticipantTile({
       .slice(0, 2)
       .toUpperCase() || "U";
 
+  const hasActiveVisual = hasVideo && (Boolean(videoTrack) || (isLocal && Boolean(localStream)));
+
   return (
     <div
       className={cx(
-        "relative rounded-2xl overflow-hidden bg-background-primary-default border border-border-button-default flex items-center justify-center transition-all duration-200 aspect-video sm:aspect-auto h-full min-h-[140px] sm:min-h-[180px] shadow-sm",
+        "relative rounded-2xl overflow-hidden bg-background-primary-default border border-border-button-default flex items-center justify-center transition-all duration-200 aspect-video sm:aspect-auto h-full min-h-[100px] sm:min-h-[180px] shadow-sm",
         isSpeaking ? "ring-2 ring-accent-500 shadow-md" : ""
       )}
     >
-      {hasVideo && videoTrack ? (
+      {hasActiveVisual ? (
         <VideoTrackView
           track={videoTrack}
+          stream={isLocal && !videoTrack ? localStream : undefined}
           isLocal={isLocal}
           className={cx(
             "w-full h-full object-cover",
@@ -153,7 +327,13 @@ function ParticipantTile({
             {name}
           </span>
           <span className="text-caption-2-medium text-text-tertiary">
-            {isLocal ? (hasVideo ? "Connecting camera..." : "Camera Off") : (hasVideo ? "Connecting video..." : "Camera Off")}
+            {isLocal
+              ? hasVideo
+                ? "Starting camera..."
+                : "Camera Off"
+              : hasVideo
+              ? "Connecting video..."
+              : "Camera Off"}
           </span>
         </div>
       )}
@@ -183,6 +363,10 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const [isCamOff, setIsCamOff] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [localVideoTrack, setLocalVideoTrack] = useState<any | null>(null);
+  const [localMediaStream, setLocalMediaStream] = useState<MediaStream | null>(null);
+  const [mediaPermissionState, setMediaPermissionState] = useState<"pending" | "granted" | "denied" | "not_supported">("pending");
+  const [mediaErrorMessage, setMediaErrorMessage] = useState<string | null>(null);
+  const [isRequestingMedia, setIsRequestingMedia] = useState(false);
   const [screenSharePresenter, setScreenSharePresenter] = useState<{ name: string; isLocal: boolean } | null>(null);
   const [isCallActive, setIsCallActive] = useState(room.status === "in_progress");
   const [connectionStatus, setConnectionStatus] = useState<"idle" | "connecting" | "connected" | "disconnected">("idle");
@@ -749,10 +933,70 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
     }
   };
 
+  // Client-side local media preview & device testing for Green Room
+  const requestLocalMedia = useCallback(async () => {
+    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setMediaPermissionState("not_supported");
+      setMediaErrorMessage("Your browser does not support camera or microphone preview.");
+      return;
+    }
+
+    setIsRequestingMedia(true);
+    setMediaPermissionState("pending");
+    setMediaErrorMessage(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      setLocalMediaStream(stream);
+      setMediaPermissionState("granted");
+      setMediaErrorMessage(null);
+
+      stream.getVideoTracks().forEach((track) => {
+        track.enabled = !isCamOff;
+      });
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = !isMicMuted;
+      });
+    } catch (err: any) {
+      console.warn("[RoomView] Local media preview notice:", err);
+      setMediaPermissionState("denied");
+      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+        setMediaErrorMessage("Camera or microphone permission was blocked. Please click the lock or camera icon in your address bar to allow access, then click Retry.");
+      } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+        setMediaErrorMessage("No camera or microphone was found on this device.");
+      } else {
+        setMediaErrorMessage("Could not access camera preview. Please check device permissions and retry.");
+      }
+    } finally {
+      setIsRequestingMedia(false);
+    }
+  }, [isCamOff, isMicMuted]);
+
+  useEffect(() => {
+    requestLocalMedia();
+  }, [requestLocalMedia]);
+
   // Toggle Microphone
   const toggleMic = async () => {
     const nextState = !isMicMuted;
     setIsMicMuted(nextState);
+    if (localMediaStream) {
+      localMediaStream.getAudioTracks().forEach((track) => {
+        track.enabled = !nextState;
+      });
+    }
     if (lkRoomRef.current) {
       try {
         await lkRoomRef.current.localParticipant.setMicrophoneEnabled(!nextState);
@@ -766,6 +1010,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const toggleCam = async () => {
     const nextState = !isCamOff;
     setIsCamOff(nextState);
+    if (localMediaStream) {
+      localMediaStream.getVideoTracks().forEach((track) => {
+        track.enabled = !nextState;
+      });
+    }
     if (lkRoomRef.current) {
       try {
         const camPub = await lkRoomRef.current.localParticipant.setCameraEnabled(!nextState);
@@ -775,6 +1024,13 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
       } catch (err) {
         console.warn("[Video] Toggle notice:", err);
       }
+    }
+  };
+
+  const handleStartCall = async () => {
+    setIsCallActive(true);
+    if (isHost && room.type === "group_meeting" && (!room.meeting?.openedEarlyAt && !roomMeeting?.openedEarlyAt)) {
+      handleHostOpenEarly().catch(() => {});
     }
   };
 
@@ -1087,10 +1343,12 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const localParticipantDisplayName = isHost
     ? (room.meeting?.host?.name || room.booking?.host?.name || "Host")
     : (room.booking?.guest?.name || "You");
-  const isBookingCancelled = room.booking.status === "cancelled";
+  const isBookingCancelled = room.booking.status === "cancelled" || (room.type === "group_meeting" && room.meeting?.status === "cancelled");
   const isBookingRejected = room.booking.status === "rejected";
   const isCancelledOrRejected = isBookingCancelled || isBookingRejected;
-  const isBookingEligible = room.booking.status === "confirmed";
+  const isBookingEligible = room.type === "group_meeting"
+    ? room.status !== "concluded" && room.meeting?.status !== "cancelled"
+    : room.booking.status === "confirmed";
 
   const copyRoomLink = () => {
     if (room.type === "group_meeting" && (room.meeting?.invitationToken || roomMeeting?.invitationToken)) {
@@ -1268,7 +1526,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             isFocusMode
               ? "w-full flex-1 h-full"
               : mobileMode === "canvas"
-              ? "h-48 sm:h-64 lg:h-full shrink-0 lg:flex-1 lg:min-w-0"
+              ? "h-44 sm:h-64 lg:h-full shrink-0 lg:flex-1 lg:min-w-0"
               : "h-full flex-1 min-w-0"
           )}
         >
@@ -1459,7 +1717,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                         variant="primary"
                         size="xs"
                         leadingIcon={RiVideoOnLine}
-                        onClick={() => setIsCallActive(true)}
+                        onClick={handleStartCall}
                         disabled={!isBookingEligible}
                       >
                         Start Call
@@ -1522,8 +1780,9 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                   <ParticipantTile
                     name={localParticipantDisplayName}
                     isLocal={true}
-                    hasVideo={!isCamOff && Boolean(localVideoTrack)}
+                    hasVideo={!isCamOff && Boolean(localVideoTrack || localMediaStream)}
                     videoTrack={localVideoTrack}
+                    localStream={localMediaStream}
                     isMuted={isMicMuted}
                   />
 
@@ -1561,16 +1820,20 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             {/* CASE 4: HOST CAMERA STREAMING (HERO PREVIEW BEFORE GUEST ARRIVAL) */}
             {/* ----------------------------------------------------------------- */}
             {!isGroupMeeting && isCallActive && !isDisplayingStageFile && !hasActivePresentation && !remoteHasVideo && !isCamOff && (
-              localVideoTrack ? (
+              (localVideoTrack || localMediaStream) ? (
                 <VideoTrackView
                   track={localVideoTrack}
+                  stream={!localVideoTrack ? localMediaStream : undefined}
                   isLocal={true}
                   className="w-full h-full object-cover scale-x-[-1]"
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center gap-2 p-6">
                   <Avatar size="lg" initials={hostInitials} color="blue" />
-                  <span className="text-body-2-medium text-text-secondary">Starting camera...</span>
+                  <span className="text-body-2-medium text-text-secondary flex items-center gap-1.5">
+                    <RiLoader4Line className="size-4 animate-spin text-accent-500" />
+                    Starting camera...
+                  </span>
                 </div>
               )
             )}
@@ -1644,17 +1907,56 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                 <div className="w-full max-w-sm sm:max-w-md flex flex-col items-center gap-3.5 sm:gap-4 text-center my-auto">
                   {/* Camera & Audio Preview Window */}
                   <div className="relative w-full aspect-video rounded-3xl overflow-hidden border border-border-button-default bg-background-primary-default shadow-md flex items-center justify-center">
-                    {!isCamOff && localVideoTrack ? (
+                    {!isCamOff && (localVideoTrack || localMediaStream) ? (
                       <VideoTrackView
                         track={localVideoTrack}
+                        stream={!localVideoTrack ? localMediaStream : undefined}
                         isLocal={true}
                         className="w-full h-full object-cover scale-x-[-1]"
                       />
-                    ) : (
+                    ) : isCamOff ? (
                       <div className="flex flex-col items-center justify-center gap-2 p-6">
                         <Avatar size="lg" initials={isHost ? hostInitials : guestInitials} color={isHost ? "blue" : "lime"} />
                         <span className="text-body-2-medium text-text-secondary">
-                          {isCamOff ? "Camera is turned off" : "Starting camera preview..."}
+                          Camera is turned off
+                        </span>
+                        <Button
+                          variant="secondary"
+                          size="xs"
+                          leadingIcon={RiVideoOnLine}
+                          onClick={toggleCam}
+                          className="mt-1"
+                        >
+                          Turn On Camera
+                        </Button>
+                      </div>
+                    ) : mediaPermissionState === "denied" ? (
+                      <div className="flex flex-col items-center justify-center gap-2 p-6 text-center max-w-xs">
+                        <div className="size-10 rounded-full bg-status-danger-background text-text-error-primary flex items-center justify-center">
+                          <RiAlertLine className="size-5" />
+                        </div>
+                        <span className="text-caption-1-semibold text-text-primary">
+                          Camera & Mic Access Blocked
+                        </span>
+                        <p className="text-caption-2-medium text-text-secondary">
+                          {mediaErrorMessage || "Allow camera permissions in your browser to test your preview."}
+                        </p>
+                        <Button
+                          variant="secondary"
+                          size="xs"
+                          leadingIcon={isRequestingMedia ? RiLoader4Line : RiRefreshLine}
+                          onClick={requestLocalMedia}
+                          disabled={isRequestingMedia}
+                          className="mt-1"
+                        >
+                          {isRequestingMedia ? "Checking..." : "Retry Permission"}
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center gap-2 p-6">
+                        <RiLoader4Line className="size-8 animate-spin text-accent-500" />
+                        <span className="text-body-2-medium text-text-secondary">
+                          Starting camera preview...
                         </span>
                       </div>
                     )}
@@ -1693,9 +1995,15 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                     </div>
 
                     {/* Participant Badge Top-Left */}
-                    <div className="absolute top-2.5 start-2.5 px-2.5 py-0.5 rounded-full bg-black/50 backdrop-blur-xs text-white text-caption-2-medium z-10">
-                      {localParticipantDisplayName} (You)
+                    <div className="absolute top-2.5 start-2.5 px-2.5 py-0.5 rounded-full bg-black/50 backdrop-blur-xs text-white text-caption-2-medium z-10 flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-status-lime-text" />
+                      <span>{localParticipantDisplayName} (You)</span>
                     </div>
+                  </div>
+
+                  {/* Real-time Microphone Indicator & Level Meter Card */}
+                  <div className="w-full p-3 rounded-2xl bg-background-primary-default border border-border-button-default shadow-xs flex flex-col gap-2">
+                    <MicVolumeMeter stream={localMediaStream} isMuted={isMicMuted} />
                   </div>
 
                   {/* Device Status & Welcome */}
@@ -1712,7 +2020,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                         color={isMicMuted ? "neutral" : "lime"}
                         variant="caption"
                       >
-                        {isMicMuted ? "Mic Muted" : "Mic Active"}
+                        {isMicMuted ? "Mic Muted" : "Mic Ready"}
                       </Chip>
                       <Chip
                         color={isCamOff ? "neutral" : "lime"}
@@ -1729,11 +2037,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                       variant="primary"
                       size="medium"
                       leadingIcon={RiVideoOnLine}
-                      onClick={() => setIsCallActive(true)}
+                      onClick={handleStartCall}
                       disabled={!isBookingEligible}
                       className="w-full justify-center text-body-medium font-semibold shadow-sm py-2.5"
                     >
-                      {isHost ? "Start Session" : "Join Call Now"}
+                      {isHost ? "Start Session as Host" : "Join Call Now"}
                     </Button>
 
                     {!isBookingEligible && (
@@ -1789,9 +2097,10 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             {/* Floating Picture-in-Picture Self-View (When Guest Video, Screen Share or File Presentation is Active) */}
             {!isGroupMeeting && isCallActive && !isConcluded && (remoteHasVideo || hasActivePresentation || isDisplayingStageFile) && (
               <div className="absolute top-14 end-3 sm:top-14 sm:end-4 w-32 h-20 sm:w-40 sm:h-24 rounded-2xl border border-border-button-default bg-background-primary-default overflow-hidden shadow-xl z-30">
-                {!isCamOff ? (
+                {!isCamOff && (localVideoTrack || localMediaStream) ? (
                   <VideoTrackView
                     track={localVideoTrack}
+                    stream={!localVideoTrack ? localMediaStream : undefined}
                     isLocal={true}
                     className="w-full h-full object-cover scale-x-[-1]"
                   />
@@ -1822,7 +2131,14 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             {/* FLOATING ORBIT CONTROL DOCK (ONLY SHOWN DURING ACTIVE CALL)         */}
             {/* =================================================================== */}
             {isCallActive && !isDisplayingStageFile && !isConcluded && (
-              <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto max-w-[calc(100%-1.5rem)]">
+              <div
+                className={cx(
+                  "absolute start-1/2 -translate-x-1/2 z-30 pointer-events-auto transition-all duration-200",
+                  mobileMode === "canvas"
+                    ? "bottom-1.5 max-w-[calc(100%-1rem)] scale-90 sm:scale-100 origin-bottom"
+                    : "bottom-3 sm:bottom-4 max-w-[calc(100%-1.5rem)]"
+                )}
+              >
                 <div className="p-1 sm:p-1.5 rounded-full border border-border-button-default bg-background-primary-default/95 backdrop-blur-xl shadow-2xl flex items-center gap-1 sm:gap-2">
                   {/* Microphone Toggle */}
                   <button
