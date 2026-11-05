@@ -12,6 +12,7 @@ export interface VeraActionItem {
   priority: "high" | "medium" | "low";
   done: boolean;
   deadline?: string;
+  evidence?: string;
 }
 
 export interface VeraPreMeetingBrief {
@@ -56,6 +57,148 @@ export class VeraValidationError extends VeraError {
     super(message, "VALIDATION_ERROR", 422);
     this.name = "VeraValidationError";
   }
+}
+
+export class VeraInsufficientEvidenceError extends VeraError {
+  constructor(
+    message = "Vera needs actual meeting notes or a transcript before it can create a reliable meeting record. Add the missing context and try again."
+  ) {
+    super(message, "INSUFFICIENT_EVIDENCE", 422);
+    this.name = "VeraInsufficientEvidenceError";
+  }
+}
+
+const KNOWN_PLACEHOLDERS = [
+  "conversation completed as outlined in notes and agenda",
+  "no manual notes taken",
+  "no notes provided",
+  "standard scheduled sync",
+  "no transcript available",
+  "conversation completed as outlined",
+];
+
+/**
+ * Determines whether the supplied text contains substantive meeting evidence
+ * beyond whitespace, trivial fragments, or boilerplate placeholders.
+ */
+export function isSubstantiveEvidence(text?: string | null): boolean {
+  if (!text || typeof text !== "string") return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 15) return false;
+
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
+    .trim();
+
+  for (const placeholder of KNOWN_PLACEHOLDERS) {
+    const cleanPlaceholder = placeholder
+      .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
+      .trim();
+    if (normalized === cleanPlaceholder) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Combines substantive notes and transcripts into a unified evidence document.
+ * Returns an empty string if neither source contains genuine evidence.
+ */
+export function extractSubstantiveEvidence(notes?: string | null, transcript?: string | null): string {
+  const parts: string[] = [];
+  if (isSubstantiveEvidence(notes)) {
+    parts.push(notes!.trim());
+  }
+  if (isSubstantiveEvidence(transcript)) {
+    parts.push(transcript!.trim());
+  }
+  return parts.join("\n\n");
+}
+
+/**
+ * Normalizes text for comparison against source evidence.
+ */
+export function normalizeForEvidenceComparison(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[“”"''`]/g, "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_~()]/g, "")
+    .trim();
+}
+
+/**
+ * Checks whether an excerpt exists as a normalized substring in the source material.
+ */
+export function evidenceOccursInSource(excerpt: string, source: string): boolean {
+  if (!excerpt || !source) return false;
+  const normExcerpt = normalizeForEvidenceComparison(excerpt);
+  const normSource = normalizeForEvidenceComparison(source);
+  if (!normExcerpt || normExcerpt.length < 5) return false;
+  return normSource.includes(normExcerpt);
+}
+
+/**
+ * Strictly resolves an action item assignee to host, guest, or "Unassigned".
+ * Unknown names or ambiguous first names automatically become "Unassigned".
+ */
+export function resolveParticipantAssignee(
+  rawAssignee: string | undefined | null,
+  context: { hostName: string; guestName: string }
+): string {
+  if (!rawAssignee || typeof rawAssignee !== "string") {
+    return "Unassigned";
+  }
+
+  const trimmed = rawAssignee.trim();
+  const lower = trimmed.toLowerCase();
+  if (
+    !lower ||
+    lower === "unassigned" ||
+    lower === "unresolved" ||
+    lower === "nobody" ||
+    lower === "none"
+  ) {
+    return "Unassigned";
+  }
+
+  const hostFull = context.hostName.trim();
+  const guestFull = context.guestName.trim();
+  const hostLower = hostFull.toLowerCase();
+  const guestLower = guestFull.toLowerCase();
+
+  // Exact full name match
+  if (lower === hostLower) return hostFull;
+  if (lower === guestLower) return guestFull;
+
+  // Extract first names
+  const hostFirst = hostLower.split(/\s+/)[0];
+  const guestFirst = guestLower.split(/\s+/)[0];
+  const firstNamesCollide = hostFirst === guestFirst;
+
+  // If first names collide (e.g. John Doe & John Smith), "John" is ambiguous
+  if (firstNamesCollide) {
+    if (lower === hostFirst) return "Unassigned";
+  } else {
+    if (lower === hostFirst) return hostFull;
+    if (lower === guestFirst) return guestFull;
+  }
+
+  // Check role-annotated name: e.g. "Emmanuel Enyi (Host)", "Sarah Connor (Guest)"
+  const matchesHost =
+    lower.includes(hostLower) || (!firstNamesCollide && lower.includes(hostFirst));
+  const matchesGuest =
+    lower.includes(guestLower) || (!firstNamesCollide && lower.includes(guestFirst));
+
+  if (matchesHost && !matchesGuest) return hostFull;
+  if (matchesGuest && !matchesHost) return guestFull;
+
+  // Unknown names (e.g. "Bob", "Charlie", "ThirdParty") or ambiguous matches become "Unassigned"
+  return "Unassigned";
 }
 
 export async function callDeepSeek(
@@ -123,51 +266,98 @@ export async function callDeepSeek(
 
 /**
  * Validates the structured output returned from DeepSeek for post-meeting synthesis.
- * Ensures no fabricated decisions, generic placeholders, or invented participants.
+ * Ensures claims, decisions, and action items are grounded in the supplied meeting evidence.
+ * Discards unsupported decisions and action items rather than accepting unevidenced claims.
  */
 export function validateVeraLedger(
   raw: unknown,
-  context: { hostName: string; guestName: string }
+  context: { hostName: string; guestName: string; sourceEvidence?: string }
 ): VeraLedger {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new VeraValidationError("Model output is not a valid JSON object.");
   }
 
   const rawObj = raw as Record<string, unknown>;
+  const source = context.sourceEvidence || "";
 
-  // 1. executiveSummary: must be a valid array of non-empty strings
+  // 1. executiveSummary: must be a valid array of non-empty strings or claim objects
   if (!Array.isArray(rawObj.executiveSummary) || rawObj.executiveSummary.length === 0) {
     throw new VeraValidationError("executiveSummary must be a non-empty array of strings.");
   }
+
   const executiveSummary: string[] = [];
   for (let i = 0; i < rawObj.executiveSummary.length; i++) {
     const item = rawObj.executiveSummary[i];
-    if (typeof item !== "string" || !item.trim()) {
-      throw new VeraValidationError(`executiveSummary item at index ${i} is not a valid non-empty string.`);
+    let claimText = "";
+    let evidenceQuote = "";
+
+    if (typeof item === "string") {
+      claimText = item.trim();
+    } else if (item && typeof item === "object") {
+      const obj = item as Record<string, unknown>;
+      claimText = typeof obj.claim === "string" ? obj.claim.trim() : typeof obj.text === "string" ? obj.text.trim() : "";
+      evidenceQuote = typeof obj.evidence === "string" ? obj.evidence.trim() : "";
     }
-    executiveSummary.push(item.trim());
+
+    if (!claimText) {
+      throw new VeraValidationError(`executiveSummary item at index ${i} is not a valid non-empty string or claim.`);
+    }
+
+    // If sourceEvidence is provided, verify evidence quote occurs in source if provided
+    if (source && evidenceQuote) {
+      if (!evidenceOccursInSource(evidenceQuote, source)) {
+        continue;
+      }
+    }
+
+    executiveSummary.push(claimText);
   }
 
-  // 2. keyDecisions: must be a valid array of non-empty strings
+  if (executiveSummary.length === 0) {
+    throw new VeraValidationError("No executive summary claims could be verified against the supplied meeting evidence.");
+  }
+
+  // 2. keyDecisions: must be a valid array of strings or decision objects
   if (!Array.isArray(rawObj.keyDecisions)) {
     throw new VeraValidationError("keyDecisions must be an array of strings.");
   }
+
   const keyDecisions: string[] = [];
   for (let i = 0; i < rawObj.keyDecisions.length; i++) {
     const item = rawObj.keyDecisions[i];
-    if (typeof item !== "string" || !item.trim()) {
-      throw new VeraValidationError(`keyDecisions item at index ${i} is not a valid non-empty string.`);
+    let decisionText = "";
+    let evidenceQuote = "";
+
+    if (typeof item === "string") {
+      decisionText = item.trim();
+      evidenceQuote = decisionText;
+    } else if (item && typeof item === "object") {
+      const obj = item as Record<string, unknown>;
+      decisionText = typeof obj.decision === "string" ? obj.decision.trim() : typeof obj.text === "string" ? obj.text.trim() : "";
+      evidenceQuote = typeof obj.evidence === "string" ? obj.evidence.trim() : "";
     }
-    keyDecisions.push(item.trim());
+
+    if (!decisionText) {
+      continue;
+    }
+
+    // Explicit supporting evidence required: if source evidence is provided,
+    // verify that evidenceQuote (or decisionText) exists in the source text.
+    if (source) {
+      const quoteToCheck = evidenceQuote || decisionText;
+      if (!evidenceOccursInSource(quoteToCheck, source)) {
+        console.warn(`[Vera] Rejecting decision without source evidence: "${decisionText}"`);
+        continue;
+      }
+    }
+
+    keyDecisions.push(decisionText);
   }
 
   // 3. actionItems: must be a valid array of correctly structured items
   if (!Array.isArray(rawObj.actionItems)) {
     throw new VeraValidationError("actionItems must be an array.");
   }
-
-  const hostNormalized = context.hostName.trim().toLowerCase();
-  const guestNormalized = context.guestName.trim().toLowerCase();
 
   const actionItems: VeraActionItem[] = [];
   for (let i = 0; i < rawObj.actionItems.length; i++) {
@@ -178,33 +368,40 @@ export function validateVeraLedger(
 
     const itemObj = item as Record<string, unknown>;
 
-    // Task must be non-empty string; missing tasks must not be replaced with generic tasks
     if (typeof itemObj.task !== "string" || !itemObj.task.trim()) {
       throw new VeraValidationError(`actionItems item at index ${i} has a missing or empty task.`);
     }
     const task = itemObj.task.trim();
+    const evidenceQuote = typeof itemObj.evidence === "string" ? itemObj.evidence.trim() : "";
 
-    // Priority must be one of 'high', 'medium', 'low'
+    // If source evidence is available, check that the action item has matching evidence in the source
+    if (source) {
+      const quoteToCheck = evidenceQuote || task;
+      if (!evidenceOccursInSource(quoteToCheck, source)) {
+        console.warn(`[Vera] Rejecting action item without source evidence: "${task}"`);
+        continue;
+      }
+    }
+
+    // Priority
     const validPriorities = ["high", "medium", "low"] as const;
     let priority: "high" | "medium" | "low" = "medium";
-    if (typeof itemObj.priority === "string" && validPriorities.includes(itemObj.priority.toLowerCase() as any)) {
+    if (
+      typeof itemObj.priority === "string" &&
+      validPriorities.includes(itemObj.priority.toLowerCase() as any)
+    ) {
       priority = itemObj.priority.toLowerCase() as "high" | "medium" | "low";
     }
 
-    // Assignee grounding:
-    // Ground in known participants when specified.
-    // Missing assignees must NOT automatically be assigned to the host.
-    // If not specified or uncertain, mark as "Unassigned".
-    let assignee = "Unassigned";
-    if (typeof itemObj.assignee === "string" && itemObj.assignee.trim()) {
-      const rawAssignee = itemObj.assignee.trim();
-      const rawLower = rawAssignee.toLowerCase();
-      if (rawLower.includes(hostNormalized) || hostNormalized.includes(rawLower)) {
-        assignee = context.hostName.trim();
-      } else if (rawLower.includes(guestNormalized) || guestNormalized.includes(rawLower)) {
-        assignee = context.guestName.trim();
-      } else if (rawLower !== "unassigned" && rawLower !== "unresolved") {
-        assignee = rawAssignee;
+    // Participant grounding: strictly resolved to host, guest, or "Unassigned"
+    let assignee = resolveParticipantAssignee(itemObj.assignee as string | undefined, context);
+
+    // If evidence does not establish who owns the task, preserve as "Unassigned"
+    if (assignee !== "Unassigned" && evidenceQuote && source) {
+      const normEvidence = normalizeForEvidenceComparison(evidenceQuote);
+      const assigneeFirst = assignee.toLowerCase().split(/\s+/)[0];
+      if (!normEvidence.includes(assigneeFirst)) {
+        assignee = "Unassigned";
       }
     }
 
@@ -221,6 +418,7 @@ export function validateVeraLedger(
       priority,
       done: Boolean(itemObj.done),
       ...(deadline ? { deadline } : {}),
+      ...(evidenceQuote ? { evidence: evidenceQuote } : {}),
     });
   }
 
@@ -325,8 +523,9 @@ Custom Details: ${JSON.stringify(params.customAnswers || {})}`;
 
 /**
  * Synthesizes the meeting ledger: executive summary, key decisions, and assigned action items.
- * Strictly validates the model output and throws typed VeraError upon failure.
- * NEVER returns fabricated decisions, action items, or false summaries.
+ * Strictly verifies that substantive evidence exists BEFORE calling DeepSeek.
+ * Every decision and action item must be grounded in actual evidence.
+ * Throws VeraInsufficientEvidenceError if notes/transcript do not contain sufficient source material.
  */
 export async function generateVeraLedger(params: {
   eventTitle: string;
@@ -337,29 +536,42 @@ export async function generateVeraLedger(params: {
   transcript?: string;
   timeoutMs?: number;
 }): Promise<VeraLedger> {
+  // 1. Evidence sufficiency gate: must have actual substantive notes or transcript
+  const combinedEvidence = extractSubstantiveEvidence(params.sharedNotes, params.transcript);
+  if (!combinedEvidence) {
+    throw new VeraInsufficientEvidenceError(
+      "Vera needs actual meeting notes or a transcript before it can create a reliable meeting record. Add the missing context and try again."
+    );
+  }
+
   const systemPrompt = `You are Vera, the executive scribe for Morrow.
-Your role is to record the definitive, truthful record of the meeting.
-Extract clear decisions, concrete action items with explicit assignees (${params.hostName} or ${params.guestName}), and a disciplined executive summary.
-Where the discussion or notes are uncertain or do not establish an outcome, represent that uncertainty rather than manufacturing certainty.
-If an action item cannot be assigned confidently, leave the assignee as "Unassigned".
-Proposals that were not explicitly agreed upon must not be recorded as confirmed decisions.
+Your governing principle: Prefer an incomplete meeting record over an invented one.
+Record ONLY what was explicitly discussed and evidenced in the provided notes or transcript.
+Do NOT treat proposals, exploratory thoughts, or tentative suggestions as confirmed decisions.
+A discussion topic or agenda item is NOT a decision unless there was explicit agreement in the notes or transcript.
+Every decision, action item, and summary point MUST include a direct, verbatim evidence quote from the notes or transcript.
+If an excerpt cannot be found verbatim in the notes or transcript, it will be rejected.
+Do NOT invent tasks, deadlines, or assignees. If ownership is not explicitly stated in the source text, set assignee to "Unassigned".
 Never use emojis. Never use hype. Use clear, exact business language.
 
 Return a valid JSON object matching this schema:
 {
   "executiveSummary": [
-    "Summary sentence 1",
-    "Summary sentence 2"
+    "Summary claim grounded directly in the discussion"
   ],
   "keyDecisions": [
-    "Decision 1"
+    {
+      "decision": "Confirmed agreed decision",
+      "evidence": "Direct excerpt from notes or transcript proving agreement"
+    }
   ],
   "actionItems": [
     {
       "task": "Specific task description",
       "assignee": "${params.hostName}" or "${params.guestName}" or "Unassigned",
       "priority": "high" | "medium" | "low",
-      "deadline": "optional deadline if explicitly mentioned"
+      "deadline": "explicit deadline if mentioned in source, otherwise omit",
+      "evidence": "Direct excerpt from notes or transcript proving task and ownership"
     }
   ],
   "suggestedFollowUp": "Clear single recommendation for when they should sync next or what triggers the next meeting."
@@ -368,14 +580,11 @@ Return a valid JSON object matching this schema:
   const userPrompt = `Meeting: ${params.eventTitle}
 Participants: ${params.hostName} (Host) and ${params.guestName} (Guest)
 
-Covered Agenda:
+Covered Agenda (Context only, NOT proof of discussion or agreement):
 ${params.agenda.map((a) => `- [${a.done ? "Done" : "Pending"}] ${a.text}`).join("\n")}
 
-Shared Notes Taken During Call:
-${params.sharedNotes || "No manual notes taken"}
-
-Transcript / Discussion Snippets:
-${params.transcript || "Conversation completed as outlined in notes and agenda."}`;
+Substantive Meeting Evidence (Notes & Transcript):
+${combinedEvidence}`;
 
   const raw = await callDeepSeek(
     [
@@ -388,5 +597,6 @@ ${params.transcript || "Conversation completed as outlined in notes and agenda."
   return validateVeraLedger(raw, {
     hostName: params.hostName,
     guestName: params.guestName,
+    sourceEvidence: combinedEvidence,
   });
 }

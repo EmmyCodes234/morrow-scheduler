@@ -5,6 +5,7 @@ import { eq, and, or, inArray, ne, lt } from "drizzle-orm";
 import {
   generateVeraPreMeetingBrief,
   generateVeraLedger,
+  VeraInsufficientEvidenceError,
   type VeraAgendaItem,
   type VeraLedger,
 } from "@/lib/intelligence/vera";
@@ -33,7 +34,7 @@ export interface RoomDetails {
   id: string;
   accessToken: string;
   status: "pre_meeting" | "in_progress" | "concluded";
-  synthesisStatus?: "idle" | "synthesizing" | "completed" | "failed";
+  synthesisStatus?: "idle" | "synthesizing" | "completed" | "failed" | "insufficient_evidence";
   booking: {
     id: string;
     status: string;
@@ -184,7 +185,7 @@ export async function getRoomByAccessToken(
     id: room.id,
     accessToken: room.accessToken,
     status: (room.status as "pre_meeting" | "in_progress" | "concluded") || "pre_meeting",
-    synthesisStatus: (room.synthesisStatus as "idle" | "synthesizing" | "completed" | "failed") || "idle",
+    synthesisStatus: (room.synthesisStatus as "idle" | "synthesizing" | "completed" | "failed" | "insufficient_evidence") || "idle",
     booking: {
       id: b.id,
       status: b.status,
@@ -284,12 +285,13 @@ export const SYNTHESIS_LEASE_MS = 60_000; // 60 seconds
 
 export interface ConcludeRoomResult {
   success: boolean;
-  status: "concluded" | "synthesizing" | "failed" | "not_found" | "stale_worker";
+  status: "concluded" | "synthesizing" | "failed" | "not_found" | "stale_worker" | "insufficient_evidence";
   processing?: boolean;
   alreadyConcluded?: boolean;
   veraLedger?: VeraLedger | null;
   error?: string;
   message?: string;
+  code?: string;
 }
 
 /**
@@ -454,13 +456,24 @@ export async function concludeRoomAndSynthesize(
     };
   } catch (err) {
     console.error("[Vera Synthesis] Error during LLM generation:", err);
+    const isInsufficientEvidence =
+      err instanceof VeraInsufficientEvidenceError ||
+      (err as { code?: string } | undefined)?.code === "INSUFFICIENT_EVIDENCE";
+
+    const failureStatus = isInsufficientEvidence ? "insufficient_evidence" : "failed";
+    const errorMessage = isInsufficientEvidence
+      ? "Vera needs actual meeting notes or a transcript before it can create a reliable meeting record. Add the missing context and try again."
+      : err instanceof Error
+      ? err.message
+      : "Vera synthesis failed";
+
     // 6. Release claim on failure ONLY if this worker still holds the claimToken
     await dbClient
       .update(rooms)
       .set({
-        synthesisStatus: "failed",
+        synthesisStatus: failureStatus,
         synthesisClaimToken: null,
-        synthesisLastError: err instanceof Error ? err.message : String(err),
+        synthesisLastError: errorMessage,
         updatedAt: new Date(),
       })
       .where(
@@ -472,8 +485,9 @@ export async function concludeRoomAndSynthesize(
 
     return {
       success: false,
-      status: "failed",
-      error: err instanceof Error ? err.message : "Vera synthesis failed",
+      status: failureStatus,
+      error: errorMessage,
+      code: isInsufficientEvidence ? "INSUFFICIENT_EVIDENCE" : undefined,
     };
   }
 }

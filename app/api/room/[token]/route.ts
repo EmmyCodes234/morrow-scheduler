@@ -103,9 +103,21 @@ export async function PATCH(
       }
 
       if (!result.success) {
+        const httpStatus =
+          result.status === "stale_worker"
+            ? 409
+            : result.status === "insufficient_evidence"
+            ? 422
+            : 500;
+
         return NextResponse.json(
-          { success: false, error: result.error || "Failed to conclude room." },
-          { status: result.status === "stale_worker" ? 409 : 500 }
+          {
+            success: false,
+            status: result.status,
+            error: result.error || "Failed to conclude room.",
+            code: result.code,
+          },
+          { status: httpStatus }
         );
       }
 

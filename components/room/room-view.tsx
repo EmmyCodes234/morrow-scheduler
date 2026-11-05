@@ -86,12 +86,14 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const [copiedLink, setCopiedLink] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [synthesisState, setSynthesisState] = useState<
-    "idle" | "synthesizing" | "completed" | "failed" | "timed_out_waiting"
+    "idle" | "synthesizing" | "completed" | "failed" | "insufficient_evidence" | "timed_out_waiting"
   >(
     room.veraLedger
       ? "completed"
       : room.synthesisStatus === "synthesizing"
       ? "synthesizing"
+      : room.synthesisStatus === "insufficient_evidence"
+      ? "insufficient_evidence"
       : room.synthesisStatus === "failed"
       ? "failed"
       : "idle"
@@ -106,6 +108,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             assignee: a.assignee,
             priority: (a.priority || "medium") as "high" | "medium" | "low",
             done: Boolean(a.done),
+            deadline: a.deadline,
           })),
           keyDecisions: room.veraLedger.keyDecisions || [],
           suggestedFollowUp: room.veraLedger.suggestedFollowUp,
@@ -134,6 +137,13 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
           if (checkData.room.veraLedger) {
             setSummary(checkData.room.veraLedger);
             setSynthesisState("completed");
+            setIsSynthesizing(false);
+            clearInterval(interval);
+            return;
+          }
+
+          if (checkData.room.synthesisStatus === "insufficient_evidence") {
+            setSynthesisState("insufficient_evidence");
             setIsSynthesizing(false);
             clearInterval(interval);
             return;
@@ -541,6 +551,9 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
       } else if (res.status === 202 || data.processing) {
         // Synthesis is currently processing on server. Polling effect handles waiting.
         setSynthesisState("synthesizing");
+      } else if (data.status === "insufficient_evidence" || data.code === "INSUFFICIENT_EVIDENCE") {
+        setSynthesisState("insufficient_evidence");
+        setIsSynthesizing(false);
       } else {
         setSynthesisState("failed");
         setIsSynthesizing(false);
@@ -1582,6 +1595,47 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                     </div>
                   )}
 
+                  {synthesisState === "insufficient_evidence" && (
+                    <div className="p-8 rounded-3xl border border-border-button-default flex flex-col items-center text-center gap-4 bg-background-secondary-default/20 my-auto m-4">
+                      <div className="size-12 rounded-2xl bg-accent-500/10 border border-accent-500/20 flex items-center justify-center text-accent-500">
+                        <RiFileListLine className="size-6" />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <h4 className="text-title-3-semibold text-text-primary">
+                          Notes or Transcript Required
+                        </h4>
+                        <p className="text-body-2-regular text-text-secondary max-w-sm">
+                          Vera needs actual meeting notes or a transcript before it can create a reliable meeting record. Add the missing context and try again.
+                        </p>
+                      </div>
+                      {isHost ? (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            size="small"
+                            leadingIcon={RiEditLine}
+                            onClick={() => setActiveTab("notes")}
+                          >
+                            Add Notes
+                          </Button>
+                          <Button
+                            variant="primary"
+                            size="small"
+                            leadingIcon={RiRefreshLine}
+                            onClick={handleConcludeCall}
+                            disabled={isSynthesizing}
+                          >
+                            {isSynthesizing ? "Retrying..." : "Retry Vera Synthesis"}
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="text-caption-1-medium text-text-tertiary">
+                          The host can add meeting notes and synthesize the record.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {synthesisState === "failed" && (
                     <div className="p-8 rounded-3xl border border-border-button-default flex flex-col items-center text-center gap-4 bg-background-secondary-default/20 my-auto m-4">
                       <div className="size-12 rounded-2xl bg-border-error-default/10 border border-border-error-default/20 flex items-center justify-center text-text-error-primary">
@@ -1700,6 +1754,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <Avatar size="xs" initials={action.assignee.slice(0, 2).toUpperCase()} color="neutral" />
                                   <span className="text-caption-2-medium text-text-secondary truncate">{action.assignee}</span>
+                                  {action.deadline && (
+                                    <span className="text-caption-2-medium text-text-tertiary shrink-0 ml-1">
+                                      • Due {action.deadline}
+                                    </span>
+                                  )}
                                 </div>
                                 <Chip
                                   color={action.priority === "high" ? "rose" : "blue"}

@@ -466,6 +466,36 @@ describe("Morrow Rooms — Participant Identity, Authorization & Lifecycle Secur
       expect(data.success).toBe(false);
       expect(data.error).toContain("lease had expired");
     });
+
+    it("returns HTTP 422 Unprocessable Entity when synthesis fails due to insufficient evidence", async () => {
+      vi.spyOn(authModule, "auth").mockResolvedValue({
+        user: { id: mockHostId },
+      } as any);
+      vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(createMockRoom() as any);
+      vi.spyOn(roomService, "concludeRoomAndSynthesize").mockResolvedValue({
+        success: false,
+        status: "insufficient_evidence",
+        error: "Vera needs actual meeting notes or a transcript before it can create a reliable meeting record. Add the missing context and try again.",
+        code: "INSUFFICIENT_EVIDENCE",
+      });
+
+      const req = new NextRequest(`http://localhost:3000/api/room/${mockToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "conclude" }),
+      });
+
+      const res = await roomRoute.PATCH(req, {
+        params: Promise.resolve({ token: mockToken }),
+      });
+
+      expect(res.status).toBe(422);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.status).toBe("insufficient_evidence");
+      expect(data.error).toContain("Vera needs actual meeting notes or a transcript");
+      expect(data.code).toBe("INSUFFICIENT_EVIDENCE");
+    });
   });
 
   // =========================================================================

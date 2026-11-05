@@ -417,9 +417,9 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
       expect(roomRow[0].synthesis_claim_token).toBeNull();
     });
 
-    it("stale worker fencing: prevents an expired worker from overwriting a newer worker's conclusion", async () => {
+    it("stale worker fencing: deferred synthesis execution prevents expired Worker A from overwriting Worker B", async () => {
       const bookingId = crypto.randomUUID();
-      const accessToken = `tok-fencing-test-${Date.now()}`;
+      const accessToken = `tok-deferred-fencing-${Date.now()}`;
 
       await testDb.insert(schema.bookings).values({
         id: bookingId,
@@ -434,63 +434,90 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
         cancelToken: `cancel-fencing-${Date.now()}`,
       });
 
-      // 1. Worker A acquires claim
-      const workerAClaimToken = "worker-a-claim-token";
-      const ninetySecondsAgo = new Date(Date.now() - 90_000);
-
       await testDb.insert(schema.rooms).values({
         bookingId,
         accessToken,
         status: "in_progress",
-        synthesisStatus: "synthesizing",
-        synthesisClaimToken: workerAClaimToken,
-        synthesisClaimedAt: ninetySecondsAgo, // expired lease
+        synthesisStatus: "idle",
+        sharedNotes: "Authentic notes for fencing test: agreed to proceed with Worker B.",
         files: [],
       });
 
-      // 2. Worker B comes in, detects expired lease, reclaims and concludes successfully
-      vi.spyOn(veraModule, "generateVeraLedger").mockResolvedValue({
-        executiveSummary: ["Worker B authoritative ledger"],
-        actionItems: [],
-        keyDecisions: ["Worker B decision"],
+      // Controlled deferred synchronization for Worker A
+      let resolveWorkerAPause!: () => void;
+      const workerAPausePromise = new Promise<void>((resolve) => {
+        resolveWorkerAPause = resolve;
       });
 
+      let resolveWorkerAStarted!: () => void;
+      const workerAStartedPromise = new Promise<void>((resolve) => {
+        resolveWorkerAStarted = resolve;
+      });
+
+      let callCount = 0;
+      vi.spyOn(veraModule, "generateVeraLedger").mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // Worker A execution: signal started and pause
+          resolveWorkerAStarted();
+          await workerAPausePromise;
+          return {
+            executiveSummary: ["Worker A stale attempt (should be rejected)"],
+            actionItems: [],
+            keyDecisions: [],
+          };
+        } else {
+          // Worker B execution: immediate completion
+          return {
+            executiveSummary: ["Worker B authoritative ledger"],
+            actionItems: [],
+            keyDecisions: ["Worker B decision"],
+          };
+        }
+      });
+
+      // 1. Worker A begins synthesis and acquires lease in DB
+      const workerAPromise = concludeRoomAndSynthesize(accessToken, testDb);
+
+      // Wait until Worker A has acquired claim and entered generateVeraLedger
+      await workerAStartedPromise;
+
+      // Verify Worker A claimed the room
+      const workerARoom = await testDb.query.rooms.findFirst({
+        where: eq(schema.rooms.accessToken, accessToken),
+      });
+      expect(workerARoom?.synthesisStatus).toBe("synthesizing");
+      expect(workerARoom?.synthesisClaimToken).toBeDefined();
+
+      // 2. Deterministically simulate Worker A lease expiration in database
+      const ninetySecondsAgo = new Date(Date.now() - 90_000);
+      await testDb
+        .update(schema.rooms)
+        .set({ synthesisClaimedAt: ninetySecondsAgo })
+        .where(eq(schema.rooms.accessToken, accessToken));
+
+      // 3. Worker B runs concludeRoomAndSynthesize, reclaims lease and successfully concludes
       const workerBResult = await concludeRoomAndSynthesize(accessToken, testDb);
       expect(workerBResult.success).toBe(true);
       expect(workerBResult.status).toBe("concluded");
       expect(workerBResult.veraLedger?.executiveSummary).toContain("Worker B authoritative ledger");
 
-      // 3. Worker A (stale) now attempts to write back using its old workerAClaimToken
-      const [staleAttempt] = await testDb
-        .update(schema.rooms)
-        .set({
-          status: "concluded",
-          synthesisStatus: "completed",
-          synthesisClaimToken: null,
-          veraLedger: {
-            executiveSummary: ["Stale Worker A illicit overwrite"],
-            actionItems: [],
-            keyDecisions: [],
-          },
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(schema.rooms.accessToken, accessToken),
-            eq(schema.rooms.synthesisClaimToken, workerAClaimToken)
-          )
-        )
-        .returning();
+      // 4. Now Worker A resumes and attempts its actual service completion path
+      resolveWorkerAPause();
+      const workerAResult = await workerAPromise;
 
-      // Fenced write matches 0 rows because workerAClaimToken is no longer the claim token
-      expect(staleAttempt).toBeUndefined();
+      // 5. Worker A must be rejected as stale_worker
+      expect(workerAResult.success).toBe(false);
+      expect(workerAResult.status).toBe("stale_worker");
 
-      // 4. Verify that Worker B's ledger is completely preserved
+      // 6. Worker B's ledger is completely preserved
       const finalRoom = await testDb.query.rooms.findFirst({
         where: eq(schema.rooms.accessToken, accessToken),
       });
+      expect(finalRoom?.status).toBe("concluded");
+      expect(finalRoom?.synthesisStatus).toBe("completed");
       expect(finalRoom?.veraLedger?.executiveSummary).toContain("Worker B authoritative ledger");
-      expect(finalRoom?.veraLedger?.executiveSummary).not.toContain("Stale Worker A illicit overwrite");
+      expect(finalRoom?.veraLedger?.executiveSummary).not.toContain("Worker A stale attempt");
     });
   });
 });
