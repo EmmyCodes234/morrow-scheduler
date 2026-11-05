@@ -82,12 +82,33 @@ function VideoTrackView({
     const el = videoRef.current;
     if (!el) return;
 
+    // Direct property assignment is required by WebKit on iOS Safari
+    el.muted = Boolean(isLocal);
+    el.defaultMuted = Boolean(isLocal);
+    el.playsInline = true;
+    el.setAttribute("muted", "");
+    el.setAttribute("playsinline", "");
+    el.setAttribute("webkit-playsinline", "");
+
     if (track && typeof track.attach === "function") {
       try {
         track.attach(el);
       } catch (err) {
         console.warn("[VideoTrackView] attach notice:", err);
       }
+
+      // Explicitly trigger play after attaching to satisfy WebKit autoplay policy
+      el.muted = Boolean(isLocal);
+      const playPromise = el.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          if (isLocal) {
+            el.muted = true;
+            el.play().catch(() => {});
+          }
+        });
+      }
+
       return () => {
         try {
           track.detach(el);
@@ -97,14 +118,21 @@ function VideoTrackView({
       };
     } else if (stream) {
       el.srcObject = stream;
-      el.play().catch((err) => {
-        console.warn("[VideoTrackView] stream play notice:", err);
-      });
+      el.muted = Boolean(isLocal);
+      const playPromise = el.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          if (isLocal) {
+            el.muted = true;
+            el.play().catch(() => {});
+          }
+        });
+      }
       return () => {
         if (el) el.srcObject = null;
       };
     }
-  }, [track, stream]);
+  }, [track, stream, isLocal]);
 
   return (
     <video
@@ -116,7 +144,9 @@ function VideoTrackView({
       disableRemotePlayback
       muted={isLocal}
       onLoadedMetadata={(e) => {
-        (e.target as HTMLVideoElement).play().catch(() => {});
+        const v = e.target as HTMLVideoElement;
+        v.muted = Boolean(isLocal);
+        v.play().catch(() => {});
       }}
       className={cx("pointer-events-none select-none", className)}
     />
@@ -345,13 +375,13 @@ function ParticipantTile({
         </div>
       )}
 
-      <div className="absolute bottom-2 start-2 end-2 flex items-center justify-between pointer-events-none z-10">
+      <div className="absolute top-3 start-3 sm:bottom-2 sm:start-2 sm:top-auto flex items-center justify-between pointer-events-none z-10">
         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/60 backdrop-blur-xs text-white text-caption-2-medium max-w-[85%] truncate">
           {isMuted && <RiMicOffLine className="size-3 text-status-danger-text shrink-0" />}
           <span className="truncate">{cleanName} {isLocal ? "(You)" : ""}</span>
         </div>
         {isSpeaking && (
-          <div className="size-2 rounded-full bg-status-lime-text animate-pulse shrink-0" />
+          <div className="size-2 rounded-full bg-status-lime-text animate-pulse shrink-0 ms-1.5" />
         )}
       </div>
     </div>
@@ -869,7 +899,9 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         // Enable Local Media (Mic & Cam) independently with resilient fallbacks
         try {
           if (!isCamOff) {
-            const camPub = await lk.localParticipant.setCameraEnabled(true);
+            const camPub = await lk.localParticipant.setCameraEnabled(true, {
+              facingMode: "user",
+            });
             if (camPub?.videoTrack) {
               setLocalVideoTrack(camPub.videoTrack);
             } else {
@@ -878,9 +910,12 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                 setLocalVideoTrack(pub.videoTrack);
               }
             }
+          } else {
+            setLocalVideoTrack(null);
           }
         } catch (mediaErr) {
           console.warn("[Media] LiveKit camera initialization notice:", mediaErr);
+          setLocalVideoTrack(null);
         }
 
         try {
@@ -1081,7 +1116,9 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
     }
     if (lkRoomRef.current) {
       try {
-        const camPub = await lkRoomRef.current.localParticipant.setCameraEnabled(!nextState);
+        const camPub = await lkRoomRef.current.localParticipant.setCameraEnabled(!nextState, {
+          facingMode: "user",
+        });
         const { Track } = await import("livekit-client");
         const pub = lkRoomRef.current.localParticipant.getTrackPublication(Track.Source.Camera);
         setLocalVideoTrack(!nextState && (pub?.videoTrack || camPub?.videoTrack) ? pub?.videoTrack || camPub?.videoTrack : null);
@@ -1092,12 +1129,6 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   };
 
   const handleStartCall = async () => {
-    // Release Green Room preview stream so LiveKit can take over hardware camera & mic cleanly
-    if (localMediaStreamRef.current) {
-      localMediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      localMediaStreamRef.current = null;
-      setLocalMediaStream(null);
-    }
     setIsCallActive(true);
     if (isHost && room.type === "group_meeting" && (!room.meeting?.openedEarlyAt && !roomMeeting?.openedEarlyAt)) {
       handleHostOpenEarly().catch(() => {});
@@ -2183,7 +2214,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             {isCallActive && !isDisplayingStageFile && !isConcluded && (
               <div
                 className={cx(
-                  "absolute start-1/2 -translate-x-1/2 z-30 pointer-events-auto transition-all duration-200 bottom-3 sm:bottom-4 max-w-[calc(100%-1.5rem)]",
+                  "absolute start-1/2 -translate-x-1/2 z-30 pointer-events-auto transition-all duration-200 bottom-4 sm:bottom-5 max-w-[calc(100%-1.5rem)]",
                   mobileMode === "canvas" ? "hidden lg:flex" : "flex"
                 )}
               >
