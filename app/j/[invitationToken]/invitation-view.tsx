@@ -7,6 +7,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Chip } from "@/components/base/badges/chip";
 import { MorrowLogo } from "@/components/brand/morrow-logo";
 import { cx } from "@/utils/cx";
+import { MarkdownViewer } from "@/components/shared/markdown-viewer";
 import {
   RiCalendarLine,
   RiTimeLine,
@@ -470,9 +471,7 @@ export function InvitationView({
                     </span>
                     <Chip color="neutral" variant="caption">Read-Only Context</Chip>
                   </div>
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    {meeting.preparationMaterial}
-                  </div>
+                  <MarkdownViewer content={meeting.preparationMaterial || ""} />
                 </div>
               )}
             </div>

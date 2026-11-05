@@ -237,7 +237,7 @@ export async function getOrCreateRoomForMeeting(
         veraBrief: {
           intent: meeting.title,
           talkingPoints: [meeting.description || "Group discussion"].filter(Boolean),
-          background: meeting.preparationMaterial || "",
+          background: meeting.description || "",
         },
         veraLedger: null,
       })
@@ -397,7 +397,18 @@ export async function getRoomByAccessToken(
       agenda: room.agenda || [],
       sharedNotes: room.sharedNotes || "",
       files: (room.files as RoomFileItem[]) || [],
-      veraBrief: room.veraBrief,
+      veraBrief: room.veraBrief
+        ? {
+            ...room.veraBrief,
+            background:
+              m.description ||
+              (room.veraBrief.background &&
+              room.veraBrief.background !== m.preparationMaterial &&
+              !room.veraBrief.background.startsWith("#")
+                ? room.veraBrief.background
+                : ""),
+          }
+        : null,
       veraLedger: room.veraLedger,
     };
   }

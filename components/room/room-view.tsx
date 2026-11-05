@@ -10,6 +10,7 @@ import { FileUpload, formatFileSize } from "@/components/base/file-upload/file-u
 import { MorrowLogo } from "@/components/brand/morrow-logo";
 import { ScrollFade, useScrollFade } from "@/components/foundations/scroll-fade/scroll-fade";
 import { cx } from "@/utils/cx";
+import { MarkdownViewer } from "@/components/shared/markdown-viewer";
 import {
   RiMicLine,
   RiMicOffLine,
@@ -1938,10 +1939,8 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                   </p>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-background-secondary-default border border-border-button-default">
-                  <div className="prose prose-sm dark:prose-invert max-w-none text-body-2-medium text-text-secondary leading-relaxed whitespace-pre-wrap font-sans">
-                    {room.preparationMaterial || "No previous meeting preparation material was provided."}
-                  </div>
+                <div className="p-4 sm:p-5 rounded-2xl bg-background-secondary-default/50 border border-border-button-default">
+                  <MarkdownViewer content={room.preparationMaterial || ""} />
                 </div>
               </div>
               <ScrollFade progress={prepFade.progress} surfaceClassName="from-background-primary-default" />
@@ -1958,19 +1957,28 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                 className="h-full overflow-y-auto p-4 sm:p-5 flex flex-col gap-5"
               >
                 {/* Meeting Intent Card */}
-                {room.veraBrief?.intent && (
+                {(room.meeting?.title || room.veraBrief?.intent) && (
                   <div className="p-4 rounded-2xl border border-border-button-default bg-background-secondary-default/40 flex flex-col gap-1.5">
                     <span className="text-caption-1-semibold text-text-tertiary uppercase tracking-wider">
                       Session Purpose
                     </span>
                     <p className="text-body-medium text-text-primary leading-relaxed font-medium">
-                      {room.veraBrief.intent}
+                      {room.meeting?.title || room.veraBrief?.intent}
                     </p>
-                    {room.veraBrief.background && (
-                      <p className="text-body-2-regular text-text-secondary mt-1">
-                        {room.veraBrief.background}
-                      </p>
-                    )}
+                    {(() => {
+                      const desc =
+                        room.meeting?.description ||
+                        (room.veraBrief?.background &&
+                        room.veraBrief.background !== room.preparationMaterial &&
+                        !room.veraBrief.background.startsWith("#")
+                          ? room.veraBrief.background
+                          : null);
+                      return desc ? (
+                        <p className="text-body-2-regular text-text-secondary mt-1 leading-relaxed">
+                          {desc}
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                 )}
 
