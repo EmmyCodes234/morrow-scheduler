@@ -210,8 +210,11 @@ export const rooms = pgTable(
         deadline?: string;
         evidence?: string;
       }>;
-      keyDecisions?: string[];
+      keyDecisions?: Array<string | { decision: string; status: "confirmed" | "proposed" | "open_question"; evidence: string }>;
       suggestedFollowUp?: string;
+      reviewStatus?: "pending_host_review" | "approved";
+      approvedAt?: string;
+      approvedBy?: string;
     }>(),
     transcript: text("transcript"),
     synthesisStatus: text("synthesis_status").notNull().default("idle"), // idle, synthesizing, completed, failed

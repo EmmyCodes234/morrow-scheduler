@@ -534,7 +534,8 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
       const retryBookingStartTime = new Date(Date.now() + 86400000);
       const retryBookingEndTime = new Date(retryBookingStartTime.getTime() + 1800000);
 
-      // 1. Create booking in test database
+      // 1. Create booking in test database with all required fields including cancelToken
+      const cancelToken = crypto.randomBytes(16).toString("hex");
       await testDb.insert(schema.bookings).values({
         id: retryBookingId,
         eventTypeId: testEventTypeId,
@@ -545,6 +546,7 @@ describeIntegration("Real PostgreSQL Room Concurrency & Atomic Vera Conclusion",
         startTime: retryBookingStartTime,
         endTime: retryBookingEndTime,
         status: "confirmed",
+        cancelToken,
       });
 
       // 1. Creates a room using testDb

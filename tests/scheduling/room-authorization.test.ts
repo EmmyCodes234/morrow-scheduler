@@ -530,4 +530,87 @@ describe("Morrow Rooms — Participant Identity, Authorization & Lifecycle Secur
       expect(data.room.synthesisStatus).toBe("idle");
     });
   });
+
+  // =========================================================================
+  // 5. Meeting Record Review & Host Ledger Approval
+  // =========================================================================
+  describe("Meeting Record Review & Host Ledger Approval", () => {
+    it("rejects ledger approval when caller is unauthenticated (HTTP 401)", async () => {
+      vi.spyOn(authModule, "auth").mockResolvedValue(null as any);
+      vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(createMockRoom("confirmed", "concluded") as any);
+
+      const req = new NextRequest(`http://localhost:3000/api/room/${mockToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve_ledger" }),
+      });
+
+      const res = await roomRoute.PATCH(req, {
+        params: Promise.resolve({ token: mockToken }),
+      });
+
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("Unauthorized: You must be signed in");
+    });
+
+    it("rejects ledger approval when authenticated user is not the host (HTTP 403)", async () => {
+      vi.spyOn(authModule, "auth").mockResolvedValue({
+        user: { id: mockUnrelatedUserId },
+      } as any);
+      vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(createMockRoom("confirmed", "concluded") as any);
+
+      const req = new NextRequest(`http://localhost:3000/api/room/${mockToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve_ledger" }),
+      });
+
+      const res = await roomRoute.PATCH(req, {
+        params: Promise.resolve({ token: mockToken }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("Forbidden: Only the authenticated meeting host");
+    });
+
+    it("allows the booking host to approve the ledger (HTTP 200)", async () => {
+      vi.spyOn(authModule, "auth").mockResolvedValue({
+        user: { id: mockHostId },
+      } as any);
+      vi.spyOn(roomService, "getRoomByAccessToken").mockResolvedValue(createMockRoom("confirmed", "concluded") as any);
+      vi.spyOn(roomService, "approveRoomLedger").mockResolvedValue({
+        success: true,
+        status: "approved",
+        veraLedger: {
+          executiveSummary: [{ claim: "Finished call", evidence: "Finished call" }],
+          actionItems: [],
+          keyDecisions: [],
+          reviewStatus: "approved",
+          approvedBy: mockHostId,
+          approvedAt: "2026-11-05T09:00:00.000Z",
+        },
+      });
+
+      const req = new NextRequest(`http://localhost:3000/api/room/${mockToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve_ledger" }),
+      });
+
+      const res = await roomRoute.PATCH(req, {
+        params: Promise.resolve({ token: mockToken }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.status).toBe("approved");
+      expect(data.veraLedger.reviewStatus).toBe("approved");
+      expect(data.veraLedger.approvedBy).toBe(mockHostId);
+    });
+  });
 });

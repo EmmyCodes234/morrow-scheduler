@@ -113,9 +113,40 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
           })),
           keyDecisions: room.veraLedger.keyDecisions || [],
           suggestedFollowUp: room.veraLedger.suggestedFollowUp,
+          reviewStatus: room.veraLedger.reviewStatus || "pending_host_review",
+          approvedAt: room.veraLedger.approvedAt,
+          approvedBy: room.veraLedger.approvedBy,
         }
       : null
   );
+
+  const [isApprovingLedger, setIsApprovingLedger] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+
+  const handleApproveLedger = async () => {
+    if (!isHost || isApprovingLedger) return;
+    setIsApprovingLedger(true);
+    setApprovalError(null);
+    try {
+      const res = await fetch(`/api/room/${room.accessToken}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve_ledger" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && data.veraLedger) {
+        setSummary(data.veraLedger);
+        setApprovalError(null);
+      } else {
+        setApprovalError(data.error || "Failed to approve meeting record.");
+      }
+    } catch (err) {
+      console.error("[Room] Error approving ledger:", err);
+      setApprovalError("Network error while approving record.");
+    } finally {
+      setIsApprovingLedger(false);
+    }
+  };
 
   // Background polling when room is actively synthesizing
   // Ensures browser refresh does not re-trigger synthesis, but safely tracks completion
@@ -1800,6 +1831,50 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                     onScroll={summaryFade.onScroll}
                     className="h-full overflow-y-auto p-4 sm:p-5 flex flex-col gap-5"
                   >
+                    {/* Ledger Review Status Banner */}
+                    {summary.reviewStatus === "pending_host_review" ? (
+                      <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 flex flex-col gap-2.5">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 text-caption-2-medium font-semibold uppercase tracking-wider">
+                            Draft — Awaiting Host Review
+                          </span>
+                          {isHost && (
+                            <Button
+                              variant="primary"
+                              size="xs"
+                              leadingIcon={RiCheckLine}
+                              onClick={handleApproveLedger}
+                              disabled={isApprovingLedger}
+                            >
+                              {isApprovingLedger ? "Approving..." : "Approve Record"}
+                            </Button>
+                          )}
+                        </div>
+                        <p className="text-caption-1-regular text-text-secondary leading-relaxed">
+                          {isHost
+                            ? "Vera has prepared this evidence-grounded draft. Please inspect the claims, decisions, and action items below, then approve this to create the verified permanent meeting record."
+                            : "This meeting summary is currently an unapproved draft pending review and confirmation by the meeting host."}
+                        </p>
+                        {approvalError && (
+                          <p className="text-caption-2-medium text-text-error-primary">
+                            {approvalError}
+                          </p>
+                        )}
+                      </div>
+                    ) : summary.reviewStatus === "approved" ? (
+                      <div className="px-3.5 py-2.5 rounded-xl border border-status-lime-text/20 bg-status-lime-text/5 flex items-center justify-between text-caption-1-medium text-text-secondary">
+                        <div className="flex items-center gap-2">
+                          <span className="size-2 rounded-full bg-status-lime-text" />
+                          <span className="font-semibold text-text-primary">Approved Permanent Record</span>
+                        </div>
+                        {summary.approvedAt && (
+                          <span className="text-caption-2-medium text-text-tertiary">
+                            Approved {new Date(summary.approvedAt).toLocaleDateString([], { month: "short", day: "numeric" })}
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
+
                     {/* Executive Summary */}
                     <div className="p-4 rounded-2xl border border-border-button-default bg-background-secondary-default/40 flex flex-col gap-2">
                       <span className="text-caption-1-semibold text-text-tertiary uppercase tracking-wider">
@@ -1843,17 +1918,39 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
                           Key Decisions Made
                         </span>
                         <div className="grid grid-cols-1 gap-2">
-                          {summary.keyDecisions.map((decision, idx) => (
-                            <div
-                              key={idx}
-                              className="p-3 rounded-xl border border-border-button-default bg-background-primary-default flex items-start gap-2.5 shadow-2xs"
-                            >
-                              <RiCheckLine className="size-4 text-accent-500 shrink-0 mt-0.5" />
-                              <span className="text-body-medium text-text-primary font-medium leading-relaxed">
-                                {decision}
-                              </span>
-                            </div>
-                          ))}
+                          {summary.keyDecisions.map((item, idx) => {
+                            const isObject = typeof item === "object" && item !== null;
+                            const decisionText = isObject ? (item as any).decision : item;
+                            const evidenceText = isObject ? (item as any).evidence : null;
+                            const status = isObject ? (item as any).status : "confirmed";
+
+                            if (status !== "confirmed") return null;
+
+                            return (
+                              <div
+                                key={idx}
+                                className="p-3 rounded-xl border border-border-button-default bg-background-primary-default flex flex-col gap-1.5 shadow-2xs"
+                              >
+                                <div className="flex items-start gap-2.5">
+                                  <RiCheckLine className="size-4 text-accent-500 shrink-0 mt-0.5" />
+                                  <span className="text-body-medium text-text-primary font-medium leading-relaxed">
+                                    {decisionText}
+                                  </span>
+                                </div>
+                                {evidenceText && (
+                                  <details className="group cursor-pointer select-none ps-6">
+                                    <summary className="text-caption-2-medium text-text-tertiary hover:text-text-secondary flex items-center gap-1 list-none focus:outline-none">
+                                      <span className="group-open:hidden">▸ Inspect source excerpt</span>
+                                      <span className="hidden group-open:inline">▾ Hide source excerpt</span>
+                                    </summary>
+                                    <p className="mt-1 ps-2.5 py-1 text-caption-1-regular text-text-secondary border-s-2 border-accent-500/40 bg-background-tertiary-default/40 rounded-e-md italic font-normal">
+                                      &ldquo;{evidenceText}&rdquo;
+                                    </p>
+                                  </details>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     )}

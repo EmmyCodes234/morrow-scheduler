@@ -12,14 +12,17 @@ import {
   verifyAssigneeOwnership,
   verifyDeadlineGrounding,
   normalizeExecutiveSummaryClaim,
+  normalizeDecisionItem,
   VeraError,
   VeraTimeoutError,
   VeraValidationError,
   VeraInsufficientEvidenceError,
   DEEPSEEK_TIMEOUT_MS,
   type VeraSummaryClaim,
+  type VeraDecision,
+  type VeraLedger,
 } from "@/lib/intelligence/vera";
-import { concludeRoomAndSynthesize, updateRoomNotes } from "@/lib/room/room-service";
+import { concludeRoomAndSynthesize, updateRoomNotes, approveRoomLedger } from "@/lib/room/room-service";
 
 describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Grounding", () => {
   const originalEnv = process.env;
@@ -307,7 +310,11 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
       );
 
       expect(validated.keyDecisions).toHaveLength(1);
-      expect(validated.keyDecisions[0]).toBe("Proceed with Postgres schema migration on Friday");
+      expect(validated.keyDecisions[0]).toEqual({
+        decision: "Proceed with Postgres schema migration on Friday",
+        status: "confirmed",
+        evidence: "agree to proceed with the Postgres schema migration on Friday",
+      });
     });
 
     it("rejects unsupported decisions when evidence is absent from the source material", () => {
@@ -967,6 +974,396 @@ describe("Vera Intelligence Engine — Evidence-Bound Synthesis & Participant Gr
       const result = await concludeRoomAndSynthesize("token-stale", mockDb);
       expect(result.success).toBe(false);
       expect(result.status).toBe("stale_worker");
+    });
+  });
+
+  // =========================================================================
+  // Task 1.1.5: Conservative Decision Validation, Evidence Preservation, Host Review & Strict Grounding
+  // =========================================================================
+  describe("Task 1.1.5 — Conservative Decision Validation, Evidence Preservation & Host Review", () => {
+    it("rejects decision with missing status from being classified as confirmed", () => {
+      expect(isConfirmedDecision("Launch beta on Friday", "agreed to launch beta on Friday", undefined)).toBe(false);
+      expect(isConfirmedDecision("Launch beta on Friday", "agreed to launch beta on Friday", "")).toBe(false);
+
+      const context = {
+        hostName: "Emmanuel Enyi",
+        guestName: "Sarah Connor",
+        sharedNotes: "We agreed to launch beta on Friday.",
+      };
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [{ claim: "Launch beta", evidence: "agreed to launch beta on Friday" }],
+          keyDecisions: [
+            {
+              decision: "Launch beta on Friday",
+              // status missing
+              evidence: "agreed to launch beta on Friday",
+            } as any,
+          ],
+          actionItems: [],
+        },
+        context
+      );
+      expect(validated.keyDecisions).toHaveLength(0);
+    });
+
+    it("rejects plain-string new decision entries without structured validation", () => {
+      const context = {
+        hostName: "Emmanuel Enyi",
+        guestName: "Sarah Connor",
+        sharedNotes: "We agreed to adopt Postgres 16 for production.",
+      };
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [{ claim: "Adopt Postgres", evidence: "agreed to adopt Postgres 16 for production." }],
+          keyDecisions: [
+            "Adopt Postgres 16 for production" as any,
+          ],
+          actionItems: [],
+        },
+        context
+      );
+      expect(validated.keyDecisions).toHaveLength(0);
+    });
+
+    it("preserves structured decision object with confirmed status and verified evidence", () => {
+      const context = {
+        hostName: "Emmanuel Enyi",
+        guestName: "Sarah Connor",
+        sharedNotes: "We agreed to proceed with the Postgres schema migration on Friday.",
+      };
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [{ claim: "Proceed with migration", evidence: "agreed to proceed with the Postgres schema migration on Friday" }],
+          keyDecisions: [
+            {
+              decision: "Proceed with Postgres schema migration on Friday",
+              status: "confirmed",
+              evidence: "agreed to proceed with the Postgres schema migration on Friday",
+            },
+          ],
+          actionItems: [],
+        },
+        context
+      );
+      expect(validated.keyDecisions).toHaveLength(1);
+      expect(validated.keyDecisions[0]).toEqual({
+        decision: "Proceed with Postgres schema migration on Friday",
+        status: "confirmed",
+        evidence: "agreed to proceed with the Postgres schema migration on Friday",
+      });
+    });
+
+    it("does not classify proposed or open-question decisions as confirmed", () => {
+      expect(isConfirmedDecision("Consider GraphQL", "We could consider GraphQL", "proposed")).toBe(false);
+      expect(isConfirmedDecision("Database choice", "Which database to pick", "open_question")).toBe(false);
+
+      const context = {
+        hostName: "Emmanuel Enyi",
+        guestName: "Sarah Connor",
+        sharedNotes: "We discussed GraphQL as an alternative but did not decide.",
+      };
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [{ claim: "Discussed GraphQL", evidence: "discussed GraphQL as an alternative" }],
+          keyDecisions: [
+            {
+              decision: "Adopt GraphQL for mobile clients",
+              status: "proposed",
+              evidence: "discussed GraphQL as an alternative",
+            },
+            {
+              decision: "Which API architecture to use?",
+              status: "open_question",
+              evidence: "discussed GraphQL as an alternative",
+            },
+          ],
+          actionItems: [],
+        },
+        context
+      );
+      expect(validated.keyDecisions).toHaveLength(0);
+    });
+
+    it("rejects decisions containing explicit negation or refusal language", () => {
+      const negativeCases = [
+        {
+          decision: "We did not agree to adopt Redis",
+          evidence: "We did not agree to adopt Redis for session caching",
+        },
+        {
+          decision: "Cannot proceed with migration yet",
+          evidence: "cannot proceed with migration yet until tests pass",
+        },
+        {
+          decision: "Have not finalized the cloud provider",
+          evidence: "have not finalized the cloud provider",
+        },
+        {
+          decision: "Sarah refused to deploy on Friday",
+          evidence: "Sarah refused to deploy on Friday due to stability risks",
+        },
+        {
+          decision: "Decision against migrating to DynamoDB",
+          evidence: "We decided against migrating to DynamoDB",
+        },
+      ];
+
+      for (const { decision, evidence } of negativeCases) {
+        expect(isConfirmedDecision(decision, evidence, "confirmed")).toBe(false);
+      }
+    });
+
+    it("rejects a decision when the evidence contains contradictory or qualified negation", () => {
+      const context = {
+        hostName: "Emmanuel Enyi",
+        guestName: "Sarah Connor",
+        sharedNotes: "The team discussed backend caching options. The team specifically did not agree to adopt Redis caching.",
+      };
+      const validated = validateVeraLedger(
+        {
+          executiveSummary: [{ claim: "Discussed backend caching options", evidence: "discussed backend caching options" }],
+          keyDecisions: [
+            {
+              decision: "Adopt Redis caching",
+              status: "confirmed",
+              evidence: "specifically did not agree to adopt Redis caching",
+            },
+          ],
+          actionItems: [],
+        },
+        context
+      );
+      expect(validated.keyDecisions).toHaveLength(0);
+    });
+
+    it("ensures decision evidence is preserved in VeraLedger structured data", () => {
+      const ledger: VeraLedger = {
+        executiveSummary: [{ claim: "Summary", evidence: "Source quote" }],
+        keyDecisions: [
+          {
+            decision: "Migrate to Tailwind v4",
+            status: "confirmed",
+            evidence: "agreed to migrate to Tailwind v4 next week",
+          },
+        ],
+        actionItems: [],
+        reviewStatus: "pending_host_review",
+      };
+
+      const normalized = ledger.keyDecisions.map(normalizeDecisionItem);
+      expect(normalized[0]).toEqual({
+        decision: "Migrate to Tailwind v4",
+        status: "confirmed",
+        evidence: "agreed to migrate to Tailwind v4 next week",
+      });
+    });
+
+    it("normalizes historical plain-string decisions for backward compatibility", () => {
+      const legacyDecision = "Adopt semantic design tokens";
+      const normalized = normalizeDecisionItem(legacyDecision);
+      expect(normalized).toEqual({
+        decision: "Adopt semantic design tokens",
+        status: "confirmed",
+      });
+
+      const structuredDecision: VeraDecision = {
+        decision: "Adopt semantic design tokens",
+        status: "confirmed",
+        evidence: "agreed to adopt semantic design tokens",
+      };
+      expect(normalizeDecisionItem(structuredDecision)).toEqual(structuredDecision);
+    });
+
+    it("rejects speaker labels without affirmative commitment as action ownership", () => {
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: We discussed the migration")).toBe(false);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: The migration is still unassigned")).toBe(false);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: Has anyone looked at the schema?")).toBe(false);
+    });
+
+    it("verifies explicit first-person commitment and third-person assignments", () => {
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: I will handle the migration")).toBe(true);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: I'll deploy the build")).toBe(true);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: Let me review the pull request")).toBe(true);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: I can take this task")).toBe(true);
+
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah will handle the database migration")).toBe(true);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah agreed to deploy the changes")).toBe(true);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Assigned to Sarah")).toBe(true);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Action item for Sarah: write tests")).toBe(true);
+    });
+
+    it("rejects action item assignments when the participant explicitly refuses or declines", () => {
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: I cannot take responsibility for the migration")).toBe(false);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah: I won't be able to handle deployment")).toBe(false);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah refused to take on the database migration")).toBe(false);
+      expect(verifyAssigneeOwnership("Sarah Connor", "Sarah is not responsible for the backend services")).toBe(false);
+      expect(verifyAssigneeOwnership("Sarah Connor", "not assigned to Sarah")).toBe(false);
+    });
+
+    it("rejects scattered temporal words but preserves contiguous deadline phrases", () => {
+      const source = "We had a meeting on Friday. The bug was detected at 3pm yesterday.";
+      expect(verifyDeadlineGrounding("Friday at 3pm", "meeting on Friday", source)).toBeUndefined();
+
+      const source2 = "Sarah agreed to finish the audit by Thursday afternoon.";
+      expect(verifyDeadlineGrounding("by Thursday afternoon", "audit by Thursday afternoon", source2)).toBe("by Thursday afternoon");
+      expect(verifyDeadlineGrounding("Thursday afternoon", "audit by Thursday afternoon", source2)).toBe("Thursday afternoon");
+      expect(verifyDeadlineGrounding("next Friday", "launch the beta trial next Friday", "launch the beta trial next Friday")).toBe("next Friday");
+    });
+
+    it("initializes new synthesized ledgers with reviewStatus pending_host_review", async () => {
+      process.env.DEEPSEEK_API_KEY = "test-key";
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  executiveSummary: [{ claim: "Beta planned", evidence: "agreed to launch beta next Friday" }],
+                  keyDecisions: [{ decision: "Launch beta", status: "confirmed", evidence: "agreed to launch beta next Friday" }],
+                  actionItems: [],
+                }),
+              },
+            },
+          ],
+        }),
+      } as any);
+
+      const ledger = await generateVeraLedger({
+        eventTitle: "Sprint Review",
+        hostName: "Emmanuel Enyi",
+        guestName: "Sarah Connor",
+        agenda: [],
+        sharedNotes: "We agreed to launch beta next Friday.",
+      });
+
+      expect(ledger.reviewStatus).toBe("pending_host_review");
+    });
+
+    it("allows the meeting host to approve a pending ledger via approveRoomLedger", async () => {
+      const mockHostId = "host-user-123";
+      const unapprovedLedger: VeraLedger = {
+        executiveSummary: [{ claim: "Beta planned", evidence: "launch beta" }],
+        keyDecisions: [{ decision: "Launch beta", status: "confirmed", evidence: "launch beta" }],
+        actionItems: [],
+        reviewStatus: "pending_host_review",
+      };
+
+      let dbLedger: any = unapprovedLedger;
+      const mockDb: any = {
+        query: {
+          rooms: {
+            findFirst: vi.fn().mockImplementation(() =>
+              Promise.resolve({
+                id: "room-abc",
+                accessToken: "token-abc",
+                status: "concluded",
+                booking: { host: { id: mockHostId } },
+                veraLedger: dbLedger,
+              })
+            ),
+          },
+        },
+        update: vi.fn().mockReturnValue({
+          set: vi.fn().mockImplementation((updates: any) => ({
+            where: vi.fn().mockReturnValue({
+              returning: vi.fn().mockImplementation(() => {
+                dbLedger = updates.veraLedger;
+                return Promise.resolve([{ id: "room-abc", veraLedger: dbLedger }]);
+              }),
+            }),
+          })),
+        }),
+      };
+
+      const result = await approveRoomLedger("token-abc", mockHostId, mockDb);
+      expect(result.success).toBe(true);
+      expect(result.status).toBe("approved");
+      expect(result.veraLedger?.reviewStatus).toBe("approved");
+      expect(result.veraLedger?.approvedBy).toBe(mockHostId);
+      expect(result.veraLedger?.approvedAt).toBeDefined();
+    });
+
+    it("forbids an unrelated authenticated user from approving the host's ledger", async () => {
+      const mockHostId = "host-user-123";
+      const intruderId = "intruder-user-999";
+      const mockDb: any = {
+        query: {
+          rooms: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: "room-abc",
+              accessToken: "token-abc",
+              status: "concluded",
+              booking: { host: { id: mockHostId } },
+              veraLedger: {
+                executiveSummary: [{ claim: "Summary", evidence: "quote" }],
+                actionItems: [],
+                reviewStatus: "pending_host_review",
+              },
+            }),
+          },
+        },
+      };
+
+      const result = await approveRoomLedger("token-abc", intruderId, mockDb);
+      expect(result.success).toBe(false);
+      expect(result.status).toBe("forbidden");
+      expect(result.error).toContain("Forbidden");
+    });
+
+    it("forbids guest or missing host identity from approving the ledger", async () => {
+      const mockDb: any = {
+        query: {
+          rooms: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: "room-abc",
+              accessToken: "token-abc",
+              status: "concluded",
+              booking: { host: { id: "host-user-123" } },
+              veraLedger: { reviewStatus: "pending_host_review" },
+            }),
+          },
+        },
+      };
+
+      const result = await approveRoomLedger("token-abc", "", mockDb);
+      expect(result.success).toBe(false);
+      expect(result.status).toBe("forbidden");
+    });
+
+    it("handles repeated approvals idempotently without corrupting ledger", async () => {
+      const mockHostId = "host-user-123";
+      const existingApprovedLedger: VeraLedger = {
+        executiveSummary: [{ claim: "Summary", evidence: "quote" }],
+        keyDecisions: [{ decision: "Launch beta", status: "confirmed", evidence: "quote" }],
+        actionItems: [],
+        reviewStatus: "approved",
+        approvedAt: "2026-11-05T08:00:00.000Z",
+        approvedBy: mockHostId,
+      };
+
+      const mockDb: any = {
+        query: {
+          rooms: {
+            findFirst: vi.fn().mockResolvedValue({
+              id: "room-abc",
+              accessToken: "token-abc",
+              status: "concluded",
+              booking: { host: { id: mockHostId } },
+              veraLedger: existingApprovedLedger,
+            }),
+          },
+        },
+        update: vi.fn(),
+      };
+
+      const result = await approveRoomLedger("token-abc", mockHostId, mockDb);
+      expect(result.success).toBe(true);
+      expect(result.status).toBe("already_approved");
+      expect(result.veraLedger?.approvedAt).toBe("2026-11-05T08:00:00.000Z");
+      expect(result.veraLedger?.approvedBy).toBe(mockHostId);
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
   });
 });

@@ -5,6 +5,7 @@ import {
   updateRoomAgenda,
   addRoomFile,
   concludeRoomAndSynthesize,
+  approveRoomLedger,
 } from "@/lib/room/room-service";
 import { auth } from "@/auth";
 
@@ -125,6 +126,54 @@ export async function PATCH(
         success: true,
         status: "concluded",
         veraLedger: result.veraLedger,
+      });
+    }
+
+    // Host-Only Operation: Explicitly Approving the Vera Meeting Record
+    if (body.action === "approve_ledger") {
+      const session = await auth();
+      if (!session?.user?.id) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Unauthorized: You must be signed in to approve a meeting record.",
+          },
+          { status: 401 }
+        );
+      }
+
+      if (session.user.id !== room.booking.host.id) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Forbidden: Only the authenticated meeting host can approve this ledger.",
+          },
+          { status: 403 }
+        );
+      }
+
+      const approveResult = await approveRoomLedger(token, session.user.id);
+      if (!approveResult.success) {
+        const httpStatus =
+          approveResult.status === "forbidden"
+            ? 403
+            : approveResult.status === "not_found"
+            ? 404
+            : 400;
+
+        return NextResponse.json(
+          {
+            success: false,
+            error: approveResult.error || "Failed to approve ledger.",
+          },
+          { status: httpStatus }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        status: "approved",
+        veraLedger: approveResult.veraLedger,
       });
     }
 

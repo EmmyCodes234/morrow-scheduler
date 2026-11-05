@@ -9,6 +9,7 @@ import {
   type VeraAgendaItem,
   type VeraLedger,
   type VeraSummaryClaim,
+  type VeraDecision,
 } from "@/lib/intelligence/vera";
 
 export type RoomDb = typeof defaultDb;
@@ -69,8 +70,11 @@ export interface RoomDetails {
   veraLedger?: {
     executiveSummary?: Array<string | VeraSummaryClaim>;
     actionItems?: Array<{ id: string; task: string; assignee: string; priority: "high" | "medium" | "low"; done: boolean; deadline?: string; evidence?: string }>;
-    keyDecisions?: string[];
+    keyDecisions?: Array<string | VeraDecision>;
     suggestedFollowUp?: string;
+    reviewStatus?: "pending_host_review" | "approved";
+    approvedAt?: string;
+    approvedBy?: string;
   } | null;
 }
 
@@ -492,4 +496,91 @@ export async function concludeRoomAndSynthesize(
       code: isInsufficientEvidence ? "INSUFFICIENT_EVIDENCE" : undefined,
     };
   }
+}
+
+/**
+ * Host-authoritative ledger approval.
+ * Transitions a Vera meeting ledger from "pending_host_review" to "approved".
+ * Enforces authenticated host ownership and safe idempotency.
+ */
+export async function approveRoomLedger(
+  token: string,
+  hostUserId: string,
+  dbClient: RoomDb = defaultDb
+): Promise<{
+  success: boolean;
+  status: "approved" | "already_approved" | "not_found" | "forbidden" | "failed";
+  veraLedger?: VeraLedger | null;
+  error?: string;
+}> {
+  if (!token || typeof token !== "string" || !hostUserId) {
+    return {
+      success: false,
+      status: "forbidden",
+      error: "Missing room token or host identification.",
+    };
+  }
+
+  const room = await dbClient.query.rooms.findFirst({
+    where: eq(rooms.accessToken, token.trim()),
+    with: {
+      booking: {
+        with: {
+          host: true,
+        },
+      },
+    },
+  });
+
+  if (!room || !room.booking || !room.booking.host) {
+    return { success: false, status: "not_found", error: "Room not found." };
+  }
+
+  if (room.booking.host.id !== hostUserId) {
+    return {
+      success: false,
+      status: "forbidden",
+      error: "Forbidden: Only the authenticated meeting host can approve this ledger.",
+    };
+  }
+
+  if (!room.veraLedger) {
+    return {
+      success: false,
+      status: "failed",
+      error: "No meeting record exists to approve. Conclude the call first.",
+    };
+  }
+
+  const currentLedger = room.veraLedger as unknown as VeraLedger;
+  if (currentLedger.reviewStatus === "approved") {
+    return {
+      success: true,
+      status: "already_approved",
+      veraLedger: currentLedger,
+    };
+  }
+
+  const now = new Date();
+  const approvedLedger: VeraLedger = {
+    ...currentLedger,
+    reviewStatus: "approved",
+    approvedAt: now.toISOString(),
+    approvedBy: hostUserId,
+  };
+
+  const [updated] = await dbClient
+    .update(rooms)
+    .set({
+      veraLedger: approvedLedger,
+      updatedAt: now,
+    })
+    .where(eq(rooms.accessToken, token.trim()))
+    .returning();
+
+  return {
+    success: true,
+    status: "approved",
+    veraLedger: (updated?.veraLedger as unknown as VeraLedger) || approvedLedger,
+  };
 }

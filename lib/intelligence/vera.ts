@@ -27,11 +27,20 @@ export interface VeraPreMeetingBrief {
   suggestedAgenda: VeraAgendaItem[];
 }
 
+export interface VeraDecision {
+  decision: string;
+  status: "confirmed" | "proposed" | "open_question";
+  evidence: string;
+}
+
 export interface VeraLedger {
   executiveSummary: Array<VeraSummaryClaim | string>;
   actionItems: VeraActionItem[];
-  keyDecisions: string[];
+  keyDecisions: Array<VeraDecision | string>;
   suggestedFollowUp?: string;
+  reviewStatus?: "pending_host_review" | "approved";
+  approvedAt?: string;
+  approvedBy?: string;
 }
 
 export const DEEPSEEK_TIMEOUT_MS = 25_000;
@@ -269,19 +278,35 @@ export function isEvidenceRelevantToClaim(claim: string, evidence: string): bool
 }
 
 /**
+ * Safely escapes characters in a string for inclusion in regular expressions.
+ */
+export function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Verifies that a decision represents an explicitly confirmed agreement,
- * rejecting tentative proposals, exploratory ideas, or open questions.
+ * rejecting tentative proposals, exploratory ideas, open questions,
+ * and negated or contradictory language.
  */
 export function isConfirmedDecision(decision: string, evidence: string, status?: string): boolean {
-  if (status && status.toLowerCase() !== "confirmed") {
+  if (!status || status.trim().toLowerCase() !== "confirmed") {
     return false;
   }
 
   const normDecision = normalizeForEvidenceComparison(decision);
   const normEvidence = normalizeForEvidenceComparison(evidence);
 
-  // Proposal, speculative, or tentative language without definitive consensus
-  const proposalPatterns = /\b(propose|proposed|proposal|suggest|suggested|suggestion|consider|considering|might|could|tentative|tentatively|maybe|perhaps|tbd|unresolved|undecided|discuss\s+further|open\s+question|\?)\b/i;
+  // Check for negative, contradictory, qualified, or refusal language:
+  // e.g. "We did not agree...", "cannot proceed", "have not finalized", "not moving"
+  const negationPatterns = /\b(not|did\s+not|didn't|do\s+not|don't|does\s+not|doesn't|cannot|can't|cant|won't|wont|will\s+not|never|no\b|neither|refused|refuse|refuses|rejected|reject|rejects|opposed|oppose|against|haven't|have\s+not|hasn't|has\s+not|unresolved|undecided|yet)\b/i;
+
+  if (negationPatterns.test(decision) || negationPatterns.test(evidence)) {
+    return false;
+  }
+
+  // Proposal, speculative, conditional, or tentative language without definitive consensus
+  const proposalPatterns = /\b(propose|proposed|proposal|suggest|suggested|suggestion|consider|considering|might|could|tentative|tentatively|maybe|perhaps|tbd|discuss\s+further|open\s+question|remains\s+open|\?)\b/i;
 
   if (proposalPatterns.test(normDecision) || proposalPatterns.test(normEvidence)) {
     return false;
@@ -292,42 +317,63 @@ export function isConfirmedDecision(decision: string, evidence: string, status?:
 
 /**
  * Verifies that an action item's evidence excerpt establishes active ownership or commitment,
- * rather than merely mentioning the participant's name in an unrelated or passive context.
+ * rather than merely mentioning the participant's name or speaker tag in passing.
+ * Distinguishes direct commitments from passive discussion, refusals, and unassigned mentions.
  */
 export function verifyAssigneeOwnership(
   assigneeName: string,
   evidence: string
 ): boolean {
   if (!assigneeName || assigneeName === "Unassigned") return false;
-  const normEvidence = normalizeForEvidenceComparison(evidence);
-  const firstName = assigneeName.toLowerCase().split(/\s+/)[0];
-  const fullName = normalizeForEvidenceComparison(assigneeName);
+  const trimmedEvidence = evidence.trim();
+  const normEvidence = normalizeForEvidenceComparison(trimmedEvidence);
+  const firstName = assigneeName.trim().toLowerCase().split(/\s+/)[0];
+  const safeFirst = escapeRegex(firstName);
+  const safeFull = escapeRegex(assigneeName.trim());
 
   // Participant name must occur in evidence
-  if (!normEvidence.includes(firstName) && !normEvidence.includes(fullName)) {
+  if (
+    !new RegExp(`\\b${safeFirst}\\b`, "i").test(trimmedEvidence) &&
+    !new RegExp(`\\b${safeFull}\\b`, "i").test(trimmedEvidence)
+  ) {
     return false;
   }
 
-  // 1. Speaker line in transcript: "Name: ...", "Name: I will..."
-  if (
-    new RegExp(`\\b${firstName}\\s*:\\s*(i\\s+will|i'll|i\\s+can|let\\s+me|i\\s+shall|we\\s+can)?`, "i").test(evidence) ||
-    new RegExp(`\\b${firstName}\\s*:`, "i").test(evidence)
-  ) {
+  // 1. Explicit refusal or negation check:
+  // e.g. "Sarah: I cannot take responsibility...", "Sarah cannot...", "Sarah will not...", "not me", "still unassigned"
+  const refusalPatterns = [
+    new RegExp(`\\b${safeFirst}\\s*:\\s*.*\\b(cannot|can't|cant|will\\s+not|won't|wont|am\\s+unable|refuse|not\\s+me|not\\s+taking|not\\s+responsible|unassigned)\\b`, "i"),
+    new RegExp(`\\b${safeFirst}\\s+(cannot|can't|cant|will\\s+not|won't|wont|refuses|is\\s+not\\s+responsible|is\\s+not\\s+handling)\\b`, "i"),
+    new RegExp(`\\b(not\\s+assigned\\s+to|cannot\\s+assign\\s+to)\\s+${safeFirst}\\b`, "i"),
+  ];
+  if (refusalPatterns.some((pattern) => pattern.test(trimmedEvidence))) {
+    return false;
+  }
+
+  // 2. Speaker label with explicit first-person commitment:
+  // "Sarah: I will...", "Sarah: I'll...", "Sarah: Let me...", "Sarah: I can take/handle...", "Sarah: I commit to..."
+  // Note: A speaker label alone like "Sarah: We discussed..." or "Sarah: The migration is..." does NOT commit.
+  const speakerCommitment = new RegExp(
+    `\\b${safeFirst}\\s*:\\s*(i\\s+will|i'll|let\\s+me|i\\s+shall|i\\s+can\\s+(take|handle|do|lead)|i\\s+(commit|take|handle|volunteer))\\b`,
+    "i"
+  );
+  if (speakerCommitment.test(trimmedEvidence)) {
     return true;
   }
 
-  // 2. Ownership patterns on normalized evidence
-  const ownershipPatterns = [
-    new RegExp(`\\b${firstName}\\s+(i\\s+will|i'll|i\\s+can|let\\s+me|will|shall|to|agreed|commits|committed|is\\s+handling|handles|taking|takes|volunteered)\\b`, "i"),
-    new RegExp(`\\b(assigned\\s+to|action\\s+item\\s+for|ownership\\s+by|responsible\\s+for|responsible)\\s+(:\\s*)?${firstName}\\b`, "i"),
+  // 3. Third-person affirmative assignment patterns:
+  // "Sarah will handle...", "Sarah to deploy...", "assigned to Sarah", "action item for Sarah", "Sarah is responsible for..."
+  const thirdPersonAssignment = [
+    new RegExp(`\\b${safeFirst}\\s+(will|shall|to|agreed\\s+to|committed\\s+to|commits\\s+to|is\\s+handling|handles|taking|takes|volunteered\\s+to)\\b`, "i"),
+    new RegExp(`\\b(assigned\\s+to|action\\s+item\\s+for|ownership\\s+by|responsible\\s+for)\\s+(:\\s*)?${safeFirst}\\b`, "i"),
   ];
 
-  return ownershipPatterns.some((pattern) => pattern.test(normEvidence));
+  return thirdPersonAssignment.some((pattern) => pattern.test(normEvidence));
 }
 
 /**
  * Validates that an action item deadline is grounded in the source notes or transcript,
- * rejecting invented calendar dates or arbitrary model timestamps.
+ * requiring contiguous source phrasing and rejecting scattered or invented timestamps.
  */
 export function verifyDeadlineGrounding(
   deadline: string,
@@ -342,24 +388,15 @@ export function verifyDeadlineGrounding(
   const normEvidence = normalizeForEvidenceComparison(evidence);
   const normSource = normalizeForEvidenceComparison(source);
 
-  // Verbatim or normalized inclusion
+  // 1. Exact contiguous normalized match in evidence or source
   if (normEvidence.includes(normDeadline) || normSource.includes(normDeadline)) {
     return trimmed;
   }
 
-  // Check temporal keywords in deadline (e.g. "friday", "tomorrow", "next week", "eod")
-  const temporalWords = trimmed
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
-
-  if (temporalWords.length > 0) {
-    const allFound = temporalWords.every(
-      (tw) => normEvidence.includes(tw) || normSource.includes(tw)
-    );
-    if (allFound) {
-      return trimmed;
-    }
+  // 2. Exact match stripped of leading temporal prepositions (e.g. "by Thursday afternoon" -> "Thursday afternoon")
+  const stripped = normDeadline.replace(/^(by|before|on|at|due|for)\s+/, "").trim();
+  if (stripped.length >= 3 && (normEvidence.includes(stripped) || normSource.includes(stripped))) {
+    return trimmed;
   }
 
   return undefined;
@@ -376,6 +413,19 @@ export function normalizeExecutiveSummaryClaim(
     return { claim: item };
   }
   return { claim: item.claim, evidence: item.evidence };
+}
+
+/**
+ * Normalizes a key decision item for reading, preserving backward compatibility
+ * with previously saved plain strings.
+ */
+export function normalizeDecisionItem(
+  item: string | VeraDecision
+): { decision: string; status: "confirmed" | "proposed" | "open_question"; evidence?: string } {
+  if (typeof item === "string") {
+    return { decision: item, status: "confirmed" };
+  }
+  return item;
 }
 
 export async function callDeepSeek(
@@ -448,14 +498,23 @@ export async function callDeepSeek(
  */
 export function validateVeraLedger(
   raw: unknown,
-  context: { hostName: string; guestName: string; sourceEvidence?: string }
+  context: {
+    hostName: string;
+    guestName: string;
+    sourceEvidence?: string;
+    sharedNotes?: string;
+    transcript?: string;
+  }
 ): VeraLedger {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new VeraValidationError("Model output is not a valid JSON object.");
   }
 
   const rawObj = raw as Record<string, unknown>;
-  const source = context.sourceEvidence || "";
+  const source =
+    context.sourceEvidence ||
+    [context.sharedNotes, context.transcript].filter(Boolean).join("\n") ||
+    "";
 
   // 1. executiveSummary: newly generated output must contain { claim, evidence } objects with verifiable evidence
   if (!Array.isArray(rawObj.executiveSummary) || rawObj.executiveSummary.length === 0) {
@@ -505,62 +564,71 @@ export function validateVeraLedger(
     throw new VeraValidationError("No executive summary claims could be verified against the supplied meeting evidence.");
   }
 
-  // 2. keyDecisions: must be a valid array of decision objects or confirmed strings
+  // 2. keyDecisions: newly generated output must contain structured VeraDecision objects
   if (!Array.isArray(rawObj.keyDecisions)) {
-    throw new VeraValidationError("keyDecisions must be an array of strings.");
+    throw new VeraValidationError("keyDecisions must be an array.");
   }
 
-  const keyDecisions: string[] = [];
+  const keyDecisions: VeraDecision[] = [];
   for (let i = 0; i < rawObj.keyDecisions.length; i++) {
     const item = rawObj.keyDecisions[i];
-    let decisionText = "";
-    let evidenceQuote = "";
-    let status = "confirmed";
 
+    // Reject plain strings from newly generated model output
     if (typeof item === "string") {
-      decisionText = item.trim();
-      evidenceQuote = decisionText;
-    } else if (item && typeof item === "object") {
-      const obj = item as Record<string, unknown>;
-      decisionText = typeof obj.decision === "string" ? obj.decision.trim() : typeof obj.text === "string" ? obj.text.trim() : "";
-      evidenceQuote = typeof obj.evidence === "string" ? obj.evidence.trim() : "";
-      if (typeof obj.status === "string" && obj.status.trim()) {
-        status = obj.status.trim().toLowerCase();
-      }
-    }
-
-    if (!decisionText) {
+      console.warn(`[Vera] Rejecting plain-string decision without evidence at index ${i}: "${item}"`);
       continue;
     }
 
-    // Proposals and unresolved open questions must NOT enter confirmed decisions
-    if (status !== "confirmed") {
-      console.warn(`[Vera] Rejecting non-confirmed decision (${status}): "${decisionText}"`);
+    if (!item || typeof item !== "object") {
       continue;
     }
 
-    // Explicit supporting evidence required
+    const obj = item as Record<string, unknown>;
+    const decisionText = typeof obj.decision === "string" ? obj.decision.trim() : typeof obj.text === "string" ? obj.text.trim() : "";
+    const evidenceQuote = typeof obj.evidence === "string" ? obj.evidence.trim() : "";
+
+    // Reject missing or invalid status. NEVER default missing status to confirmed!
+    const rawStatus = typeof obj.status === "string" ? obj.status.trim().toLowerCase() : "";
+    if (!rawStatus || !["confirmed", "proposed", "open_question"].includes(rawStatus)) {
+      console.warn(`[Vera] Rejecting decision with missing or invalid status at index ${i}: "${decisionText}"`);
+      continue;
+    }
+
+    if (!decisionText || !evidenceQuote) {
+      continue;
+    }
+
+    // Only confirmed decisions enter the confirmed collection
+    if (rawStatus !== "confirmed") {
+      console.warn(`[Vera] Rejecting non-confirmed decision (${rawStatus}): "${decisionText}"`);
+      continue;
+    }
+
+    // Check whether excerpt or decision language is negative, qualified, or tentative
+    if (!isConfirmedDecision(decisionText, evidenceQuote, rawStatus)) {
+      console.warn(`[Vera] Rejecting unconfirmed, negative, or tentative decision: "${decisionText}"`);
+      continue;
+    }
+
+    // Explicit supporting evidence required in source
     if (source) {
-      const quoteToCheck = evidenceQuote || decisionText;
-      if (!evidenceOccursInSource(quoteToCheck, source)) {
+      if (!evidenceOccursInSource(evidenceQuote, source)) {
         console.warn(`[Vera] Rejecting decision without source evidence: "${decisionText}"`);
         continue;
       }
 
       // Check evidence relevance: an unrelated quote cannot prove a decision
-      if (!isEvidenceRelevantToClaim(decisionText, quoteToCheck)) {
+      if (!isEvidenceRelevantToClaim(decisionText, evidenceQuote)) {
         console.warn(`[Vera] Rejecting decision because evidence is unrelated: "${decisionText}"`);
-        continue;
-      }
-
-      // Check whether excerpt or decision language is tentative/proposal
-      if (!isConfirmedDecision(decisionText, quoteToCheck, status)) {
-        console.warn(`[Vera] Rejecting tentative proposal from confirmed decisions: "${decisionText}"`);
         continue;
       }
     }
 
-    keyDecisions.push(decisionText);
+    keyDecisions.push({
+      decision: decisionText,
+      status: "confirmed",
+      evidence: evidenceQuote,
+    });
   }
 
   // 3. actionItems: must be a valid array of correctly structured items
@@ -813,9 +881,14 @@ ${combinedEvidence}`;
     { timeoutMs: params.timeoutMs }
   );
 
-  return validateVeraLedger(raw, {
+  const validated = validateVeraLedger(raw, {
     hostName: params.hostName,
     guestName: params.guestName,
     sourceEvidence: combinedEvidence,
   });
+
+  return {
+    ...validated,
+    reviewStatus: "pending_host_review",
+  };
 }
