@@ -1366,6 +1366,14 @@ export function DashboardView({
       </div>
 
       {/* MODALS */}
+      <NewMeetingModal
+        isOpen={isNewMeetingOpen}
+        onClose={() => setIsNewMeetingOpen(false)}
+        userTimezone={user.timezone}
+        onSuccess={() => {
+          loadMeetings();
+        }}
+      />
       <NewEventModal
         isOpen={isNewEventOpen}
         onClose={() => {
