@@ -40,6 +40,7 @@ import {
   RiAlertLine,
   RiSparklingLine,
   RiLoader4Line,
+  RiGroupLine,
 } from "@remixicon/react";
 import type { RoomDetails, RoomFileItem } from "@/lib/room/room-service";
 import type { VeraAgendaItem, VeraLedger } from "@/lib/intelligence/vera";
@@ -49,6 +50,104 @@ type LiveKitRoomType = import("livekit-client").Room;
 export interface RoomViewProps {
   initialRoom: RoomDetails;
   isHost?: boolean;
+}
+
+
+export interface GroupParticipant {
+  identity: string;
+  name: string;
+  isSpeaking: boolean;
+  hasVideo: boolean;
+  hasAudio: boolean;
+  videoTrack?: any;
+  audioTrack?: any;
+}
+
+function ParticipantTile({
+  name,
+  isLocal = false,
+  hasVideo,
+  videoTrack,
+  isSpeaking,
+  isMuted,
+  localVideoRef,
+}: {
+  name: string;
+  isLocal?: boolean;
+  hasVideo: boolean;
+  videoTrack?: any;
+  isSpeaking?: boolean;
+  isMuted?: boolean;
+  localVideoRef?: React.RefObject<HTMLVideoElement | null>;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (!isLocal && videoRef.current && videoTrack) {
+      videoTrack.attach(videoRef.current);
+      return () => {
+        if (videoRef.current) {
+          videoTrack.detach(videoRef.current);
+        }
+      };
+    }
+  }, [isLocal, videoTrack]);
+
+  const initials =
+    name
+      .split(" ")
+      .filter(Boolean)
+      .map((n) => n[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "U";
+
+  return (
+    <div
+      className={cx(
+        "relative rounded-2xl overflow-hidden bg-background-primary-default border border-border-button-default flex items-center justify-center transition-all duration-200 aspect-video sm:aspect-auto h-full min-h-[140px] sm:min-h-[180px] shadow-sm",
+        isSpeaking ? "ring-2 ring-accent-500 shadow-md" : ""
+      )}
+    >
+      {isLocal ? (
+        hasVideo ? (
+          <video
+            ref={localVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-full object-cover scale-x-[-1]"
+          />
+        ) : null
+      ) : hasVideo && videoTrack ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          className="w-full h-full object-cover"
+        />
+      ) : null}
+
+      {!hasVideo && (
+        <div className="flex flex-col items-center justify-center gap-2 p-3 text-center">
+          <Avatar size="md" initials={initials} color={isLocal ? "blue" : "lime"} />
+          <span className="text-caption-1-semibold text-text-primary max-w-[120px] truncate">
+            {name}
+          </span>
+        </div>
+      )}
+
+      <div className="absolute bottom-2 start-2 end-2 flex items-center justify-between pointer-events-none">
+        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/60 backdrop-blur-xs text-white text-caption-2-medium max-w-[85%] truncate">
+          {isMuted && <RiMicOffLine className="size-3 text-status-danger-text shrink-0" />}
+          <span className="truncate">{name} {isLocal ? "(You)" : ""}</span>
+        </div>
+        {isSpeaking && (
+          <div className="size-2 rounded-full bg-accent-500 animate-ping shrink-0" />
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
@@ -78,6 +177,8 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
   const screenShareVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const lkRoomRef = useRef<LiveKitRoomType | null>(null);
+  const remoteAudioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const [groupParticipants, setGroupParticipants] = useState<GroupParticipant[]>([]);
 
   // Collaborative Canvas State
   const [notes, setNotes] = useState(room.sharedNotes || "");
@@ -286,6 +387,42 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         lkRoomRef.current = lk;
         cleanupRoom = lk;
 
+        const syncParticipants = () => {
+          if (!lk) return;
+          const list: GroupParticipant[] = [];
+          lk.remoteParticipants.forEach((p) => {
+            let hasVideo = false;
+            let hasAudio = false;
+            let videoTrack: any = undefined;
+            let audioTrack: any = undefined;
+
+            p.trackPublications.forEach((pub) => {
+              if (pub.source === Track.Source.Camera && pub.videoTrack && pub.isSubscribed) {
+                hasVideo = !pub.isMuted;
+                videoTrack = pub.videoTrack;
+              }
+              if (pub.source === Track.Source.Microphone && pub.audioTrack && pub.isSubscribed) {
+                hasAudio = !pub.isMuted;
+                audioTrack = pub.audioTrack;
+              }
+            });
+
+            list.push({
+              identity: p.identity,
+              name: p.name || (p.identity.startsWith("host-") ? (room.meeting?.host?.name || "Host") : "Attendee"),
+              isSpeaking: p.isSpeaking,
+              hasVideo,
+              hasAudio,
+              videoTrack,
+              audioTrack,
+            });
+          });
+          setGroupParticipants(list);
+          if (room.type === "group_meeting") {
+            setRemoteHasVideo(list.some((p) => p.hasVideo));
+          }
+        };
+
         // Remote Track Subscriptions
         lk.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
           if (publication.source === Track.Source.ScreenShare && track.kind === Track.Kind.Video) {
@@ -293,23 +430,75 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
               track.attach(screenShareVideoRef.current);
             }
             setScreenSharePresenter({ name: participant.name || "Guest", isLocal: false });
-          } else if (track.kind === Track.Kind.Video && remoteVideoRef.current) {
-            track.attach(remoteVideoRef.current);
+          } else if (track.kind === Track.Kind.Audio) {
+            // Concurrent audio playback: every remote audio track gets a dedicated audio element
+            const trackKey = track.sid || `audio-${participant.identity}`;
+            let existingEl = remoteAudioElementsRef.current.get(trackKey);
+            if (!existingEl) {
+              const audioEl = track.attach();
+              audioEl.id = `remote-audio-${participant.identity}-${trackKey}`;
+              audioEl.style.display = "none";
+              remoteAudioElementsRef.current.set(trackKey, audioEl);
+            }
+            syncParticipants();
+          } else if (track.kind === Track.Kind.Video) {
+            if (room.type !== "group_meeting" && remoteVideoRef.current) {
+              track.attach(remoteVideoRef.current);
+            }
             setRemoteHasVideo(true);
-          } else if (track.kind === Track.Kind.Audio && remoteAudioRef.current) {
-            track.attach(remoteAudioRef.current);
+            syncParticipants();
           }
         });
 
         // Remote Track Unsubscriptions
-        lk.on(RoomEvent.TrackUnsubscribed, (track, publication) => {
-          track.detach();
+        lk.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
           if (publication.source === Track.Source.ScreenShare) {
+            track.detach();
             setScreenSharePresenter(null);
+          } else if (track.kind === Track.Kind.Audio) {
+            const trackKey = track.sid || (participant ? `audio-${participant.identity}` : undefined);
+            if (trackKey) {
+              const el = remoteAudioElementsRef.current.get(trackKey);
+              if (el) {
+                track.detach(el);
+                el.srcObject = null;
+                el.remove();
+                remoteAudioElementsRef.current.delete(trackKey);
+              } else {
+                track.detach();
+              }
+            } else {
+              track.detach();
+            }
+            syncParticipants();
           } else if (track.kind === Track.Kind.Video) {
-            setRemoteHasVideo(false);
+            track.detach();
+            if (lk.remoteParticipants.size <= 1) {
+              setRemoteHasVideo(false);
+            }
+            syncParticipants();
           }
         });
+
+        lk.on(RoomEvent.ParticipantConnected, () => syncParticipants());
+        lk.on(RoomEvent.ParticipantDisconnected, (participant) => {
+          participant.trackPublications.forEach((pub) => {
+            if (pub.track) {
+              const trackKey = pub.track.sid || `audio-${participant.identity}`;
+              const el = remoteAudioElementsRef.current.get(trackKey);
+              if (el) {
+                pub.track.detach(el);
+                el.srcObject = null;
+                el.remove();
+                remoteAudioElementsRef.current.delete(trackKey);
+              }
+            }
+          });
+          syncParticipants();
+        });
+
+        lk.on(RoomEvent.TrackMuted, () => syncParticipants());
+        lk.on(RoomEvent.TrackUnmuted, () => syncParticipants());
 
         // Local Track Published (for Screen Share self-view)
         lk.on(RoomEvent.LocalTrackPublished, (pub) => {
@@ -330,8 +519,11 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
 
         // Active Speakers Event
         lk.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-          const remoteSpeaker = speakers.find((s) => s.identity !== lk.localParticipant.identity);
-          setIsRemoteSpeaking(Boolean(remoteSpeaker));
+          const speakerIds = new Set(speakers.map((s) => s.identity));
+          setGroupParticipants((prev) =>
+            prev.map((p) => ({ ...p, isSpeaking: speakerIds.has(p.identity) }))
+          );
+          setIsRemoteSpeaking(speakers.some((s) => !s.isLocal));
         });
 
         // Real-Time Room Data Channel (Sync files, stage presentation & canvas across peers instantly)
@@ -388,6 +580,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         }
 
         setConnectionStatus("connected");
+        syncParticipants();
 
         // Enable Local Media (Mic & Cam)
         try {
@@ -413,6 +606,12 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
       isCancelled = true;
       if (cleanupRoom) {
         cleanupRoom.disconnect();
+        remoteAudioElementsRef.current.forEach((el, sid) => {
+          el.srcObject = null;
+          el.remove();
+        });
+        remoteAudioElementsRef.current.clear();
+        setGroupParticipants([]);
         lkRoomRef.current = null;
       }
     };
@@ -754,13 +953,23 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
 
   const currentUserName = isHost ? room.booking.host.name : (room.booking.guest.name || "Guest");
   const remoteParticipantName = isHost ? (room.booking.guest.name || "Guest") : room.booking.host.name;
+  const isGroupMeeting = room.type === "group_meeting";
+  const localParticipantDisplayName = isHost
+    ? (room.meeting?.host?.name || room.booking?.host?.name || "Host")
+    : (room.booking?.guest?.name || "You");
   const isBookingCancelled = room.booking.status === "cancelled";
   const isBookingRejected = room.booking.status === "rejected";
   const isCancelledOrRejected = isBookingCancelled || isBookingRejected;
   const isBookingEligible = room.booking.status === "confirmed";
 
   const copyRoomLink = () => {
-    navigator.clipboard.writeText(window.location.href);
+    if (room.type === "group_meeting" && (room.meeting?.invitationToken || roomMeeting?.invitationToken)) {
+      const token = room.meeting?.invitationToken || roomMeeting?.invitationToken;
+      const url = `${window.location.origin}/j/${token}`;
+      navigator.clipboard.writeText(url);
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+    }
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
@@ -810,38 +1019,52 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
         </div>
 
         {/* Participant Strip & Vera Identity */}
-        <div className="hidden md:flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-secondary-default text-caption-1-semibold">
-            {isHost && room.type === "group_meeting" && roomMeeting && !roomMeeting.openedEarlyAt && (
+        {isGroupMeeting ? (
+          <div className="hidden md:flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-secondary-default text-caption-1-semibold">
+              <RiGroupLine className="size-3.5 text-accent-600" />
+              <span className="text-text-secondary">
+                {isCallActive ? `${groupParticipants.length + 1} in call` : `${room.meeting?.attendees?.length || 0} registered`}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-primary-default shadow-2xs">
+              <Avatar size="xs" initials="V" color="neutral" />
+              <span className="text-text-primary text-caption-1-semibold">Vera</span>
+              <Chip color="soft" variant="caption">Scribe</Chip>
+            </div>
+          </div>
+        ) : (
+          <div className="hidden md:flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-secondary-default text-caption-1-semibold">
+              <Avatar size="xs" initials={hostInitials} color="blue" />
+              <span className="text-text-secondary">{room.booking.host.name} {isHost ? "(Host, You)" : "(Host)"}</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-secondary-default text-caption-1-semibold">
+              <Avatar size="xs" initials={guestInitials} color="lime" />
+              <span className="text-text-secondary">{room.booking.guest.name || "Guest"} {!isHost ? "(You)" : ""}</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-primary-default shadow-2xs">
+              <Avatar size="xs" initials="V" color="neutral" />
+              <span className="text-text-primary text-caption-1-semibold">Vera</span>
+              <Chip color="soft" variant="caption">Scribe</Chip>
+            </div>
+          </div>
+        )}
+
+        {/* Header Action Controls */}
+        <div className="flex items-center gap-2">
+          {isHost && isGroupMeeting && roomMeeting && !roomMeeting.openedEarlyAt && !isConcluded && (
             <Button
               variant="secondary"
               size="xs"
               onClick={handleHostOpenEarly}
               disabled={isOpeningEarly}
-              className="mr-2"
+              className="text-accent-600 font-semibold"
             >
               {isOpeningEarly ? "Opening..." : "Open Call Early"}
             </Button>
           )}
-          <Avatar size="xs" initials={hostInitials} color="blue" />
-            <span className="text-text-secondary">{room.booking.host.name} {isHost ? "(Host, You)" : "(Host)"}</span>
-          </div>
 
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-secondary-default text-caption-1-semibold">
-            <Avatar size="xs" initials={guestInitials} color="lime" />
-            <span className="text-text-secondary">{room.booking.guest.name || "Guest"} {!isHost ? "(You)" : ""}</span>
-          </div>
-
-          {/* Vera Participant Badge */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-primary-default shadow-2xs">
-            <Avatar size="xs" initials="V" color="neutral" />
-            <span className="text-text-primary text-caption-1-semibold">Vera</span>
-            <Chip color="soft" variant="caption">Scribe</Chip>
-          </div>
-        </div>
-
-        {/* Header Action Controls */}
-        <div className="flex items-center gap-2">
           {isConcluded ? (
             <Badge color="primary">Concluded</Badge>
           ) : isCancelledOrRejected ? (
@@ -1108,9 +1331,49 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             )}
 
             {/* ----------------------------------------------------------------- */}
-            {/* CASE 3: GUEST HERO VIDEO FEED */}
+            {/* CASE 3A: MULTI-PARTICIPANT GROUP MEETING GALLERY */}
             {/* ----------------------------------------------------------------- */}
-            {!isDisplayingStageFile && (
+            {isGroupMeeting && isCallActive && !isDisplayingStageFile && !hasActivePresentation && !isConcluded && (
+              <div className="w-full h-full p-2.5 sm:p-4 overflow-y-auto z-10 flex flex-col justify-center">
+                <div
+                  className={cx(
+                    "w-full h-full grid gap-3 min-h-0",
+                    groupParticipants.length === 0
+                      ? "grid-cols-1 max-w-2xl mx-auto"
+                      : groupParticipants.length === 1
+                      ? "grid-cols-1 sm:grid-cols-2 max-w-4xl mx-auto"
+                      : groupParticipants.length <= 3
+                      ? "grid-cols-2 md:grid-cols-2 max-w-5xl mx-auto"
+                      : "grid-cols-2 sm:grid-cols-3 md:grid-cols-3 max-w-6xl mx-auto"
+                  )}
+                >
+                  <ParticipantTile
+                    name={localParticipantDisplayName}
+                    isLocal={true}
+                    hasVideo={!isCamOff}
+                    isMuted={isMicMuted}
+                    localVideoRef={localVideoRef}
+                  />
+
+                  {groupParticipants.map((peer) => (
+                    <ParticipantTile
+                      key={peer.identity}
+                      name={peer.name}
+                      isLocal={false}
+                      hasVideo={peer.hasVideo}
+                      videoTrack={peer.videoTrack}
+                      isSpeaking={peer.isSpeaking}
+                      isMuted={!peer.hasAudio}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ----------------------------------------------------------------- */}
+            {/* CASE 3B: 1-ON-1 BOOKING HERO VIDEO FEED */}
+            {/* ----------------------------------------------------------------- */}
+            {!isGroupMeeting && !isDisplayingStageFile && (
               <video
                 ref={remoteVideoRef}
                 autoPlay
@@ -1125,7 +1388,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             {/* ----------------------------------------------------------------- */}
             {/* CASE 4: HOST CAMERA STREAMING (HERO PREVIEW BEFORE GUEST ARRIVAL) */}
             {/* ----------------------------------------------------------------- */}
-            {isCallActive && !isDisplayingStageFile && !hasActivePresentation && !remoteHasVideo && !isCamOff && (
+            {!isGroupMeeting && isCallActive && !isDisplayingStageFile && !hasActivePresentation && !remoteHasVideo && !isCamOff && (
               <video
                 ref={localVideoRef}
                 autoPlay
@@ -1199,7 +1462,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             {/* ----------------------------------------------------------------- */}
             {/* CASE 5: PRE-MEETING SCREEN / AWAITING PEER */}
             {/* ----------------------------------------------------------------- */}
-            {!isConcluded && !isCancelledOrRejected && !isDisplayingStageFile && (!isCallActive || (!hasActivePresentation && !remoteHasVideo && isCamOff)) && (
+            {!isConcluded && !isCancelledOrRejected && !isDisplayingStageFile && (!isCallActive || (!isGroupMeeting && !hasActivePresentation && !remoteHasVideo && isCamOff)) && (
               <div className="flex flex-col items-center justify-center text-center p-6 gap-3 z-10 max-w-sm">
                 <div className="relative">
                   <Avatar size="lg" initials={isHost ? guestInitials : hostInitials} color={isHost ? "lime" : "blue"} />
@@ -1244,7 +1507,7 @@ export function RoomView({ initialRoom, isHost = false }: RoomViewProps) {
             )}
 
             {/* Floating Picture-in-Picture Self-View (When Guest Video, Screen Share or File Presentation is Active) */}
-            {isCallActive && !isConcluded && (remoteHasVideo || hasActivePresentation || isDisplayingStageFile) && (
+            {!isGroupMeeting && isCallActive && !isConcluded && (remoteHasVideo || hasActivePresentation || isDisplayingStageFile) && (
               <div className="absolute top-14 end-3 sm:top-14 sm:end-4 w-32 h-20 sm:w-40 sm:h-24 rounded-2xl border border-border-button-default bg-background-primary-default overflow-hidden shadow-xl z-30">
                 {!isCamOff ? (
                   <video

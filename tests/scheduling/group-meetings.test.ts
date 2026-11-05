@@ -7,13 +7,34 @@ import {
 } from "@/lib/meetings/meeting-service";
 import * as livekitRoute from "@/app/api/room/[token]/livekit/route";
 import * as openEarlyRoute from "@/app/api/room/[token]/open-early/route";
+import * as meetingsRoute from "@/app/api/meetings/route";
 import * as roomService from "@/lib/room/room-service";
 import * as meetingService from "@/lib/meetings/meeting-service";
+import { localWallClockToUtcDate } from "@/lib/scheduling/timezone";
 import * as authModule from "@/auth";
+import { db } from "@/db";
 
 // Mock dependencies
 vi.mock("@/auth", () => ({
   auth: vi.fn(),
+}));
+
+vi.mock("@/db", () => ({
+  db: {
+    query: {
+      users: {
+        findFirst: vi.fn(),
+      },
+      rooms: {
+        findFirst: vi.fn(),
+      },
+      meetings: {
+        findFirst: vi.fn(),
+      },
+    },
+    insert: vi.fn(),
+    update: vi.fn(),
+  },
 }));
 
 describe("Morrow Group Meetings — Pilot P0 & Early Arrival Engine", () => {
@@ -536,6 +557,337 @@ describe("Morrow Group Meetings — Pilot P0 & Early Arrival Engine", () => {
       });
 
       expect(res.status).toBe(401);
+    });
+  });
+
+  // =========================================================================
+  // 5. POST /api/meetings Contract, Timezone Conversion & Validation
+  // =========================================================================
+  describe("POST /api/meetings — Contract & Validation", () => {
+    const mockDbHost = {
+      id: mockHostId,
+      name: "Mr. Bright Idahosa",
+      email: "bright@example.com",
+      timezone: "Africa/Lagos",
+    };
+
+    beforeEach(() => {
+      vi.spyOn(authModule, "auth").mockResolvedValue({
+        user: { id: mockHostId, email: "bright@example.com", name: "Mr. Bright Idahosa" },
+      } as any);
+      (db.query.users.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(mockDbHost);
+    });
+
+    it("creates a meeting using the new modal contract with date and startTime", async () => {
+      const mockCreatedMeeting = createMockGroupMeeting();
+      const mockCreatedRoom = {
+        id: "room-uuid-888",
+        accessToken: "room-access-token-999",
+        status: "pre_meeting",
+      };
+
+      const createMeetingSpy = vi.spyOn(meetingService, "createMeeting").mockResolvedValue({
+        meeting: mockCreatedMeeting as any,
+        room: mockCreatedRoom as any,
+        invitationToken: "inv-token-xyz-123",
+        invitationUrl: "https://usemorrow.xyz/j/inv-token-xyz-123",
+      });
+
+      const req = new NextRequest("https://usemorrow.xyz/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "FOF Scrabble Tournament Planning",
+          date: "2026-11-05",
+          startTime: "21:00",
+          durationMins: 120,
+          timezone: "Africa/Lagos",
+          description: "Planning committee meeting for FOF tournament",
+          preparationMaterial: "# Cleaned Minutes of 2 Nov 2026",
+        }),
+      });
+
+      const res = await meetingsRoute.POST(req);
+      expect(res.status).toBe(201);
+      const data = await res.json();
+
+      expect(data.success).toBe(true);
+      expect(data.meeting).toBeDefined();
+      expect(data.room).toBeDefined();
+      // CRITICAL CONTRACT REQUIREMENT: roomAccessToken must be returned directly at top level
+      expect(data.roomAccessToken).toBe("room-access-token-999");
+      expect(data.invitationToken).toBe("inv-token-xyz-123");
+      expect(data.invitationUrl).toBe("https://usemorrow.xyz/j/inv-token-xyz-123");
+
+      // Verify that createMeeting was called with correct UTC timestamps:
+      // Thursday 5 Nov 2026, 9:00 PM Africa/Lagos (UTC+1) is 20:00:00Z
+      expect(createMeetingSpy).toHaveBeenCalledWith(
+        mockHostId,
+        expect.objectContaining({
+          title: "FOF Scrabble Tournament Planning",
+          startTime: new Date("2026-11-05T20:00:00.000Z"),
+          endTime: new Date("2026-11-05T22:00:00.000Z"),
+          timezone: "Africa/Lagos",
+          description: "Planning committee meeting for FOF tournament",
+          preparationMaterial: "# Cleaned Minutes of 2 Nov 2026",
+        })
+      );
+    });
+
+    it("converts Africa/Lagos wall-clock time accurately across UTC offsets", () => {
+      // 9:00 PM in Lagos (UTC+1) -> 20:00:00 UTC
+      const lagosUtc = localWallClockToUtcDate("2026-11-05", "21:00", "Africa/Lagos");
+      expect(lagosUtc.toISOString()).toBe("2026-11-05T20:00:00.000Z");
+
+      // 9:00 AM in New York on standard time (EST, UTC-5) -> 14:00:00 UTC
+      const nyWinterUtc = localWallClockToUtcDate("2026-11-05", "09:00", "America/New_York");
+      expect(nyWinterUtc.toISOString()).toBe("2026-11-05T14:00:00.000Z");
+
+      // 9:00 AM in London during BST (UTC+1) -> 08:00:00 UTC
+      const londonSummerUtc = localWallClockToUtcDate("2026-07-15", "09:00", "Europe/London");
+      expect(londonSummerUtc.toISOString()).toBe("2026-07-15T08:00:00.000Z");
+    });
+
+    it("supports backward-compatible ISO startTime and endTime", async () => {
+      const mockCreatedMeeting = createMockGroupMeeting();
+      const mockCreatedRoom = {
+        id: "room-uuid-888",
+        accessToken: "room-access-token-999",
+        status: "pre_meeting",
+      };
+
+      vi.spyOn(meetingService, "createMeeting").mockResolvedValue({
+        meeting: mockCreatedMeeting as any,
+        room: mockCreatedRoom as any,
+        invitationToken: "inv-token-legacy",
+        invitationUrl: "https://usemorrow.xyz/j/inv-token-legacy",
+      });
+
+      const req = new NextRequest("https://usemorrow.xyz/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Legacy Contract Meeting",
+          startTime: "2026-11-05T20:00:00.000Z",
+          endTime: "2026-11-05T21:00:00.000Z",
+        }),
+      });
+
+      const res = await meetingsRoute.POST(req);
+      expect(res.status).toBe(201);
+      const data = await res.json();
+      expect(data.roomAccessToken).toBe("room-access-token-999");
+    });
+
+    it("rejects request when title is missing or empty (400)", async () => {
+      const req = new NextRequest("https://usemorrow.xyz/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "   ",
+          date: "2026-11-05",
+          startTime: "21:00",
+        }),
+      });
+
+      const res = await meetingsRoute.POST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("Meeting title is required");
+    });
+
+    it("rejects request with invalid date format (400)", async () => {
+      const req = new NextRequest("https://usemorrow.xyz/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Test Meeting",
+          date: "05/11/2026", // Invalid format (should be YYYY-MM-DD)
+          startTime: "21:00",
+        }),
+      });
+
+      const res = await meetingsRoute.POST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("Date must be in YYYY-MM-DD format");
+    });
+
+    it("rejects request with invalid 24-hr time format (400)", async () => {
+      const req = new NextRequest("https://usemorrow.xyz/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Test Meeting",
+          date: "2026-11-05",
+          startTime: "9:00 PM", // Invalid format (should be 21:00)
+        }),
+      });
+
+      const res = await meetingsRoute.POST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("Start time must be in HH:MM format");
+    });
+
+    it("rejects request with invalid IANA timezone (400)", async () => {
+      const req = new NextRequest("https://usemorrow.xyz/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Test Meeting",
+          date: "2026-11-05",
+          startTime: "21:00",
+          timezone: "Invalid/Timezone_Name",
+        }),
+      });
+
+      const res = await meetingsRoute.POST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("Invalid IANA timezone identifier");
+    });
+
+    it("rejects request with out-of-range duration (400)", async () => {
+      const req = new NextRequest("https://usemorrow.xyz/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Test Meeting",
+          date: "2026-11-05",
+          startTime: "21:00",
+          durationMins: 5, // Below minimum 15 mins
+        }),
+      });
+
+      const res = await meetingsRoute.POST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("between 15 and 1440 minutes");
+    });
+
+    it("rejects unauthenticated meeting creation (401)", async () => {
+      vi.spyOn(authModule, "auth").mockResolvedValue(null as any);
+
+      const req = new NextRequest("https://usemorrow.xyz/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Unauthorized Meeting",
+          date: "2026-11-05",
+          startTime: "21:00",
+        }),
+      });
+
+      const res = await meetingsRoute.POST(req);
+      expect(res.status).toBe(401);
+    });
+  });
+
+  // =========================================================================
+  // 6. Attendee Email Privacy Protection
+  // =========================================================================
+  describe("Attendee Email Privacy Protection", () => {
+    it("omits attendee email addresses from getRoomByAccessToken details", async () => {
+      const mockRawRoom = {
+        id: "room-uuid-888",
+        accessToken: mockRoomToken,
+        status: "pre_meeting",
+        meetingId: mockMeetingId,
+        bookingId: null,
+        agenda: [],
+        sharedNotes: "",
+        files: [],
+        veraBrief: null,
+        veraLedger: null,
+        meeting: {
+          id: mockMeetingId,
+          status: "scheduled",
+          title: "FOF Scrabble Tournament Planning",
+          description: "Committee meeting",
+          startTime: scheduledStartUTC,
+          endTime: scheduledEndUTC,
+          timezone: "Africa/Lagos",
+          invitationToken: "inv-tok-xyz",
+          preparationMaterial: null,
+          openedEarlyAt: null,
+          host: {
+            id: mockHostId,
+            name: "Mr. Bright Idahosa",
+            slug: "bright-idahosa",
+            avatarUrl: null,
+            timezone: "Africa/Lagos",
+          },
+          attendees: [
+            {
+              id: "attendee-1",
+              name: "Participant Alpha",
+              email: "alpha-confidential@example.com", // SENSITIVE EMAIL
+              status: "registered",
+              joinedAt: null,
+            },
+            {
+              id: "attendee-2",
+              name: "Participant Beta",
+              email: "beta-private@example.com", // SENSITIVE EMAIL
+              status: "joined",
+              joinedAt: new Date("2026-11-05T20:05:00Z"),
+            },
+          ],
+        },
+      };
+
+      (db.query.rooms.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(mockRawRoom);
+
+      const roomDetails = await roomService.getRoomByAccessToken(mockRoomToken);
+
+      expect(roomDetails).not.toBeNull();
+      expect(roomDetails?.meeting?.attendees).toHaveLength(2);
+
+      // Verify attendee 1: name and status are present, but email is completely absent
+      const a1 = roomDetails?.meeting?.attendees?.[0] as any;
+      expect(a1.id).toBe("attendee-1");
+      expect(a1.name).toBe("Participant Alpha");
+      expect(a1.status).toBe("registered");
+      expect(a1.email).toBeUndefined();
+
+      // Verify attendee 2: email is completely absent
+      const a2 = roomDetails?.meeting?.attendees?.[1] as any;
+      expect(a2.id).toBe("attendee-2");
+      expect(a2.name).toBe("Participant Beta");
+      expect(a2.status).toBe("joined");
+      expect(a2.email).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
+  // 7. Share Link Format Resolution
+  // =========================================================================
+  describe("Room Share Link Resolution", () => {
+    it("uses /j/[invitationToken] for group meetings and /room/[accessToken] for 1-on-1 bookings", () => {
+      const getShareUrl = (origin: string, room: { type: "group_meeting" | "booking"; accessToken: string; meeting?: { invitationToken?: string } }) => {
+        if (room.type === "group_meeting" && room.meeting?.invitationToken) {
+          return `${origin}/j/${room.meeting.invitationToken}`;
+        }
+        return `${origin}/room/${room.accessToken}`;
+      };
+
+      const origin = "https://usemorrow.xyz";
+
+      // Group meeting returns the public guest invitation URL
+      const groupMeetingShareUrl = getShareUrl(origin, {
+        type: "group_meeting",
+        accessToken: "private-host-token-xyz",
+        meeting: { invitationToken: "public-guest-token-123" },
+      });
+      expect(groupMeetingShareUrl).toBe("https://usemorrow.xyz/j/public-guest-token-123");
+
+      // 1-on-1 booking returns the direct room URL
+      const bookingShareUrl = getShareUrl(origin, {
+        type: "booking",
+        accessToken: "booking-room-token-456",
+      });
+      expect(bookingShareUrl).toBe("https://usemorrow.xyz/room/booking-room-token-456");
     });
   });
 });

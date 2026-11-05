@@ -248,17 +248,14 @@ export function NewMeetingModal({
     setError(null);
 
     try {
-      // Calculate start and end ISO timestamps using local date/time input
-      const combinedStart = new Date(`${date}T${time}:00`);
-      const combinedEnd = new Date(combinedStart.getTime() + durationMins * 60 * 1000);
-
       const res = await fetch("/api/meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
-          startTime: combinedStart.toISOString(),
-          endTime: combinedEnd.toISOString(),
+          date,
+          startTime: time,
+          durationMins,
           timezone,
           description: description.trim() || undefined,
           preparationMaterial: preparationMaterial.trim() || undefined,
@@ -270,10 +267,15 @@ export function NewMeetingModal({
         throw new Error(data.error || "Failed to create meeting.");
       }
 
+      const roomAccessToken = data.roomAccessToken || data.room?.accessToken;
+      if (!roomAccessToken) {
+        throw new Error("Server failed to return a valid room access token.");
+      }
+
       setCreatedResult({
         meeting: data.meeting,
         invitationUrl: data.invitationUrl,
-        roomAccessToken: data.roomAccessToken,
+        roomAccessToken,
       });
 
       onSuccess?.();

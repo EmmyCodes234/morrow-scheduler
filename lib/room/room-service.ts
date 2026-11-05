@@ -61,7 +61,7 @@ export interface RoomDetails {
     attendees?: Array<{
       id: string;
       name: string;
-      email: string;
+      email?: string;
       status: "registered" | "joined" | "declined";
       joinedAt?: string | null;
     }>;
@@ -369,7 +369,6 @@ export async function getRoomByAccessToken(
         attendees: m.attendees?.map((a) => ({
           id: a.id,
           name: a.name,
-          email: a.email,
           status: a.status as "registered" | "joined" | "declined",
           joinedAt: a.joinedAt?.toISOString() || null,
         })),
