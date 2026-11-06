@@ -47,6 +47,9 @@ export default async function DashboardPage() {
     defaultLocationType: host.defaultLocationType || "google_meet",
     zoomMeetingUrl: host.zoomMeetingUrl || "",
     teamsMeetingUrl: host.teamsMeetingUrl || "",
+    zoomEmail: host.zoomEmail || null,
+    zoomConnectedAt: host.zoomConnectedAt || null,
+    hasZoomOAuth: Boolean(host.zoomAccessToken || host.zoomRefreshToken),
     hasGoogleCalendar: Boolean(host.googleAccessToken || host.googleRefreshToken),
   };
 

@@ -129,6 +129,9 @@ export interface HostUser {
   defaultLocationType?: string;
   zoomMeetingUrl?: string;
   teamsMeetingUrl?: string;
+  zoomEmail?: string | null;
+  zoomConnectedAt?: Date | string | null;
+  hasZoomOAuth?: boolean;
   hasGoogleCalendar?: boolean;
 }
 
@@ -419,7 +422,7 @@ export function DashboardView({
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        zoomMeetingUrl: url,
+        ...(url !== undefined ? { zoomMeetingUrl: url } : {}),
         defaultLocationType: setActive ? "zoom" : "google_meet",
       }),
     });
@@ -432,11 +435,29 @@ export function DashboardView({
               ...prev,
               zoomMeetingUrl: data.user.zoomMeetingUrl,
               defaultLocationType: data.user.defaultLocationType,
+              zoomEmail: data.user.zoomEmail ?? prev.zoomEmail,
+              hasZoomOAuth: data.user.hasZoomOAuth ?? prev.hasZoomOAuth,
             }
           : null
       );
     }
-    showNotification("Zoom meetings configured as default provider");
+    showNotification(setActive ? "Zoom configured as default provider" : "Zoom details updated");
+  };
+
+  const handleDisconnectZoomOAuth = async () => {
+    const res = await fetch("/api/integrations/zoom/disconnect", { method: "POST" });
+    if (!res.ok) throw new Error("Failed to disconnect Zoom account");
+    setUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            zoomEmail: null,
+            hasZoomOAuth: false,
+            defaultLocationType: prev.defaultLocationType === "zoom" ? "google_meet" : prev.defaultLocationType,
+          }
+        : null
+    );
+    showNotification("Zoom OAuth disconnected");
   };
 
   // Teams management
@@ -1404,9 +1425,14 @@ export function DashboardView({
                         {isZoomActive && (
                           <Chip color="lime" variant="bold">Default Provider</Chip>
                         )}
+                        {user.zoomEmail && (
+                          <Chip color="blue" variant="bold">Connected</Chip>
+                        )}
                       </div>
                       <span className="text-body-2-regular text-text-secondary">
-                        Use your Personal Zoom Meeting room as your meeting location for guest bookings.
+                        {user.zoomEmail
+                          ? `Connected via OAuth as ${user.zoomEmail}. Dynamic per-booking meeting links generated automatically.`
+                          : "Use dynamic Zoom rooms via OAuth or configure your personal meeting room."}
                       </span>
                     </div>
                   </div>
@@ -1415,8 +1441,8 @@ export function DashboardView({
                     isSelected={isZoomActive}
                     onChange={async (selected) => {
                       if (selected) {
-                        if (user.zoomMeetingUrl) {
-                          await handleSaveZoom(user.zoomMeetingUrl, true);
+                        if (user.hasZoomOAuth || user.zoomEmail || user.zoomMeetingUrl) {
+                          await handleSaveZoom(user.zoomMeetingUrl || "", true);
                         } else {
                           setIsZoomModalOpen(true);
                         }
@@ -1428,13 +1454,13 @@ export function DashboardView({
                   />
                 </div>
 
-                {/* If Zoom link exists or Zoom is active, show the link bar */}
-                {user.zoomMeetingUrl && (
+                {/* Zoom Footer Status Bar */}
+                {(user.zoomEmail || user.zoomMeetingUrl) ? (
                   <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
                     <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
                       <ZoomIcon className="size-4 shrink-0" />
                       <span className="font-mono text-text-primary truncate">
-                        {user.zoomMeetingUrl}
+                        {user.zoomEmail ? `OAuth: ${user.zoomEmail}` : user.zoomMeetingUrl}
                       </span>
                     </div>
 
@@ -1444,7 +1470,20 @@ export function DashboardView({
                       leadingIcon={HugeEdit}
                       onClick={() => setIsZoomModalOpen(true)}
                     >
-                      Edit link
+                      Configure
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
+                    <span className="text-body-2-regular text-text-secondary">
+                      No Zoom account or personal meeting room configured
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => setIsZoomModalOpen(true)}
+                    >
+                      Configure Zoom
                     </Button>
                   </div>
                 )}
@@ -1560,9 +1599,11 @@ export function DashboardView({
         isOpen={isZoomModalOpen}
         onClose={() => setIsZoomModalOpen(false)}
         currentZoomUrl={user.zoomMeetingUrl}
+        zoomEmail={user.zoomEmail}
         isZoomActive={isZoomActive}
         onSaveZoom={handleSaveZoom}
         onDisableZoom={handleSwitchToGoogleMeet}
+        onDisconnectOAuth={handleDisconnectZoomOAuth}
       />
 
       <TeamsModal

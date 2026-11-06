@@ -107,16 +107,48 @@ export function ZoomModal({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <ZoomIcon className="size-8 shrink-0" />
-                      <span className="text-body-medium font-semibold text-text-primary">
-                        Zoom Connected
-                      </span>
+                      <div className="flex flex-col">
+                        <span className="text-body-medium font-semibold text-text-primary">
+                          Zoom Connected
+                        </span>
+                        <span className="text-caption-2-medium text-text-secondary">
+                          {zoomEmail}
+                        </span>
+                      </div>
                     </div>
-                    <Chip color="lime" variant="bold">OAuth Active</Chip>
+                    {isZoomActive ? (
+                      <Chip color="lime" variant="bold">Default Provider</Chip>
+                    ) : (
+                      <Chip color="blue" variant="bold">OAuth Active</Chip>
+                    )}
                   </div>
                   <p className="text-body-2-regular text-text-secondary">
                     Connected as <span className="font-semibold text-text-primary">{zoomEmail}</span>. Dedicated meeting links and passcodes are created automatically for every booking.
                   </p>
-                  <div className="flex justify-end pt-1">
+                  <div className="flex items-center justify-between pt-1">
+                    {!isZoomActive ? (
+                      <Button
+                        variant="primary"
+                        size="xs"
+                        disabled={isSubmitting}
+                        onClick={async () => {
+                          setIsSubmitting(true);
+                          try {
+                            await onSaveZoom(currentZoomUrl || "", true);
+                            onClose();
+                          } finally {
+                            setIsSubmitting(false);
+                          }
+                        }}
+                      >
+                        Set Zoom as Default
+                      </Button>
+                    ) : (
+                      <span className="text-caption-1-medium text-text-secondary">
+                        Active default meeting location
+                      </span>
+                    )}
+
                     <Button
                       variant="danger"
                       size="xs"
@@ -198,6 +230,23 @@ export function ZoomModal({
                 >
                   Switch to Google Meet
                 </Button>
+              ) : !isZoomActive && zoomEmail ? (
+                <Button
+                  variant="primary"
+                  size="small"
+                  disabled={isSubmitting}
+                  onClick={async () => {
+                    setIsSubmitting(true);
+                    try {
+                      await onSaveZoom(currentZoomUrl || "", true);
+                      onClose();
+                    } finally {
+                      setIsSubmitting(false);
+                    }
+                  }}
+                >
+                  Set Zoom as Default
+                </Button>
               ) : (
                 <div />
               )}
@@ -209,7 +258,7 @@ export function ZoomModal({
                 <Button
                   type="submit"
                   form="zoom-form"
-                  variant="primary"
+                  variant="secondary"
                   disabled={isSubmitting}
                 >
                   {isSubmitting ? "Saving..." : "Save Link"}
