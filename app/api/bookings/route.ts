@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
       with: {
         eventType: true,
         room: true,
+        attendees: true,
       },
     });
 
@@ -45,6 +46,20 @@ export async function GET(req: NextRequest) {
         guestNotes: b.guestNotes,
         hostNotes: b.hostNotes,
         cancelToken: b.cancelToken,
+        isGroup: (b.eventType?.maxAttendees || 1) > 1,
+        maxAttendees: b.eventType?.maxAttendees || 1,
+        attendeeCount:
+          b.attendees && b.attendees.length > 0
+            ? b.attendees.filter((a) => a.status !== "cancelled").length
+            : 1,
+        attendees: (b.attendees || [])
+          .filter((a) => a.status !== "cancelled")
+          .map((a) => ({
+            id: a.id,
+            guestName: a.guestName,
+            guestEmail: a.guestEmail,
+            guestNotes: a.guestNotes,
+          })),
       })),
     });
   } catch (err) {

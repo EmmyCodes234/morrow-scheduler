@@ -268,9 +268,23 @@ export function validateBookingRequest({
     }
   }
 
+  const maxAttendees = eventType.maxAttendees && eventType.maxAttendees > 1 ? eventType.maxAttendees : 1;
+  const isGroupEvent = maxAttendees > 1;
+
   // 10. Check conflicts with existing bookings (both confirmed and pending reserve the slot)
+  const matchingGroupBooking = isGroupEvent
+    ? existingBookings.find(
+        (b) =>
+          b.status !== "cancelled" &&
+          b.status !== "rejected" &&
+          b.eventTypeId === eventType.id &&
+          b.startTime.getTime() === startTime.getTime()
+      )
+    : undefined;
+
   for (const b of existingBookings) {
     if (b.status === "cancelled" || b.status === "rejected") continue;
+    if (matchingGroupBooking && b.id === matchingGroupBooking.id) continue;
 
     // Both the existing booking and the new booking have their own buffer zones
     if (
@@ -289,6 +303,18 @@ export function validateBookingRequest({
     }
   }
 
+  // Check group capacity if this group slot already has bookings
+  if (matchingGroupBooking) {
+    const currentAttendees = matchingGroupBooking.attendeeCount ?? 1;
+    if (currentAttendees >= maxAttendees) {
+      return {
+        isValid: false,
+        error: "This group session is at full capacity.",
+        errorCode: "CONFLICT",
+      };
+    }
+  }
+
   // 11. Google Calendar external conflicts & failure handling
   if (calendarCheckFailed) {
     return {
@@ -301,6 +327,15 @@ export function validateBookingRequest({
   // Check buffer interval against external calendar busy blocks consistently
   for (const block of calendarBusyBlocks) {
     if (intervalsOverlap(bufferStartTime, bufferEndTime, block.start, block.end)) {
+      if (matchingGroupBooking) {
+        // If the busy block coincides with the existing group booking, it's Morrow's own event
+        const matchesGroupBooking =
+          Math.abs(block.start.getTime() - startTime.getTime()) <= 60000 &&
+          Math.abs(block.end.getTime() - endTime.getTime()) <= 60000;
+        if (matchesGroupBooking) {
+          continue;
+        }
+      }
       return {
         isValid: false,
         error: "This time slot conflicts with an event or buffer on the host's calendar.",

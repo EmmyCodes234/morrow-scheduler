@@ -18,6 +18,8 @@ export interface EventFormData {
   description?: string;
   location?: string;
   locationType?: "google_meet" | "zoom" | "teams" | "phone" | "in_person";
+  maxAttendees?: number;
+  showRemainingSpots?: boolean;
 }
 
 export interface NewEventModalProps {
@@ -45,6 +47,9 @@ export function NewEventModal({
   const [duration, setDuration] = useState<number>(event?.duration || 30);
   const [slug, setSlug] = useState(event?.slug || "30min");
   const [description, setDescription] = useState(event?.description || "");
+  const [isGroup, setIsGroup] = useState<boolean>((event?.maxAttendees || 1) > 1);
+  const [maxAttendees, setMaxAttendees] = useState<number>(event?.maxAttendees || 10);
+  const [showRemainingSpots, setShowRemainingSpots] = useState<boolean>(event?.showRemainingSpots ?? true);
   const [locationType, setLocationType] = useState<"google_meet" | "zoom" | "teams" | "phone" | "in_person">(
     event?.locationType || (
       defaultLocation.toLowerCase().includes("zoom")
@@ -63,6 +68,9 @@ export function NewEventModal({
       setDuration(event.duration);
       setSlug(event.slug);
       setDescription(event.description || "");
+      setIsGroup((event.maxAttendees || 1) > 1);
+      setMaxAttendees(event.maxAttendees || 10);
+      setShowRemainingSpots(event.showRemainingSpots ?? true);
       setLocationType(
         event.locationType || (
           defaultLocation.toLowerCase().includes("zoom")
@@ -77,6 +85,9 @@ export function NewEventModal({
       setDuration(30);
       setSlug("30min");
       setDescription("");
+      setIsGroup(false);
+      setMaxAttendees(10);
+      setShowRemainingSpots(true);
       setLocationType(
         defaultLocation.toLowerCase().includes("zoom")
           ? "zoom"
@@ -99,6 +110,8 @@ export function NewEventModal({
         slug: slug.trim(),
         description: description.trim(),
         locationType,
+        maxAttendees: isGroup ? maxAttendees : 1,
+        showRemainingSpots: isGroup ? showRemainingSpots : false,
       });
       onClose();
     } catch (err) {
@@ -171,6 +184,71 @@ export function NewEventModal({
                   ))}
                 </div>
               </div>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-body-medium text-text-primary font-medium">
+                  Format
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsGroup(false)}
+                    className={`py-2 px-3 rounded-xl border text-body-medium font-medium transition-all cursor-pointer text-center ${
+                      !isGroup
+                        ? "border-accent-500 bg-accent-50/20 text-accent-700 font-semibold shadow-2xs"
+                        : "border-border-button-default bg-background-secondary-default text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    1-on-1 Meeting
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsGroup(true)}
+                    className={`py-2 px-3 rounded-xl border text-body-medium font-medium transition-all cursor-pointer text-center ${
+                      isGroup
+                        ? "border-accent-500 bg-accent-50/20 text-accent-700 font-semibold shadow-2xs"
+                        : "border-border-button-default bg-background-secondary-default text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    Group Event (Webinar / Class)
+                  </button>
+                </div>
+              </div>
+
+              {isGroup && (
+                <div className="flex flex-col gap-3 p-3.5 rounded-2xl border border-border-button-default bg-background-secondary-default">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col">
+                      <span className="text-body-2-medium text-text-primary font-semibold">
+                        Max Attendees per Slot
+                      </span>
+                      <span className="text-caption-2-medium text-text-tertiary">
+                        Maximum guests who can join the same timeslot
+                      </span>
+                    </div>
+                    <input
+                      type="number"
+                      min={2}
+                      max={100}
+                      value={maxAttendees}
+                      onChange={(e) => setMaxAttendees(Math.max(2, Math.min(100, parseInt(e.target.value) || 2)))}
+                      className="w-20 px-3 py-1.5 rounded-xl border border-border-button-default bg-background-primary-default text-text-primary text-center font-semibold outline-none"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none pt-1">
+                    <input
+                      type="checkbox"
+                      checked={showRemainingSpots}
+                      onChange={(e) => setShowRemainingSpots(e.target.checked)}
+                      className="rounded text-accent-500 focus:ring-accent-500"
+                    />
+                    <span className="text-body-2-regular text-text-secondary">
+                      Show remaining spots to guests (e.g. &quot;3 spots left&quot;)
+                    </span>
+                  </label>
+                </div>
+              )}
 
               <div>
                 <span className="block text-body-medium text-text-primary mb-1.5 font-medium">

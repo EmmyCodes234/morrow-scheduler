@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { bookings, eventTypes, users } from "@/db/schema";
+import { bookings, eventTypes, users, bookingAttendees } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import {
   cancelGoogleCalendarEventWithDetails,
@@ -218,13 +218,35 @@ export async function getBookingForCancellation(
     return null;
   }
 
-  const booking = await dbClient.query.bookings.findFirst({
+  let booking = await dbClient.query.bookings.findFirst({
     where: eq(bookings.cancelToken, token.trim()),
     with: {
       eventType: true,
       host: true,
     },
   });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let attendeeRecord: any = null;
+
+  if (!booking) {
+    const attendee = await dbClient.query.bookingAttendees.findFirst({
+      where: eq(bookingAttendees.cancelToken, token.trim()),
+      with: {
+        booking: {
+          with: {
+            eventType: true,
+            host: true,
+          },
+        },
+      },
+    });
+
+    if (attendee && attendee.booking) {
+      booking = attendee.booking;
+      attendeeRecord = attendee;
+    }
+  }
 
   if (!booking || !booking.host) {
     return null;
@@ -234,24 +256,25 @@ export async function getBookingForCancellation(
   const guestTimezone = resolveTimezone(booking.guestTimezone, host.timezone || "UTC");
   const now = new Date();
   const isPast = new Date(booking.startTime).getTime() < now.getTime();
-  const canCancel = (booking.status === "confirmed" || booking.status === "pending") && !isPast;
-  const isCancelled = booking.status === "cancelled";
+  const effectiveStatus = attendeeRecord ? attendeeRecord.status : booking.status;
+  const canCancel = (effectiveStatus === "confirmed" || effectiveStatus === "pending") && !isPast;
+  const isCancelled = effectiveStatus === "cancelled";
 
   return {
     eventTitle: booking.eventType?.title || "Meeting",
     hostName: host.name || "Host",
     hostSlug: host.slug || "",
-    guestName: booking.guestName,
+    guestName: attendeeRecord ? attendeeRecord.guestName : booking.guestName,
     startTime: booking.startTime.toISOString(),
     endTime: booking.endTime.toISOString(),
     dateStr: getDateStringInTimezone(booking.startTime, guestTimezone),
     timeStr: formatTime12(booking.startTime, guestTimezone),
     timezone: guestTimezone,
-    status: booking.status,
+    status: effectiveStatus,
     isPast,
     canCancel,
-    cancellationReason: booking.cancellationReason || null,
-    cancelledAt: booking.cancelledAt?.toISOString() || null,
+    cancellationReason: attendeeRecord ? attendeeRecord.cancellationReason : booking.cancellationReason || null,
+    cancelledAt: attendeeRecord ? attendeeRecord.cancelledAt?.toISOString() : booking.cancelledAt?.toISOString() || null,
     notification: isCancelled
       ? { status: mapDbNotificationToSafeStatus(booking.notificationStatus, true) }
       : null,
@@ -436,7 +459,7 @@ export async function cancelBooking(
     };
   }
 
-  const existing = await dbClient.query.bookings.findFirst({
+  let existing = await dbClient.query.bookings.findFirst({
     where:
       identifierType === "token"
         ? eq(bookings.cancelToken, identifier.trim())
@@ -444,8 +467,32 @@ export async function cancelBooking(
     with: {
       eventType: true,
       host: true,
+      attendees: true,
     },
   });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let attendeeRecord: any = null;
+
+  if (!existing && identifierType === "token") {
+    const attendee = await dbClient.query.bookingAttendees.findFirst({
+      where: eq(bookingAttendees.cancelToken, identifier.trim()),
+      with: {
+        booking: {
+          with: {
+            eventType: true,
+            host: true,
+            attendees: true,
+          },
+        },
+      },
+    });
+
+    if (attendee && attendee.booking) {
+      existing = attendee.booking;
+      attendeeRecord = attendee;
+    }
+  }
 
   if (!existing || !existing.host) {
     return {
@@ -453,6 +500,70 @@ export async function cancelBooking(
       errorCode: "NOT_FOUND",
       error: "Booking not found.",
     };
+  }
+
+  // Handle individual group attendee cancellation
+  if (attendeeRecord) {
+    if (attendeeRecord.status === "cancelled") {
+      const publicDto = toPublicCancellationDTO(
+        {
+          ...existing,
+          guestName: attendeeRecord.guestName,
+          guestEmail: attendeeRecord.guestEmail,
+          cancellationReason: attendeeRecord.cancellationReason,
+          cancelledAt: attendeeRecord.cancelledAt,
+        },
+        "already_cancelled",
+        "not_applicable",
+        "already_sent"
+      );
+      return {
+        success: true,
+        alreadyCancelled: true,
+        publicDto,
+        safeCalendarStatus: "not_applicable",
+        safeNotificationStatus: "already_sent",
+      };
+    }
+
+    const cancellationDate = new Date();
+    await dbClient
+      .update(bookingAttendees)
+      .set({
+        status: "cancelled",
+        cancelledAt: cancellationDate,
+        cancellationReason: sanitizedReason || null,
+        updatedAt: cancellationDate,
+      })
+      .where(eq(bookingAttendees.id, attendeeRecord.id));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const remainingAttendees = (existing.attendees || []).filter(
+      (a: any) => a.id !== attendeeRecord.id && a.status !== "cancelled"
+    );
+
+    if (remainingAttendees.length > 0) {
+      const publicDto = toPublicCancellationDTO(
+        {
+          ...existing,
+          guestName: attendeeRecord.guestName,
+          guestEmail: attendeeRecord.guestEmail,
+          cancellationReason: sanitizedReason || null,
+          cancelledAt: cancellationDate,
+        },
+        "cancelled",
+        "not_applicable",
+        "sent"
+      );
+      return {
+        success: true,
+        alreadyCancelled: false,
+        publicDto,
+        safeCalendarStatus: "not_applicable",
+        safeNotificationStatus: "sent",
+      };
+    }
+    // If no other attendees remain, proceed down to cancel the main booking
   }
 
   // 3. Authorization check for host-initiated cancellations

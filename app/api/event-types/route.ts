@@ -49,7 +49,16 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { title, slug, durationMins = 30, description = "", locationType = "google_meet" } = body;
+    const {
+      title,
+      slug,
+      durationMins = 30,
+      description = "",
+      locationType = "google_meet",
+      maxAttendees = 1,
+      showRemainingSpots = true,
+      minAttendees = 1,
+    } = body;
 
     if (!title || !slug) {
       return NextResponse.json({ error: "Title and slug are required" }, { status: 400 });
@@ -64,6 +73,9 @@ export async function POST(req: NextRequest) {
         durationMins,
         description,
         locationType,
+        maxAttendees: Number(maxAttendees) || 1,
+        showRemainingSpots: Boolean(showRemainingSpots),
+        minAttendees: Number(minAttendees) || 1,
       })
       .returning();
 

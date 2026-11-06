@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { db } from "@/db";
-import { users, eventTypes, bookings, contacts, availability, availabilityOverrides } from "@/db/schema";
+import { users, eventTypes, bookings, contacts, availability, availabilityOverrides, bookingAttendees } from "@/db/schema";
 import { eq, and, ne, gte, lte } from "drizzle-orm";
 import { BookingRequestInput, BookingStatus, CalendarSyncStatus } from "./types";
 import { validateBookingRequest } from "./validation";
@@ -842,6 +842,9 @@ export async function processBooking(
         gte(bookings.bufferEndTime, queryWindowStart),
         lte(bookings.bufferStartTime, queryWindowEnd)
       ),
+      with: {
+        attendees: true,
+      },
     }),
   ]);
 
@@ -898,6 +901,9 @@ export async function processBooking(
       minNoticeHours: eventType.minNoticeHours,
       maxPerDay: eventType.maxPerDay,
       requiresApproval: eventType.requiresApproval,
+      maxAttendees: eventType.maxAttendees ?? 1,
+      showRemainingSpots: eventType.showRemainingSpots ?? true,
+      minAttendees: eventType.minAttendees ?? 1,
     },
     weeklyAvailability: hostWeekly.map((w) => ({
       dayOfWeek: w.dayOfWeek,
@@ -920,6 +926,10 @@ export async function processBooking(
       bufferStartTime: b.bufferStartTime,
       bufferEndTime: b.bufferEndTime,
       status: b.status,
+      attendeeCount:
+        b.attendees && b.attendees.length > 0
+          ? b.attendees.filter((a) => a.status !== "cancelled").length
+          : 1,
     })),
     calendarBusyBlocks,
     calendarCheckFailed,
@@ -954,6 +964,147 @@ export async function processBooking(
 
   const requiresApproval = Boolean(eventType.requiresApproval);
   const initialStatus: BookingStatus = requiresApproval ? "pending" : "confirmed";
+
+  const maxAttendees = eventType.maxAttendees && eventType.maxAttendees > 1 ? eventType.maxAttendees : 1;
+  const isGroupEvent = maxAttendees > 1;
+
+  if (isGroupEvent) {
+    const existingGroupSession = await db.query.bookings.findFirst({
+      where: and(
+        eq(bookings.hostId, host.id),
+        eq(bookings.eventTypeId, eventType.id),
+        eq(bookings.startTime, proposedStartTime),
+        ne(bookings.status, "cancelled"),
+        ne(bookings.status, "rejected")
+      ),
+      with: {
+        attendees: true,
+        eventType: true,
+      },
+    });
+
+    if (existingGroupSession) {
+      const activeAttendees = existingGroupSession.attendees?.filter((a) => a.status !== "cancelled") || [];
+      if (activeAttendees.length >= maxAttendees) {
+        return {
+          success: false,
+          status: 409,
+          error: "This group session has reached maximum capacity.",
+          errorCode: "CONFLICT",
+        };
+      }
+
+      const alreadyJoined = activeAttendees.some(
+        (a) => a.emailNormalized === normalizedGuestEmail
+      );
+      if (alreadyJoined) {
+        const attendee = activeAttendees.find((a) => a.emailNormalized === normalizedGuestEmail)!;
+        return {
+          success: true,
+          status: 200,
+          booking: {
+            id: existingGroupSession.id,
+            guestName: attendee.guestName,
+            guestEmail: attendee.guestEmail,
+            startTime: existingGroupSession.startTime.toISOString(),
+            endTime: existingGroupSession.endTime.toISOString(),
+            meetLink: existingGroupSession.meetLink || undefined,
+            cancelToken: attendee.cancelToken,
+            eventType: existingGroupSession.eventType?.title || eventType.title,
+            status: existingGroupSession.status as BookingStatus,
+            requiresApproval: existingGroupSession.status === "pending",
+            calendarSynced: existingGroupSession.calendarSyncStatus === "synced",
+            calendarSyncStatus: existingGroupSession.calendarSyncStatus as CalendarSyncStatus,
+            locationType: location.locationType,
+            locationUrl: location.locationUrl,
+          },
+        };
+      }
+
+      const attendeeCancelToken = crypto.randomBytes(24).toString("hex");
+      await db.insert(bookingAttendees).values({
+        bookingId: existingGroupSession.id,
+        guestName: input.guestName.trim(),
+        guestEmail: normalizedGuestEmail,
+        emailNormalized: normalizedGuestEmail,
+        guestNotes: input.guestNotes?.trim() || null,
+        customAnswers: input.customAnswers || {},
+        cancelToken: attendeeCancelToken,
+        status: "confirmed",
+      });
+
+      // Update contacts
+      try {
+        const existingContact = await db.query.contacts.findFirst({
+          where: and(eq(contacts.userId, host.id), eq(contacts.email, normalizedGuestEmail)),
+        });
+        if (existingContact) {
+          await db
+            .update(contacts)
+            .set({
+              totalBookings: existingContact.totalBookings + 1,
+              lastBookingAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(contacts.id, existingContact.id));
+        } else {
+          await db.insert(contacts).values({
+            userId: host.id,
+            email: normalizedGuestEmail,
+            name: input.guestName.trim(),
+            totalBookings: 1,
+            lastBookingAt: new Date(),
+          });
+        }
+      } catch (contactErr) {
+        console.warn("[Contact Sync] Error updating contact for group attendee:", contactErr);
+      }
+
+      // Send confirmation email to new group attendee
+      try {
+        await sendBookingConfirmationEmail({
+          toEmail: normalizedGuestEmail,
+          guestName: input.guestName.trim(),
+          hostName: host.name,
+          hostEmail: host.email,
+          eventTitle: eventType.title,
+          dateStr: input.date,
+          timeStr: input.time,
+          durationMins,
+          status: "confirmed",
+          calendarSynced: existingGroupSession.calendarSyncStatus === "synced",
+          locationType: location.locationType,
+          locationUrl: location.locationUrl,
+          meetLink: existingGroupSession.meetLink || undefined,
+          guestNotes: input.guestNotes,
+          cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz"}/cancel/${attendeeCancelToken}`,
+        });
+      } catch (emailErr) {
+        console.error("[Email Notification] Error dispatching confirmation email to group attendee:", emailErr);
+      }
+
+      return {
+        success: true,
+        status: 200,
+        booking: {
+          id: existingGroupSession.id,
+          guestName: input.guestName.trim(),
+          guestEmail: normalizedGuestEmail,
+          startTime: existingGroupSession.startTime.toISOString(),
+          endTime: existingGroupSession.endTime.toISOString(),
+          meetLink: existingGroupSession.meetLink || undefined,
+          cancelToken: attendeeCancelToken,
+          eventType: existingGroupSession.eventType?.title || eventType.title,
+          status: existingGroupSession.status as BookingStatus,
+          requiresApproval: existingGroupSession.status === "pending",
+          calendarSynced: existingGroupSession.calendarSyncStatus === "synced",
+          calendarSyncStatus: existingGroupSession.calendarSyncStatus as CalendarSyncStatus,
+          locationType: location.locationType,
+          locationUrl: location.locationUrl,
+        },
+      };
+    }
+  }
 
   // 10. Atomic Database Reservation
   const cancelToken = crypto.randomBytes(24).toString("hex");
@@ -996,6 +1147,19 @@ export async function processBooking(
       .returning();
 
     newBooking = inserted;
+
+    if (isGroupEvent && inserted) {
+      await db.insert(bookingAttendees).values({
+        bookingId: inserted.id,
+        guestName: inserted.guestName,
+        guestEmail: inserted.guestEmail,
+        emailNormalized: inserted.guestEmail.toLowerCase(),
+        guestNotes: inserted.guestNotes,
+        customAnswers: inserted.customAnswers || {},
+        cancelToken: inserted.cancelToken,
+        status: "confirmed",
+      });
+    }
   } catch (dbErr: unknown) {
     const errString = String(dbErr);
     if (

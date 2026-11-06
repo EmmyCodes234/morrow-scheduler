@@ -162,24 +162,68 @@ export function generateAvailableSlots({
             slotEndUtc.getTime() + bufferAfterMins * 60 * 1000
           );
 
-          // Check conflict with existing bookings (both confirmed and pending reserve slots)
+          const maxAttendees = eventType.maxAttendees && eventType.maxAttendees > 1 ? eventType.maxAttendees : 1;
+          const isGroupEvent = maxAttendees > 1;
+
+          // Identify any existing active booking for THIS exact event type and timeslot
+          const existingGroupBooking = isGroupEvent
+            ? existingBookings.find(
+                (b) =>
+                  b.status !== "cancelled" &&
+                  b.status !== "rejected" &&
+                  b.eventTypeId === eventType.id &&
+                  b.startTime.getTime() === currentSlotUtc.getTime()
+              )
+            : undefined;
+
+          // Check conflict with OTHER bookings (different event type, or different time)
           const hasBookingConflict = existingBookings.some((b) => {
             if (b.status === "cancelled" || b.status === "rejected") return false;
+            if (existingGroupBooking && b.id === existingGroupBooking.id) {
+              return false;
+            }
             const bBufStart = b.bufferStartTime || b.startTime;
             const bBufEnd = b.bufferEndTime || b.endTime;
             return intervalsOverlap(slotBufferStartUtc, slotBufferEndUtc, bBufStart, bBufEnd);
           });
 
-          // Check conflict with Google Calendar busy blocks (consistent buffer interval semantics)
+          // Capacity check
+          let spotsRemaining = maxAttendees;
+          let isFull = false;
+
+          if (existingGroupBooking) {
+            const currentAttendees = existingGroupBooking.attendeeCount ?? 1;
+            spotsRemaining = Math.max(0, maxAttendees - currentAttendees);
+            if (spotsRemaining <= 0) {
+              isFull = true;
+            }
+          }
+
+          // Check conflict with Google Calendar busy blocks:
+          // If this slot already has a group booking in Morrow, Google Calendar reports the host as busy
+          // for this exact session. We do not block subsequent attendees from joining that session!
           const hasCalendarConflict = calendarBusyBlocks.some((block) => {
-            return intervalsOverlap(slotBufferStartUtc, slotBufferEndUtc, block.start, block.end);
+            if (!intervalsOverlap(slotBufferStartUtc, slotBufferEndUtc, block.start, block.end)) {
+              return false;
+            }
+            if (existingGroupBooking) {
+              const matchesGroupBooking =
+                Math.abs(block.start.getTime() - currentSlotUtc.getTime()) <= 60000 &&
+                Math.abs(block.end.getTime() - slotEndUtc.getTime()) <= 60000;
+              if (matchesGroupBooking) {
+                return false;
+              }
+            }
+            return true;
           });
 
-          if (!hasBookingConflict && !hasCalendarConflict) {
+          if (!hasBookingConflict && !isFull && !hasCalendarConflict) {
             candidateSlotsList.push({
               time: formatTime12(currentSlotUtc, guestTz),
               startTime: currentSlotUtc,
               endTime: slotEndUtc,
+              spotsRemaining: isGroupEvent ? spotsRemaining : undefined,
+              maxAttendees: isGroupEvent ? maxAttendees : undefined,
             });
           }
         }

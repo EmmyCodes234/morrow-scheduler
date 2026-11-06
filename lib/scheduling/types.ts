@@ -42,6 +42,9 @@ export interface EventTypeConfig {
   minNoticeHours: number;
   maxPerDay?: number | null;
   requiresApproval: boolean;
+  maxAttendees?: number | null;
+  showRemainingSpots?: boolean | null;
+  minAttendees?: number | null;
 }
 
 export interface AvailabilityWindow {
@@ -67,6 +70,7 @@ export interface ExistingBookingInterval {
   bufferStartTime: Date;
   bufferEndTime: Date;
   status: string;
+  attendeeCount?: number;
 }
 
 export interface CalendarBusyBlock {
@@ -92,6 +96,8 @@ export interface TimeSlot {
   time: string; // "09:00 AM" in guest timezone
   startTime: Date; // UTC Date
   endTime: Date; // UTC Date
+  spotsRemaining?: number;
+  maxAttendees?: number;
 }
 
 export interface BookingRequestInput {

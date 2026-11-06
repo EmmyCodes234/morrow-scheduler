@@ -67,6 +67,9 @@ export const eventTypes = pgTable(
     minNoticeHours: integer("min_notice_hours").notNull().default(2),
     maxPerDay: integer("max_per_day"),
     requiresApproval: boolean("requires_approval").notNull().default(false),
+    maxAttendees: integer("max_attendees").notNull().default(1),
+    showRemainingSpots: boolean("show_remaining_spots").notNull().default(true),
+    minAttendees: integer("min_attendees").default(1),
     redirectUrl: text("redirect_url"),
     questions: jsonb("questions").$type<Array<{ id: string; label: string; required: boolean; type?: string }>>().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -165,6 +168,33 @@ export const bookings = pgTable(
     index("bookings_buffer_time_idx").on(table.hostId, table.bufferStartTime, table.bufferEndTime),
     uniqueIndex("bookings_cancel_token_idx").on(table.cancelToken),
     uniqueIndex("bookings_host_idempotency_idx").on(table.hostId, table.idempotencyKey),
+  ]
+);
+
+export const bookingAttendees = pgTable(
+  "booking_attendees",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bookingId: uuid("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    guestName: text("guest_name").notNull(),
+    guestEmail: text("guest_email").notNull(),
+    emailNormalized: text("email_normalized").notNull(),
+    guestNotes: text("guest_notes"),
+    customAnswers: jsonb("custom_answers").$type<Record<string, unknown>>().default({}),
+    cancelToken: text("cancel_token").notNull().unique(),
+    status: text("status").notNull().default("confirmed"), // confirmed, cancelled
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancellationReason: text("cancellation_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("booking_attendees_booking_idx").on(table.bookingId),
+    index("booking_attendees_status_idx").on(table.status),
+    uniqueIndex("booking_attendees_booking_email_idx").on(table.bookingId, table.emailNormalized),
+    uniqueIndex("booking_attendees_cancel_token_idx").on(table.cancelToken),
   ]
 );
 
@@ -349,7 +379,7 @@ export const eventTypesRelations = relations(eventTypes, ({ one, many }) => ({
   bookings: many(bookings),
 }));
 
-export const bookingsRelations = relations(bookings, ({ one }) => ({
+export const bookingsRelations = relations(bookings, ({ one, many }) => ({
   eventType: one(eventTypes, {
     fields: [bookings.eventTypeId],
     references: [eventTypes.id],
@@ -359,6 +389,14 @@ export const bookingsRelations = relations(bookings, ({ one }) => ({
     references: [users.id],
   }),
   room: one(rooms),
+  attendees: many(bookingAttendees),
+}));
+
+export const bookingAttendeesRelations = relations(bookingAttendees, ({ one }) => ({
+  booking: one(bookings, {
+    fields: [bookingAttendees.bookingId],
+    references: [bookings.id],
+  }),
 }));
 
 export const availabilityRelations = relations(availability, ({ one }) => ({
@@ -408,6 +446,9 @@ export type NewAvailabilityOverride = typeof availabilityOverrides.$inferInsert;
 
 export type Booking = typeof bookings.$inferSelect;
 export type NewBooking = typeof bookings.$inferInsert;
+
+export type BookingAttendee = typeof bookingAttendees.$inferSelect;
+export type NewBookingAttendee = typeof bookingAttendees.$inferInsert;
 
 export type Meeting = typeof meetings.$inferSelect;
 export type NewMeeting = typeof meetings.$inferInsert;

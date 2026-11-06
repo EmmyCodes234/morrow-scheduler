@@ -48,7 +48,10 @@ interface EventTypeItem {
   duration: number;
   description?: string;
   location: string;
+  locationType?: "google_meet" | "zoom" | "teams" | "in_person" | "phone";
   active: boolean;
+  maxAttendees?: number;
+  showRemainingSpots?: boolean;
 }
 
 interface BookingItem {
@@ -61,6 +64,15 @@ interface BookingItem {
   meetLink?: string;
   roomToken?: string;
   status: "Confirmed" | "Completed" | "Cancelled" | string;
+  isGroup?: boolean;
+  maxAttendees?: number;
+  attendeeCount?: number;
+  attendees?: Array<{
+    id: string;
+    guestName: string;
+    guestEmail: string;
+    guestNotes?: string | null;
+  }>;
 }
 
 interface ContactItem {
@@ -245,7 +257,7 @@ export function DashboardView({
       .then((data) => {
         if (data.eventTypes && Array.isArray(data.eventTypes)) {
           setEventTypes(
-            data.eventTypes.map((et: { id: string; title: string; slug: string; durationMins?: number; description?: string; locationType?: string; isActive?: boolean }) => ({
+            data.eventTypes.map((et: { id: string; title: string; slug: string; durationMins?: number; description?: string; locationType?: string; isActive?: boolean; maxAttendees?: number; showRemainingSpots?: boolean }) => ({
               id: et.id,
               title: et.title,
               slug: et.slug,
@@ -254,6 +266,8 @@ export function DashboardView({
               location: et.locationType === "zoom" ? "Zoom Meetings" : et.locationType === "teams" ? "Microsoft Teams" : et.locationType === "phone" ? "Phone Call" : et.locationType === "in_person" ? "In Person" : "Google Meet",
               locationType: et.locationType || "google_meet",
               active: et.isActive ?? true,
+              maxAttendees: et.maxAttendees || 1,
+              showRemainingSpots: et.showRemainingSpots ?? true,
             }))
           );
         }
@@ -497,6 +511,8 @@ export function DashboardView({
           durationMins: data.duration,
           description: data.description,
           locationType: data.locationType || "google_meet",
+          maxAttendees: data.maxAttendees ?? 1,
+          showRemainingSpots: data.showRemainingSpots ?? true,
         }),
       });
       if (res.ok) {
@@ -513,7 +529,9 @@ export function DashboardView({
           slug: data.slug,
           durationMins: data.duration,
           description: data.description,
-          locationType: user?.defaultLocationType || "google_meet",
+          locationType: data.locationType || user?.defaultLocationType || "google_meet",
+          maxAttendees: data.maxAttendees ?? 1,
+          showRemainingSpots: data.showRemainingSpots ?? true,
         }),
       });
       if (res.ok) {
@@ -782,7 +800,14 @@ export function DashboardView({
                 >
                   <div className="flex flex-col gap-3.5">
                     <div className="flex items-center justify-between">
-                      <Chip color="blue" variant="bold">{event.duration} mins</Chip>
+                      <div className="flex items-center gap-1.5">
+                        <Chip color="blue" variant="bold">{event.duration} mins</Chip>
+                        {event.maxAttendees && event.maxAttendees > 1 ? (
+                          <Chip color="purple" variant="bold">Group (max {event.maxAttendees})</Chip>
+                        ) : (
+                          <Chip color="soft" variant="caption">1-on-1</Chip>
+                        )}
+                      </div>
                       <Switch
                         isSelected={event.active}
                         onChange={() => toggleEventActive(event.id, event.active)}
@@ -885,9 +910,16 @@ export function DashboardView({
                       </div>
 
                       <div className="flex flex-col sm:items-end">
-                        <span className="text-body-medium font-medium text-text-primary">
-                          {b.date} at {b.time}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-body-medium font-medium text-text-primary">
+                            {b.date} at {b.time}
+                          </span>
+                          {b.isGroup && (
+                            <Chip color="purple" variant="bold">
+                              {b.attendeeCount}/{b.maxAttendees} spots
+                            </Chip>
+                          )}
+                        </div>
                         <span className="text-body-2-regular text-text-secondary">
                           {b.eventTitle}
                         </span>

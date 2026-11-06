@@ -47,6 +47,9 @@ export async function PATCH(
     if (body.locationType !== undefined) updateData.locationType = body.locationType;
     if (body.isActive !== undefined) updateData.isActive = Boolean(body.isActive);
     if (body.color !== undefined) updateData.color = body.color;
+    if (body.maxAttendees !== undefined) updateData.maxAttendees = Number(body.maxAttendees) || 1;
+    if (body.showRemainingSpots !== undefined) updateData.showRemainingSpots = Boolean(body.showRemainingSpots);
+    if (body.minAttendees !== undefined) updateData.minAttendees = Number(body.minAttendees) || 1;
 
     const [updated] = await db
       .update(eventTypes)

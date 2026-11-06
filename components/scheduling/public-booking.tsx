@@ -49,6 +49,8 @@ export interface PublicEventType {
   location?: string;
   active?: boolean;
   requiresApproval?: boolean;
+  maxAttendees?: number;
+  showRemainingSpots?: boolean;
 }
 
 export interface PublicBookingViewProps {
@@ -87,6 +89,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
     morning: [],
     afternoon: [],
   });
+  const [slotDetails, setSlotDetails] = useState<Record<string, { spotsRemaining?: number; maxAttendees?: number }>>({});
   const [loadingSlots, setLoadingSlots] = useState<boolean>(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
 
@@ -179,8 +182,19 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
           });
 
           setAvailableSlots({ morning, afternoon });
+
+          if (data.slotsDetail && Array.isArray(data.slotsDetail)) {
+            const detailMap: Record<string, { spotsRemaining?: number; maxAttendees?: number }> = {};
+            data.slotsDetail.forEach((sd: { time: string; spotsRemaining?: number; maxAttendees?: number }) => {
+              detailMap[sd.time] = { spotsRemaining: sd.spotsRemaining, maxAttendees: sd.maxAttendees };
+            });
+            setSlotDetails(detailMap);
+          } else {
+            setSlotDetails({});
+          }
         } else {
           setAvailableSlots({ morning: [], afternoon: [] });
+          setSlotDetails({});
         }
         setLoadingSlots(false);
       })
@@ -462,7 +476,16 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                               : "bg-background-primary-default border border-border-button-default text-text-secondary hover:text-text-primary"
                           }`}
                         >
-                          <span className="truncate">{evt.title}</span>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="truncate">{evt.title}</span>
+                            {evt.maxAttendees && evt.maxAttendees > 1 && (
+                              <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
+                                active ? "bg-white/20 text-white" : "bg-purple-500/10 text-purple-700"
+                              }`}>
+                                Group
+                              </span>
+                            )}
+                          </div>
                           <span className="text-caption-1-semibold shrink-0 ms-2">{evt.duration}m</span>
                         </button>
                       );
@@ -556,6 +579,9 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                         <div className="grid grid-cols-1 gap-1.5">
                           {availableSlots.morning.map((time) => {
                             const isPicked = selectedSlot === time;
+                            const detail = slotDetails[time];
+                            const isGroup = (selectedEvent.maxAttendees || 1) > 1;
+                            const showSpots = isGroup && selectedEvent.showRemainingSpots !== false && detail?.spotsRemaining !== undefined;
                             return (
                               <button
                                 key={time}
@@ -568,9 +594,16 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                                 }`}
                               >
                                 <span>{time}</span>
-                                <span className="text-caption-1-semibold text-text-tertiary group-hover:text-accent-500">
-                                  Book
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  {showSpots && (
+                                    <span className="text-caption-1-semibold px-2 py-0.5 rounded-full bg-accent-500/10 text-accent-700">
+                                      {detail.spotsRemaining} spot{detail.spotsRemaining === 1 ? "" : "s"} left
+                                    </span>
+                                  )}
+                                  <span className="text-caption-1-semibold text-text-tertiary group-hover:text-accent-500">
+                                    {isPicked ? "Selected" : "Book"}
+                                  </span>
+                                </div>
                               </button>
                             );
                           })}
@@ -588,6 +621,9 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                         <div className="grid grid-cols-1 gap-1.5">
                           {availableSlots.afternoon.map((time) => {
                             const isPicked = selectedSlot === time;
+                            const detail = slotDetails[time];
+                            const isGroup = (selectedEvent.maxAttendees || 1) > 1;
+                            const showSpots = isGroup && selectedEvent.showRemainingSpots !== false && detail?.spotsRemaining !== undefined;
                             return (
                               <button
                                 key={time}
@@ -600,9 +636,16 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                                 }`}
                               >
                                 <span>{time}</span>
-                                <span className="text-caption-1-semibold text-text-tertiary group-hover:text-accent-500">
-                                  Book
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  {showSpots && (
+                                    <span className="text-caption-1-semibold px-2 py-0.5 rounded-full bg-accent-500/10 text-accent-700">
+                                      {detail.spotsRemaining} spot{detail.spotsRemaining === 1 ? "" : "s"} left
+                                    </span>
+                                  )}
+                                  <span className="text-caption-1-semibold text-text-tertiary group-hover:text-accent-500">
+                                    {isPicked ? "Selected" : "Book"}
+                                  </span>
+                                </div>
                               </button>
                             );
                           })}

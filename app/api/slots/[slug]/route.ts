@@ -131,6 +131,9 @@ export async function GET(
           gte(bookings.bufferEndTime, windowStart),
           lte(bookings.bufferStartTime, windowEnd)
         ),
+        with: {
+          attendees: true,
+        },
       }),
     ]);
 
@@ -182,6 +185,9 @@ export async function GET(
         minNoticeHours: targetEventType.minNoticeHours,
         maxPerDay: targetEventType.maxPerDay,
         requiresApproval: targetEventType.requiresApproval,
+        maxAttendees: targetEventType.maxAttendees ?? 1,
+        showRemainingSpots: targetEventType.showRemainingSpots ?? true,
+        minAttendees: targetEventType.minAttendees ?? 1,
       },
       requestedDate: dateParam,
       guestTimezone,
@@ -206,6 +212,10 @@ export async function GET(
         bufferStartTime: b.bufferStartTime,
         bufferEndTime: b.bufferEndTime,
         status: b.status,
+        attendeeCount:
+          b.attendees && b.attendees.length > 0
+            ? b.attendees.filter((a) => a.status !== "cancelled").length
+            : 1,
       })),
       calendarBusyBlocks,
       calendarCheckFailed,
@@ -235,10 +245,13 @@ export async function GET(
         id: targetEventType.id,
         title: targetEventType.title,
         duration: targetEventType.durationMins,
+        maxAttendees: targetEventType.maxAttendees ?? 1,
+        showRemainingSpots: targetEventType.showRemainingSpots ?? true,
       },
       date: dateParam,
       timezone: guestTimezone,
       slots: slotResult.slots,
+      slotsDetail: slotResult.slotsDetail,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal server error";

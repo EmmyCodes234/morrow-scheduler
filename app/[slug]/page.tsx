@@ -48,6 +48,8 @@ export default async function PublicBookingPage({
           description: et.description || "",
           location: "Google Meet",
           active: et.isActive,
+          maxAttendees: et.maxAttendees ?? 1,
+          showRemainingSpots: et.showRemainingSpots ?? true,
         }))}
       />
     </div>
