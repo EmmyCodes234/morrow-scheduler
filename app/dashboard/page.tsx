@@ -5,9 +5,8 @@ import { connection } from "next/server";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { MorrowIcon } from "@/components/brand/morrow-logo";
 import { DashboardPageClient } from "./dashboard-client";
-
-export const instant = false;
 
 export default async function DashboardPage() {
   await connection();
@@ -25,15 +24,41 @@ export default async function DashboardPage() {
     redirect("/onboarding");
   }
 
+  const initials = host.name
+    ? host.name
+        .split(" ")
+        .filter(Boolean)
+        .map((n: string) => n[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : "U";
+
+  const initialUser = {
+    id: host.id,
+    name: host.name,
+    email: host.email,
+    slug: host.slug,
+    initials: initials || "U",
+    timezone: host.timezone || "UTC",
+    avatarUrl: host.avatarUrl,
+    brandColor: host.brandColor,
+    welcomeMessage: host.welcomeMessage,
+    defaultLocationType: host.defaultLocationType || "google_meet",
+    zoomMeetingUrl: host.zoomMeetingUrl || "",
+    teamsMeetingUrl: host.teamsMeetingUrl || "",
+    hasGoogleCalendar: Boolean(host.googleAccessToken || host.googleRefreshToken),
+  };
+
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-background-full flex items-center justify-center text-body-medium text-text-secondary">
-          Loading Morrow...
+        <div className="min-h-screen bg-background-full flex items-center justify-center">
+          <MorrowIcon size={44} showBadge={true} className="animate-pulse" />
         </div>
       }
     >
-      <DashboardPageClient />
+      <DashboardPageClient initialUser={initialUser} />
     </Suspense>
   );
 }

@@ -5,9 +5,8 @@ import { connection } from "next/server";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { MorrowIcon } from "@/components/brand/morrow-logo";
 import { OnboardingPageClient } from "./onboarding-client";
-
-export const instant = false;
 
 export default async function OnboardingPage() {
   await connection();
@@ -28,7 +27,13 @@ export default async function OnboardingPage() {
 
   return (
     <div className="min-h-screen bg-background-full flex items-center justify-center p-4 sm:p-8">
-      <Suspense fallback={<div className="text-body-medium text-text-secondary">Loading Morrow setup...</div>}>
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center">
+            <MorrowIcon size={44} showBadge={true} className="animate-pulse" />
+          </div>
+        }
+      >
         <OnboardingPageClient
           userEmail={session.user.email}
           userName={session.user.name || host?.name || ""}

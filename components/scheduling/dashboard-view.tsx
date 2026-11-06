@@ -37,7 +37,7 @@ import { RescheduleModal } from "@/components/scheduling/modals/reschedule-modal
 import { ZoomModal } from "@/components/scheduling/modals/zoom-modal";
 import { TeamsModal } from "@/components/scheduling/modals/teams-modal";
 import { GCalModal } from "@/components/scheduling/modals/gcal-modal";
-import { MorrowLogo } from "@/components/brand/morrow-logo";
+import { MorrowLogo, MorrowIcon } from "@/components/brand/morrow-logo";
 
 interface EventTypeItem {
   id: string;
@@ -110,9 +110,10 @@ export interface DashboardViewProps {
   onOpenNewEventModal?: () => void;
   onOpenRescheduleModal?: (booking: BookingItem) => void;
   onPreviewPublicBooking?: () => void;
+  initialUser?: HostUser;
 }
 
-interface HostUser {
+export interface HostUser {
   id: string;
   name: string;
   email: string;
@@ -132,14 +133,15 @@ export function DashboardView({
   onOpenNewEventModal: externalOpenNewEvent,
   onOpenRescheduleModal: externalOpenReschedule,
   onPreviewPublicBooking,
+  initialUser,
 }: DashboardViewProps) {
   const [activeTab, setActiveTab] = useState<string>("events");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(!initialUser);
 
   // Dynamic user profile from Neon
-  const [user, setUser] = useState<HostUser | null>(null);
+  const [user, setUser] = useState<HostUser | null>(initialUser || null);
 
   // Event types from Neon
   const [eventTypes, setEventTypes] = useState<EventTypeItem[]>([]);
@@ -645,9 +647,9 @@ export function DashboardView({
 
   if (isLoading || !user) {
     return (
-      <div className="min-h-[70vh] flex flex-col items-center justify-center gap-3 text-text-secondary">
-        <div className="size-8 rounded-full border-2 border-accent-500 border-t-transparent animate-spin" />
-        <span className="text-body-medium">Loading your Morrow calendar...</span>
+      <div className="min-h-[70vh] flex flex-col items-center justify-center">
+        <MorrowIcon size={44} showBadge={true} className="animate-pulse" />
+
       </div>
     );
   }
