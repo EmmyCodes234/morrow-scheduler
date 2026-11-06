@@ -156,6 +156,9 @@ export function DashboardView({
   const [isNewMeetingOpen, setIsNewMeetingOpen] = useState(false);
   const [meetings, setMeetings] = useState<any[]>([]);
   const [copiedMeetingId, setCopiedMeetingId] = useState<string | null>(null);
+  const [openingEarlyId, setOpeningEarlyId] = useState<string | null>(null);
+  const [cancellingMeetingId, setCancellingMeetingId] = useState<string | null>(null);
+  const [viewingAttendeesMeeting, setViewingAttendeesMeeting] = useState<any | null>(null);
   const [editingEvent, setEditingEvent] = useState<EventTypeItem | null>(null);
   const [isZoomModalOpen, setIsZoomModalOpen] = useState(false);
   const [isGCalModalOpen, setIsGCalModalOpen] = useState(false);
@@ -283,6 +286,7 @@ export function DashboardView({
   };
 
   const handleOpenEarlyMeeting = async (meetingId: string) => {
+    setOpeningEarlyId(meetingId);
     try {
       const res = await fetch(`/api/meetings/${meetingId}/open-early`, { method: "POST" });
       if (res.ok) {
@@ -294,6 +298,27 @@ export function DashboardView({
       }
     } catch {
       showNotification("Error opening room early.");
+    } finally {
+      setOpeningEarlyId(null);
+    }
+  };
+
+  const handleCancelMeeting = async (meetingId: string) => {
+    if (!window.confirm("Are you sure you want to cancel this meeting?")) return;
+    setCancellingMeetingId(meetingId);
+    try {
+      const res = await fetch(`/api/meetings/${meetingId}`, { method: "DELETE" });
+      if (res.ok) {
+        showNotification("Meeting cancelled.");
+        loadMeetings();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        showNotification(d.error || "Failed to cancel meeting.");
+      }
+    } catch {
+      showNotification("Error cancelling meeting.");
+    } finally {
+      setCancellingMeetingId(null);
     }
   };
 
@@ -892,7 +917,14 @@ export function DashboardView({
                               </Badge>
                             </div>
                             <span className="text-body-2-regular text-text-secondary">
-                              {formattedDate} ({m.timezone || "UTC"}) • {m.attendees?.length || 0} registered
+                              {formattedDate} ({m.timezone || "UTC"}) •{" "}
+                              <button
+                                type="button"
+                                onClick={() => setViewingAttendeesMeeting(m)}
+                                className="underline hover:text-text-primary cursor-pointer transition-colors"
+                              >
+                                {m.attendees?.length || 0} registered
+                              </button>
                             </span>
                             {m.description && (
                               <p className="text-caption-1-medium text-text-tertiary line-clamp-1">
@@ -916,9 +948,22 @@ export function DashboardView({
                             <Button
                               variant="secondary"
                               size="xs"
+                              disabled={openingEarlyId === m.id}
                               onClick={() => handleOpenEarlyMeeting(m.id)}
                             >
-                              Open early
+                              {openingEarlyId === m.id ? "Opening..." : "Open early"}
+                            </Button>
+                          )}
+
+                          {m.status === "scheduled" && (
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              disabled={cancellingMeetingId === m.id}
+                              onClick={() => handleCancelMeeting(m.id)}
+                              className="text-text-error-primary hover:bg-status-danger-background"
+                            >
+                              {cancellingMeetingId === m.id ? "Cancelling..." : "Cancel"}
                             </Button>
                           )}
 
@@ -1418,6 +1463,64 @@ export function DashboardView({
         isOpen={tourOpen}
         onClose={() => setTourOpen(false)}
       />
+      {viewingAttendeesMeeting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-3xl border border-border-button-default bg-background-primary-default p-6 shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border-button-default">
+              <div>
+                <h3 className="text-title-3-semibold text-text-primary">{viewingAttendeesMeeting.title}</h3>
+                <p className="text-caption-1-medium text-text-secondary">
+                  {viewingAttendeesMeeting.attendees?.length || 0} Registered Attendees
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingAttendeesMeeting(null)}
+                className="p-1 rounded-full text-text-secondary hover:text-text-primary cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto divide-y divide-border-button-default">
+              {(!viewingAttendeesMeeting.attendees || viewingAttendeesMeeting.attendees.length === 0) ? (
+                <div className="py-8 text-center text-caption-1-medium text-text-tertiary">
+                  No attendees have registered yet. Share the invitation link to invite guests.
+                </div>
+              ) : (
+                viewingAttendeesMeeting.attendees.map((att: any, idx: number) => (
+                  <div key={att.id || idx} className="py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar
+                        size="sm"
+                        initials={att.name ? att.name.slice(0, 2).toUpperCase() : "G"}
+                        color="blue"
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-body-2-medium font-semibold text-text-primary truncate">
+                          {att.name}
+                        </span>
+                        <span className="text-caption-2-medium text-text-secondary truncate">
+                          {att.email}
+                        </span>
+                      </div>
+                    </div>
+                    <Badge color={att.status === "attended" ? "primary" : "neutral"}>
+                      {att.status || "registered"}
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-border-button-default">
+              <Button variant="secondary" size="small" onClick={() => setViewingAttendeesMeeting(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

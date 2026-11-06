@@ -389,7 +389,7 @@ export async function getRoomByAccessToken(
           timezone: h.timezone || "UTC",
         },
         guest: {
-          name: "Group Meeting Attendees",
+          name: "Guest",
           timezone: m.timezone || "UTC",
           notes: m.description,
         },
@@ -483,6 +483,31 @@ export async function addRoomFile(
   return nextFiles;
 }
 
+export async function removeRoomFile(
+  token: string,
+  fileId: string,
+  dbClient: RoomDb = defaultDb
+): Promise<RoomFileItem[] | null> {
+  const room = await dbClient.query.rooms.findFirst({
+    where: eq(rooms.accessToken, token),
+  });
+  if (!room) return null;
+
+  const currentFiles = (room.files as RoomFileItem[]) || [];
+  const nextFiles = currentFiles.filter((f) => f.id !== fileId);
+
+  await dbClient
+    .update(rooms)
+    .set({
+      files: nextFiles,
+      updatedAt: new Date(),
+    })
+    .where(eq(rooms.accessToken, token));
+
+  return nextFiles;
+}
+
+
 export const SYNTHESIS_LEASE_MS = 60_000; // 60 seconds
 
 export interface ConcludeRoomResult {
@@ -559,7 +584,10 @@ export async function concludeRoomAndSynthesize(
       .where(
         and(
           eq(rooms.accessToken, token.trim()),
-          ne(rooms.status, "concluded"),
+          or(
+            ne(rooms.status, "concluded"),
+            inArray(rooms.synthesisStatus, ["failed", "insufficient_evidence"])
+          ),
           ne(rooms.synthesisStatus, "completed"),
           or(
             isNull(rooms.synthesisStatus),
@@ -660,6 +688,13 @@ export async function concludeRoomAndSynthesize(
         status: "stale_worker",
         error: "Synthesis completed but lease had expired.",
       };
+    }
+
+    if (claimedRoom.meetingId) {
+      await dbClient
+        .update(meetings)
+        .set({ status: "concluded", updatedAt: new Date() })
+        .where(eq(meetings.id, claimedRoom.meetingId));
     }
 
     return {

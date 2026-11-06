@@ -1,6 +1,8 @@
 import { Suspense } from "react";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { getRoomByAccessToken } from "@/lib/room/room-service";
+import { getAttendeeBySessionToken } from "@/lib/meetings/meeting-service";
 import { RoomView } from "@/components/room/room-view";
 import { Spinner } from "@/components/base/spinner/spinner";
 import { auth } from "@/auth";
@@ -18,7 +20,36 @@ async function RoomContent({ token }: { token: string }) {
   const hostId = room.meeting?.host?.id || room.booking.host.id;
   const isHost = Boolean(session?.user?.id && session.user.id === hostId);
 
-  return <RoomView initialRoom={room} isHost={isHost} />;
+  let attendeeProfile: { id: string; name: string; email: string } | null = null;
+
+  if (room.type === "group_meeting" && !isHost) {
+    const cookieStore = await cookies();
+    const sessionToken = cookieStore.get("morrow_attendee_session")?.value;
+
+    if (sessionToken) {
+      const attendee = await getAttendeeBySessionToken(sessionToken, room.meeting?.id);
+      if (attendee) {
+        attendeeProfile = {
+          id: attendee.id,
+          name: attendee.name,
+          email: attendee.email,
+        };
+      }
+    }
+
+    // If an unregistered visitor enters a group meeting room without registration cookie, redirect to public lobby
+    if (!attendeeProfile && room.meeting?.invitationToken) {
+      redirect(`/j/${room.meeting.invitationToken}`);
+    }
+  }
+
+  return (
+    <RoomView
+      initialRoom={room}
+      isHost={isHost}
+      attendeeProfile={attendeeProfile}
+    />
+  );
 }
 
 export default async function RoomPage({

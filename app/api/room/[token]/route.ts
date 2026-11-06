@@ -87,8 +87,12 @@ export async function PATCH(
 
     // Host-Only Operation: Concluding the room and synthesizing AI ledger
     if (body.action === "conclude") {
-      // If already concluded, return existing ledger idempotently
-      if (room.status === "concluded") {
+      // If already concluded with successful ledger, return idempotently. Allow retry if synthesis failed or needs evidence.
+      if (
+        room.status === "concluded" &&
+        room.synthesisStatus !== "insufficient_evidence" &&
+        room.synthesisStatus !== "failed"
+      ) {
         return NextResponse.json({
           success: true,
           status: "concluded",
@@ -196,15 +200,21 @@ export async function PATCH(
       });
     }
 
-    // Immutability: Concluded rooms cannot be modified by ordinary collaborative requests
+    // Immutability: Concluded rooms cannot be modified by ordinary collaborative requests,
+    // UNLESS synthesis failed or requires notes evidence for recovery.
     if (room.status === "concluded") {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Conflict: This room has been concluded and cannot be edited.",
-        },
-        { status: 409 }
-      );
+      const isRecoverable =
+        room.synthesisStatus === "insufficient_evidence" ||
+        room.synthesisStatus === "failed";
+      if (!isRecoverable) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Conflict: This room has been concluded and cannot be edited.",
+          },
+          { status: 409 }
+        );
+      }
     }
 
     // Legitimate collaborative operations (Notes, Agenda, Document contribution)
