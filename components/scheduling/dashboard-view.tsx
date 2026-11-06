@@ -243,7 +243,8 @@ export function DashboardView({
               slug: et.slug,
               duration: et.durationMins || 30,
               description: et.description || "",
-              location: et.locationType === "zoom" ? "Zoom Meetings" : "Google Meet",
+              location: et.locationType === "zoom" ? "Zoom Meetings" : et.locationType === "phone" ? "Phone Call" : et.locationType === "in_person" ? "In Person" : "Google Meet",
+              locationType: et.locationType || "google_meet",
               active: et.isActive ?? true,
             }))
           );
@@ -493,6 +494,7 @@ export function DashboardView({
           slug: data.slug,
           durationMins: data.duration,
           description: data.description,
+          locationType: data.locationType || "google_meet",
         }),
       });
       if (res.ok) {
@@ -1051,7 +1053,18 @@ export function DashboardView({
                           {b.status}
                         </Badge>
 
-                        {b.roomToken && b.status !== "Cancelled" && (
+                        {b.meetLink && b.status !== "Cancelled" && (
+                          <Button
+                            variant="primary"
+                            size="xs"
+                            leadingIcon={HugeVideo}
+                            onClick={() => window.open(b.meetLink, "_blank")}
+                          >
+                            {b.meetLink.includes("zoom.us") ? "Join Zoom" : "Join Meet"}
+                          </Button>
+                        )}
+
+                        {b.roomToken && !b.meetLink && b.status !== "Cancelled" && (
                           <Button
                             variant="primary"
                             size="xs"
@@ -1061,18 +1074,6 @@ export function DashboardView({
                           >
                             Open Room
                           </Button>
-                        )}
-
-                        {b.meetLink && b.status !== "Cancelled" && !b.roomToken && (
-                          <a
-                            href={b.meetLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-body-2-regular font-medium bg-accent-50 text-accent-700 hover:bg-accent-100 transition-colors"
-                          >
-                            <HugeVideo className="size-3.5" />
-                            <span>Join</span>
-                          </a>
                         )}
 
                         {b.status !== "Cancelled" && (

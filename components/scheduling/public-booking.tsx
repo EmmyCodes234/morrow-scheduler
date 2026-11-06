@@ -341,40 +341,39 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
             </div>
 
             {!isPendingApproval && confirmedMeetLink && (
-              <div className="flex items-center justify-between pt-2 border-t border-border-button-default">
-                <a
-                  href={confirmedMeetLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2.5 text-body-medium text-accent-500 hover:underline font-medium"
-                >
-                  <HugeVideo className="size-4 shrink-0 text-accent-500" />
-                  <span>Join Meeting</span>
-                </a>
+              <div className="flex flex-col gap-2.5 pt-3 border-t border-border-button-default">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-caption-1-semibold text-text-tertiary uppercase tracking-wider">
+                    <HugeVideo className="size-3.5 text-accent-500" />
+                    <span>
+                      {confirmedMeetLink.includes("zoom.us")
+                        ? "Zoom Video Call"
+                        : "Google Meet Video Call"}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    leadingIcon={copiedLink ? HugeCheck : HugeCopy}
+                    onClick={handleCopyMeet}
+                    className="text-text-secondary hover:text-text-primary"
+                  >
+                    {copiedLink ? "Copied" : "Copy link"}
+                  </Button>
+                </div>
                 <Button
-                  variant="secondary"
-                  size="xs"
-                  leadingIcon={copiedLink ? HugeCheck : HugeCopy}
-                  onClick={handleCopyMeet}
+                  variant="primary"
+                  size="medium"
+                  className="w-full justify-center text-body-medium font-semibold shadow-xs"
+                  onClick={() => window.open(confirmedMeetLink, "_blank")}
                 >
-                  {copiedLink ? "Copied" : "Copy link"}
+                  {confirmedMeetLink.includes("zoom.us")
+                    ? "Join Zoom Meeting"
+                    : "Join Google Meet"}
                 </Button>
               </div>
             )}
           </div>
-
-            {confirmedBooking?.roomToken && (
-              <Button
-                variant="primary"
-                size="medium"
-                className="w-full mb-3"
-                onClick={() => {
-                  window.location.href = `/room/${confirmedBooking.roomToken}`;
-                }}
-              >
-                Enter Morrow Room
-              </Button>
-            )}
 
           <button
             type="button"
