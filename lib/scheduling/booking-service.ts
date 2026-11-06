@@ -20,6 +20,7 @@ import {
 } from "@/lib/google-calendar";
 import { sendBookingConfirmationEmail } from "@/lib/email";
 import { resolveEffectiveLocation } from "./location";
+import { createDynamicZoomMeeting } from "@/lib/integrations/zoom";
 
 export interface BookingResponse {
   success: boolean;
@@ -1020,11 +1021,25 @@ export async function processBooking(
     };
   }
 
-  // 11. Calendar Synchronization Lifecycle
+  // 11. Dynamic Meeting Provisioning & Calendar Synchronization Lifecycle
   let meetLink: string | undefined =
-    location.locationType === "zoom" || location.locationType === "custom"
-      ? location.locationUrl
-      : undefined;
+    location.locationType === "custom" ? location.locationUrl : undefined;
+
+  // Provision dedicated Zoom meeting (dynamic OAuth or personal link fallback)
+  if (location.locationType === "zoom") {
+    try {
+      const zoomMeeting = await createDynamicZoomMeeting(host.id, {
+        topic: `${eventType.title} with ${input.guestName.trim()}`,
+        startTime: proposedStartTime,
+        durationMins,
+        timezone: host.timezone || "UTC",
+      });
+      meetLink = zoomMeeting.joinUrl;
+    } catch (zoomErr) {
+      console.warn("[Zoom Meeting] Error creating dynamic meeting, fallback to locationUrl:", zoomErr);
+      meetLink = location.locationUrl || host.zoomMeetingUrl || undefined;
+    }
+  }
   let gcalEventId: string | undefined = undefined;
   let calendarSynced = false;
   let finalCalendarSyncStatus: CalendarSyncStatus = initialCalendarSyncStatus;

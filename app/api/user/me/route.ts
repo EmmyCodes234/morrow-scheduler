@@ -32,6 +32,8 @@ export async function GET() {
         welcomeMessage: host.welcomeMessage,
         defaultLocationType: host.defaultLocationType || "google_meet",
         zoomMeetingUrl: host.zoomMeetingUrl || "",
+        zoomEmail: host.zoomEmail || null,
+        zoomConnectedAt: host.zoomConnectedAt || null,
         bufferMins: host.bufferMins ?? 10,
         minNoticeHours: host.minNoticeHours ?? 2,
         maxBookingDays: host.maxBookingDays ?? 30,
