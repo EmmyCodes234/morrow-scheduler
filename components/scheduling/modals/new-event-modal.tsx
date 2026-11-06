@@ -6,6 +6,9 @@ import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Textarea } from "@/components/base/textarea/textarea";
 import { HugeVideo, HugeClock, HugeCheck, HugeDelete, HugeGlobe } from "@/components/icons/hugeicons";
+import { GoogleMeetIcon } from "@/components/icons/google-meet";
+import { ZoomIcon } from "@/components/icons/zoom";
+import { MicrosoftTeamsIcon } from "@/components/icons/microsoft-teams";
 
 export interface EventFormData {
   id?: string;
@@ -207,7 +210,7 @@ export function NewEventModal({
                         : "border-border-button-default bg-background-secondary-default text-text-secondary hover:text-text-primary"
                     }`}
                   >
-                    <HugeVideo className="size-4 shrink-0 text-accent-500" />
+                    <GoogleMeetIcon className="size-5 shrink-0" />
                     <div className="flex flex-col min-w-0">
                       <span className="text-body-2-medium font-semibold truncate">Google Meet</span>
                       <span className="text-caption-2-medium text-text-tertiary truncate">Auto web conference</span>
@@ -223,7 +226,7 @@ export function NewEventModal({
                         : "border-border-button-default bg-background-secondary-default text-text-secondary hover:text-text-primary"
                     }`}
                   >
-                    <HugeVideo className="size-4 shrink-0 text-[#2D8CFF]" />
+                    <ZoomIcon className="size-5 shrink-0" />
                     <div className="flex flex-col min-w-0">
                       <span className="text-body-2-medium font-semibold truncate">Zoom</span>
                       <span className="text-caption-2-medium text-text-tertiary truncate">Personal meeting room</span>
@@ -239,7 +242,7 @@ export function NewEventModal({
                         : "border-border-button-default bg-background-secondary-default text-text-secondary hover:text-text-primary"
                     }`}
                   >
-                    <HugeVideo className="size-4 shrink-0 text-[#5B5FC7]" />
+                    <MicrosoftTeamsIcon className="size-5 shrink-0" />
                     <div className="flex flex-col min-w-0">
                       <span className="text-body-2-medium font-semibold truncate">Teams</span>
                       <span className="text-caption-2-medium text-text-tertiary truncate">Microsoft Teams</span>

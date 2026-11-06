@@ -9,6 +9,9 @@ import { Chip } from "@/components/base/badges/chip";
 import { Switch } from "@/components/base/switch/switch";
 import { SwitchCard } from "@/components/base/switch/switch-card";
 import { GoogleCalendarIcon } from "@/components/icons/google-calendar";
+import { GoogleMeetIcon } from "@/components/icons/google-meet";
+import { ZoomIcon } from "@/components/icons/zoom";
+import { MicrosoftTeamsIcon } from "@/components/icons/microsoft-teams";
 import {
   HugeCalendar,
   HugeClock,
@@ -1358,18 +1361,21 @@ export function DashboardView({
 
               {/* Google Meet Card */}
               <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex items-center justify-between shadow-2xs">
-                <div className="flex flex-col gap-1 max-w-lg">
-                  <div className="flex items-center gap-2">
-                    <span className="text-body-medium font-semibold text-text-primary">
-                      Google Meet
+                <div className="flex items-center gap-4 max-w-lg">
+                  <GoogleMeetIcon className="size-10 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-body-medium font-semibold text-text-primary">
+                        Google Meet
+                      </span>
+                      {isGoogleMeetActive && (
+                        <Chip color="blue" variant="bold">Default Provider</Chip>
+                      )}
+                    </div>
+                    <span className="text-body-2-regular text-text-secondary">
+                      Automatically generate unique Google Meet video links for all scheduled bookings.
                     </span>
-                    {isGoogleMeetActive && (
-                      <Chip color="blue" variant="bold">Default Provider</Chip>
-                    )}
                   </div>
-                  <span className="text-body-2-regular text-text-secondary">
-                    Automatically generate unique Google Meet video links for all scheduled bookings.
-                  </span>
                 </div>
 
                 <Switch
@@ -1388,18 +1394,21 @@ export function DashboardView({
               {/* Zoom Meetings Card */}
               <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-3 shadow-2xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex flex-col gap-1 max-w-lg">
-                    <div className="flex items-center gap-2">
-                      <span className="text-body-medium font-semibold text-text-primary">
-                        Zoom Meetings
+                  <div className="flex items-center gap-4 max-w-lg">
+                    <ZoomIcon className="size-10 shrink-0" />
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-body-medium font-semibold text-text-primary">
+                          Zoom Meetings
+                        </span>
+                        {isZoomActive && (
+                          <Chip color="lime" variant="bold">Default Provider</Chip>
+                        )}
+                      </div>
+                      <span className="text-body-2-regular text-text-secondary">
+                        Use your Personal Zoom Meeting room as your meeting location for guest bookings.
                       </span>
-                      {isZoomActive && (
-                        <Chip color="lime" variant="bold">Default Provider</Chip>
-                      )}
                     </div>
-                    <span className="text-body-2-regular text-text-secondary">
-                      Use your Personal Zoom Meeting room as your meeting location for guest bookings.
-                    </span>
                   </div>
 
                   <Switch
@@ -1423,7 +1432,7 @@ export function DashboardView({
                 {user.zoomMeetingUrl && (
                   <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
                     <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
-                      <HugeVideo className="size-4 shrink-0 text-accent-500" />
+                      <ZoomIcon className="size-4 shrink-0" />
                       <span className="font-mono text-text-primary truncate">
                         {user.zoomMeetingUrl}
                       </span>
@@ -1444,18 +1453,21 @@ export function DashboardView({
               {/* Microsoft Teams Card */}
               <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-3 shadow-2xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex flex-col gap-1 max-w-lg">
-                    <div className="flex items-center gap-2">
-                      <span className="text-body-medium font-semibold text-text-primary">
-                        Microsoft Teams
+                  <div className="flex items-center gap-4 max-w-lg">
+                    <MicrosoftTeamsIcon className="size-10 shrink-0" />
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-body-medium font-semibold text-text-primary">
+                          Microsoft Teams
+                        </span>
+                        {isTeamsActive && (
+                          <Chip color="purple" variant="bold">Default Provider</Chip>
+                        )}
+                      </div>
+                      <span className="text-body-2-regular text-text-secondary">
+                        Use your Microsoft Teams meeting link as your meeting location for guest bookings.
                       </span>
-                      {isTeamsActive && (
-                        <Chip color="purple" variant="bold">Default Provider</Chip>
-                      )}
                     </div>
-                    <span className="text-body-2-regular text-text-secondary">
-                      Use your Microsoft Teams meeting link as your meeting location for guest bookings.
-                    </span>
                   </div>
 
                   <Switch
@@ -1479,7 +1491,7 @@ export function DashboardView({
                 {user.teamsMeetingUrl ? (
                   <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
                     <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
-                      <HugeVideo className="size-4 shrink-0 text-[#5B5FC7]" />
+                      <MicrosoftTeamsIcon className="size-4 shrink-0" />
                       <span className="font-mono text-text-primary truncate">
                         {user.teamsMeetingUrl}
                       </span>

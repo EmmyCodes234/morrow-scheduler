@@ -6,6 +6,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Chip } from "@/components/base/badges/chip";
 import { HugeVideo, HugeCheck, HugeLink } from "@/components/icons/hugeicons";
+import { ZoomIcon } from "@/components/icons/zoom";
 
 export interface ZoomModalProps {
   isOpen: boolean;
@@ -104,10 +105,8 @@ export function ZoomModal({
               {zoomEmail ? (
                 <div className="p-4 rounded-2xl border border-border-button-default bg-background-secondary-default flex flex-col gap-3">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="size-8 rounded-xl bg-[#2D8CFF]/15 text-[#2D8CFF] flex items-center justify-center shrink-0">
-                        <HugeVideo className="size-4" />
-                      </div>
+                    <div className="flex items-center gap-2.5">
+                      <ZoomIcon className="size-8 shrink-0" />
                       <span className="text-body-medium font-semibold text-text-primary">
                         Zoom Connected
                       </span>
@@ -131,9 +130,7 @@ export function ZoomModal({
               ) : (
                 <div className="p-4 rounded-2xl border border-border-button-default bg-background-secondary-default flex flex-col gap-3">
                   <div className="flex items-start gap-3">
-                    <div className="size-8 rounded-xl bg-[#2D8CFF]/15 text-[#2D8CFF] flex items-center justify-center shrink-0 mt-0.5">
-                      <HugeVideo className="size-4" />
-                    </div>
+                    <ZoomIcon className="size-8 shrink-0 mt-0.5" />
                     <div className="flex flex-col gap-0.5">
                       <span className="text-body-2-medium font-semibold text-text-primary">
                         Dynamic Per-Booking Rooms (Recommended)

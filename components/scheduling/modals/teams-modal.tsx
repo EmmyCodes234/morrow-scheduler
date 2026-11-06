@@ -5,6 +5,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/mo
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { HugeVideo, HugeLink } from "@/components/icons/hugeicons";
+import { MicrosoftTeamsIcon } from "@/components/icons/microsoft-teams";
 
 export interface TeamsModalProps {
   isOpen: boolean;
@@ -82,9 +83,7 @@ export function TeamsModal({
           <ModalBody>
             <form id="teams-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
               <div className="p-3.5 rounded-2xl border border-border-button-default bg-background-secondary-default flex items-start gap-3">
-                <div className="size-8 rounded-xl bg-[#5B5FC7]/15 text-[#5B5FC7] flex items-center justify-center shrink-0 mt-0.5">
-                  <HugeVideo className="size-4" />
-                </div>
+                <MicrosoftTeamsIcon className="size-8 shrink-0 mt-0.5" />
                 <div className="flex flex-col gap-0.5 text-body-2-regular text-text-secondary">
                   <span className="font-medium text-text-primary">How it works</span>
                   <span>
