@@ -6,8 +6,6 @@ import { getOrCreateRoomForMeeting } from "@/lib/room/room-service";
 import { InvitationView } from "./invitation-view";
 import { Spinner } from "@/components/base/spinner/spinner";
 
-export const instant = false;
-
 async function InvitationContent({ invitationToken }: { invitationToken: string }) {
   const meeting = await getMeetingByInvitationToken(invitationToken);
 

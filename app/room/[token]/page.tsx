@@ -7,8 +7,6 @@ import { RoomView } from "@/components/room/room-view";
 import { Spinner } from "@/components/base/spinner/spinner";
 import { auth } from "@/auth";
 
-export const instant = false;
-
 async function RoomContent({ token }: { token: string }) {
   const room = await getRoomByAccessToken(token);
 

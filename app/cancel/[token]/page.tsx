@@ -1,8 +1,6 @@
 import { getBookingForCancellation } from "@/lib/scheduling/cancellation-service";
 import { GuestCancellationView } from "@/components/scheduling/guest-cancellation-view";
 
-export const instant = false;
-
 export const metadata = {
   title: "Cancel Booking | Morrow",
   description: "Cancel your scheduled appointment on Morrow",
