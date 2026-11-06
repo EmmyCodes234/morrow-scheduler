@@ -87,6 +87,7 @@ export interface RoomDetails {
       timezone: string;
       notes?: string | null;
     };
+    meetLink?: string | null;
   };
   agenda: VeraAgendaItem[];
   sharedNotes: string;
@@ -323,6 +324,7 @@ export async function getRoomByAccessToken(
           timezone: b.guestTimezone || "UTC",
           notes: b.guestNotes,
         },
+        meetLink: b.meetLink || h.zoomMeetingUrl || h.teamsMeetingUrl || null,
       },
       agenda: room.agenda || [],
       sharedNotes: room.sharedNotes || "",

@@ -35,7 +35,6 @@ import {
 } from "@/components/icons/hugeicons";
 import { ProductTour } from "@/components/application/dashboard/product-tour";
 import { NewEventModal, type EventFormData } from "@/components/scheduling/modals/new-event-modal";
-import { NewMeetingModal } from "@/components/scheduling/modals/new-meeting-modal";
 import { RescheduleModal } from "@/components/scheduling/modals/reschedule-modal";
 import { ZoomModal } from "@/components/scheduling/modals/zoom-modal";
 import { TeamsModal } from "@/components/scheduling/modals/teams-modal";
@@ -163,12 +162,6 @@ export function DashboardView({
 
   // Modals state
   const [isNewEventOpen, setIsNewEventOpen] = useState(false);
-  const [isNewMeetingOpen, setIsNewMeetingOpen] = useState(false);
-  const [meetings, setMeetings] = useState<any[]>([]);
-  const [copiedMeetingId, setCopiedMeetingId] = useState<string | null>(null);
-  const [openingEarlyId, setOpeningEarlyId] = useState<string | null>(null);
-  const [cancellingMeetingId, setCancellingMeetingId] = useState<string | null>(null);
-  const [viewingAttendeesMeeting, setViewingAttendeesMeeting] = useState<any | null>(null);
   const [editingEvent, setEditingEvent] = useState<EventTypeItem | null>(null);
   const [isZoomModalOpen, setIsZoomModalOpen] = useState(false);
   const [isTeamsModalOpen, setIsTeamsModalOpen] = useState(false);
@@ -290,61 +283,6 @@ export function DashboardView({
       .catch((err) => console.error("Error loading contacts:", err));
   };
 
-  const loadMeetings = () => {
-    fetch("/api/meetings")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.meetings && Array.isArray(data.meetings)) {
-          setMeetings(data.meetings);
-        }
-      })
-      .catch((err) => console.error("Error loading group meetings:", err));
-  };
-
-  const handleOpenEarlyMeeting = async (meetingId: string) => {
-    setOpeningEarlyId(meetingId);
-    try {
-      const res = await fetch(`/api/meetings/${meetingId}/open-early`, { method: "POST" });
-      if (res.ok) {
-        showNotification("Room opened early for attendees.");
-        loadMeetings();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        showNotification(d.error || "Failed to open room early.");
-      }
-    } catch {
-      showNotification("Error opening room early.");
-    } finally {
-      setOpeningEarlyId(null);
-    }
-  };
-
-  const handleCancelMeeting = async (meetingId: string) => {
-    if (!window.confirm("Are you sure you want to cancel this meeting?")) return;
-    setCancellingMeetingId(meetingId);
-    try {
-      const res = await fetch(`/api/meetings/${meetingId}`, { method: "DELETE" });
-      if (res.ok) {
-        showNotification("Meeting cancelled.");
-        loadMeetings();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        showNotification(d.error || "Failed to cancel meeting.");
-      }
-    } catch {
-      showNotification("Error cancelling meeting.");
-    } finally {
-      setCancellingMeetingId(null);
-    }
-  };
-
-  const handleCopyMeetingLink = (token: string, id: string) => {
-    const url = `${window.location.origin}/j/${token}`;
-    navigator.clipboard.writeText(url);
-    setCopiedMeetingId(id);
-    setTimeout(() => setCopiedMeetingId(null), 2000);
-  };
-
   const loadAvailability = () => {
     fetch("/api/availability")
       .then((res) => res.json())
@@ -380,7 +318,6 @@ export function DashboardView({
     loadBookings();
     loadContacts();
     loadAvailability();
-    loadMeetings();
   }, []);
 
   const handleCopy = (id: string, path: string) => {
@@ -636,13 +573,6 @@ export function DashboardView({
       icon: HugeCalendar,
       badge: bookings.length > 0 ? bookings.length : undefined,
       onClick: () => setActiveTab("bookings"),
-    },
-    {
-      key: "meetings",
-      label: "Group meetings",
-      icon: HugeVideo,
-      badge: meetings.length > 0 ? meetings.length : undefined,
-      onClick: () => setActiveTab("meetings"),
     },
     {
       key: "availability",
@@ -904,158 +834,6 @@ export function DashboardView({
         {/* ========================================================================= */}
         {/* VIEW 2: BOOKINGS */}
         {/* ========================================================================= */}
-        {activeTab === "meetings" && (
-          <div className="flex flex-col gap-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border-button-default">
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <h1 className="text-title-1-medium text-text-primary">Group meetings</h1>
-                  <Chip color="soft" variant="caption">{meetings.length} total</Chip>
-                </div>
-                <p className="text-body-regular text-text-secondary">
-                  Create group meetings with shareable invitation links, preparation lobby, and persistent Morrow Rooms.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2.5">
-                <Button
-                  variant="primary"
-                  leadingIcon={HugeAdd}
-                  onClick={() => setIsNewMeetingOpen(true)}
-                >
-                  New group meeting
-                </Button>
-              </div>
-            </div>
-
-            {meetings.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-border-button-default p-12 text-center flex flex-col items-center gap-4 bg-background-primary-default">
-                <div className="size-12 rounded-full bg-background-secondary-default flex items-center justify-center text-text-secondary">
-                  <HugeVideo className="size-6 text-accent-500" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <h3 className="text-title-3-semibold text-text-primary">No group meetings yet</h3>
-                  <p className="text-body-regular text-text-secondary max-w-sm">
-                    Create a group meeting to generate a shareable WhatsApp invitation link with preparation materials.
-                  </p>
-                </div>
-                <Button
-                  variant="primary"
-                  leadingIcon={HugeAdd}
-                  onClick={() => setIsNewMeetingOpen(true)}
-                >
-                  Create first meeting
-                </Button>
-              </div>
-            ) : (
-              <div className="rounded-3xl border border-border-button-default bg-background-primary-default overflow-hidden shadow-2xs">
-                <div className="divide-y divide-border-button-default">
-                  {meetings.map((m) => {
-                    const startDate = new Date(m.startTime);
-                    const formattedDate = new Intl.DateTimeFormat("en-US", {
-                      weekday: "short",
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                      timeZone: m.timezone || "UTC",
-                    }).format(startDate);
-
-                    const isEarlyOpen = Boolean(m.openedEarlyAt);
-                    const isFuture = startDate.getTime() > Date.now();
-
-                    return (
-                      <div
-                        key={m.id}
-                        className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-background-secondary-default/50 transition-colors"
-                      >
-                        <div className="flex items-start gap-4">
-                          <div className="size-10 rounded-2xl bg-accent-50 dark:bg-accent-950/40 border border-accent-200 dark:border-accent-900 flex items-center justify-center text-accent-600 shrink-0 mt-0.5">
-                            <HugeVideo className="size-5" />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-body-medium font-semibold text-text-primary">
-                                {m.title}
-                              </span>
-                              {isEarlyOpen && (
-                                <Chip color="blue" variant="caption">Opened Early</Chip>
-                              )}
-                              <Badge color={m.status === "cancelled" ? "neutral" : "primary"}>
-                                {m.status}
-                              </Badge>
-                            </div>
-                            <span className="text-body-2-regular text-text-secondary">
-                              {formattedDate} ({m.timezone || "UTC"}) •{" "}
-                              <button
-                                type="button"
-                                onClick={() => setViewingAttendeesMeeting(m)}
-                                className="underline hover:text-text-primary cursor-pointer transition-colors"
-                              >
-                                {m.attendees?.length || 0} registered
-                              </button>
-                            </span>
-                            {m.description && (
-                              <p className="text-caption-1-medium text-text-tertiary line-clamp-1">
-                                {m.description}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
-                          <Button
-                            variant="secondary"
-                            size="xs"
-                            leadingIcon={copiedMeetingId === m.id ? HugeCheck : HugeCopy}
-                            onClick={() => handleCopyMeetingLink(m.invitationToken, m.id)}
-                          >
-                            {copiedMeetingId === m.id ? "Copied" : "Copy invite link"}
-                          </Button>
-
-                          {isFuture && !isEarlyOpen && m.status === "scheduled" && (
-                            <Button
-                              variant="secondary"
-                              size="xs"
-                              disabled={openingEarlyId === m.id}
-                              onClick={() => handleOpenEarlyMeeting(m.id)}
-                            >
-                              {openingEarlyId === m.id ? "Opening..." : "Open early"}
-                            </Button>
-                          )}
-
-                          {m.status === "scheduled" && (
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              disabled={cancellingMeetingId === m.id}
-                              onClick={() => handleCancelMeeting(m.id)}
-                              className="text-text-error-primary hover:bg-status-danger-background"
-                            >
-                              {cancellingMeetingId === m.id ? "Cancelling..." : "Cancel"}
-                            </Button>
-                          )}
-
-                          {m.room?.accessToken && (
-                            <Button
-                              variant="primary"
-                              size="xs"
-                              leadingIcon={HugeArrowRight}
-                              onClick={() => window.open(`/room/${m.room.accessToken}`, "_blank")}
-                            >
-                              Enter room
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         {activeTab === "bookings" && (
           <div className="flex flex-col gap-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border-button-default">
@@ -1127,19 +905,25 @@ export function DashboardView({
                             leadingIcon={HugeVideo}
                             onClick={() => window.open(b.meetLink, "_blank")}
                           >
-                            {b.meetLink.includes("zoom.us") ? "Join Zoom" : "Join Meet"}
+                            {b.meetLink.includes("zoom.us")
+                              ? "Join Zoom"
+                              : b.meetLink.includes("teams.live.com") || b.meetLink.includes("teams.microsoft.com")
+                              ? "Join Teams"
+                              : "Join Meet"}
                           </Button>
                         )}
 
-                        {b.roomToken && !b.meetLink && b.status !== "Cancelled" && (
+                        {!b.meetLink && b.status !== "Cancelled" && (
                           <Button
                             variant="primary"
                             size="xs"
+                            leadingIcon={HugeVideo}
                             onClick={() => {
-                              window.open(`/room/${b.roomToken}`, "_blank");
+                              const targetUrl = user?.zoomMeetingUrl || "https://meet.google.com";
+                              window.open(targetUrl, "_blank");
                             }}
                           >
-                            Open Room
+                            Join Call
                           </Button>
                         )}
 
@@ -1573,14 +1357,6 @@ export function DashboardView({
       </div>
 
       {/* MODALS */}
-      <NewMeetingModal
-        isOpen={isNewMeetingOpen}
-        onClose={() => setIsNewMeetingOpen(false)}
-        userTimezone={user.timezone}
-        onSuccess={() => {
-          loadMeetings();
-        }}
-      />
       <NewEventModal
         isOpen={isNewEventOpen}
         onClose={() => {
@@ -1637,64 +1413,6 @@ export function DashboardView({
         isOpen={tourOpen}
         onClose={() => setTourOpen(false)}
       />
-      {viewingAttendeesMeeting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="w-full max-w-lg rounded-3xl border border-border-button-default bg-background-primary-default p-6 shadow-2xl flex flex-col gap-4">
-            <div className="flex items-center justify-between pb-3 border-b border-border-button-default">
-              <div>
-                <h3 className="text-title-3-semibold text-text-primary">{viewingAttendeesMeeting.title}</h3>
-                <p className="text-caption-1-medium text-text-secondary">
-                  {viewingAttendeesMeeting.attendees?.length || 0} Registered Attendees
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setViewingAttendeesMeeting(null)}
-                className="p-1 rounded-full text-text-secondary hover:text-text-primary cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="max-h-80 overflow-y-auto divide-y divide-border-button-default">
-              {(!viewingAttendeesMeeting.attendees || viewingAttendeesMeeting.attendees.length === 0) ? (
-                <div className="py-8 text-center text-caption-1-medium text-text-tertiary">
-                  No attendees have registered yet. Share the invitation link to invite guests.
-                </div>
-              ) : (
-                viewingAttendeesMeeting.attendees.map((att: any, idx: number) => (
-                  <div key={att.id || idx} className="py-3 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar
-                        size="sm"
-                        initials={att.name ? att.name.slice(0, 2).toUpperCase() : "G"}
-                        color="blue"
-                      />
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-body-2-medium font-semibold text-text-primary truncate">
-                          {att.name}
-                        </span>
-                        <span className="text-caption-2-medium text-text-secondary truncate">
-                          {att.email}
-                        </span>
-                      </div>
-                    </div>
-                    <Badge color={att.status === "attended" ? "primary" : "neutral"}>
-                      {att.status || "registered"}
-                    </Badge>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="flex justify-end pt-2 border-t border-border-button-default">
-              <Button variant="secondary" size="small" onClick={() => setViewingAttendeesMeeting(null)}>
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
