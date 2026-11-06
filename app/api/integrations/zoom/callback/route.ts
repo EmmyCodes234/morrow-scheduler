@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const error = searchParams.get("error");
   const state = searchParams.get("state");
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin || "https://usemorrow.xyz";
 
   if (error || !code) {
     console.warn("[Zoom OAuth Callback] Error or missing code:", error);
