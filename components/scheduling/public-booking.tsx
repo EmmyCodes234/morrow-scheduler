@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { cx } from "@/utils/cx";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
 import { DateCalendar } from "@/components/base/date-picker/date-calendar";
 import { Button } from "@/components/base/buttons/button";
@@ -277,6 +278,8 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
   const eventLocationLabel =
     selectedEvent.location === "zoom"
       ? "Zoom Meeting"
+      : selectedEvent.location === "teams"
+      ? "Microsoft Teams"
       : selectedEvent.location === "in_person"
       ? "In-Person Meeting"
       : selectedEvent.location === "phone"
@@ -341,40 +344,46 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
             </div>
 
             {!isPendingApproval && confirmedMeetLink && (
-              <div className="flex items-center justify-between pt-2 border-t border-border-button-default">
-                <a
-                  href={confirmedMeetLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2.5 text-body-medium text-accent-500 hover:underline font-medium"
-                >
-                  <HugeVideo className="size-4 shrink-0 text-accent-500" />
-                  <span>Join Meeting</span>
-                </a>
+              <div className="flex flex-col gap-2.5 pt-3 border-t border-border-button-default">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-caption-1-semibold text-text-tertiary uppercase tracking-wider">
+                    <HugeVideo className={cx("size-3.5", confirmedMeetLink.includes("teams.microsoft.com") ? "text-[#5B5FC7]" : "text-accent-500")} />
+                    <span>
+                      {confirmedMeetLink.includes("zoom.us")
+                        ? "Zoom Video Call"
+                        : confirmedMeetLink.includes("teams.microsoft.com")
+                        ? "Microsoft Teams Call"
+                        : "Google Meet Video Call"}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    leadingIcon={copiedLink ? HugeCheck : HugeCopy}
+                    onClick={handleCopyMeet}
+                    className="text-text-secondary hover:text-text-primary"
+                  >
+                    {copiedLink ? "Copied" : "Copy link"}
+                  </Button>
+                </div>
                 <Button
-                  variant="secondary"
-                  size="xs"
-                  leadingIcon={copiedLink ? HugeCheck : HugeCopy}
-                  onClick={handleCopyMeet}
+                  variant="primary"
+                  size="medium"
+                  className={cx(
+                    "w-full justify-center text-body-medium font-semibold shadow-xs",
+                    confirmedMeetLink.includes("teams.microsoft.com") && "bg-[#5B5FC7] hover:bg-[#4E52B2] text-white border-transparent"
+                  )}
+                  onClick={() => window.open(confirmedMeetLink, "_blank")}
                 >
-                  {copiedLink ? "Copied" : "Copy link"}
+                  {confirmedMeetLink.includes("zoom.us")
+                    ? "Join Zoom Meeting"
+                    : confirmedMeetLink.includes("teams.microsoft.com")
+                    ? "Join Microsoft Teams Meeting"
+                    : "Join Google Meet"}
                 </Button>
               </div>
             )}
           </div>
-
-            {confirmedBooking?.roomToken && (
-              <Button
-                variant="primary"
-                size="medium"
-                className="w-full mb-3"
-                onClick={() => {
-                  window.location.href = `/room/${confirmedBooking.roomToken}`;
-                }}
-              >
-                Enter Morrow Room
-              </Button>
-            )}
 
           <button
             type="button"

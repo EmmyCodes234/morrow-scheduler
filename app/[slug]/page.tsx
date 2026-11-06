@@ -4,7 +4,7 @@ import { users, eventTypes } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { PublicBookingView } from "@/components/scheduling/public-booking";
 
-export const instant = false;
+
 
 export default async function PublicBookingPage({
   params,

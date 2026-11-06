@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
@@ -13,9 +13,9 @@ import {
   RiCheckLine,
   RiWhatsappLine,
   RiArrowRightLine,
-  RiSparklingLine,
   RiVideoOnLine,
   RiShareLine,
+  RiGlobalLine,
 } from "@remixicon/react";
 
 export interface NewMeetingModalProps {
@@ -25,175 +25,59 @@ export interface NewMeetingModalProps {
   onSuccess?: () => void;
 }
 
-const FOF_CLEANED_MINUTES = `# FESTUS OSIFO FOUNDATION (FOF)
-## SCRABBLE TOURNAMENT — MINUTES OF MEETING
+function getDefaultDateTime() {
+  const now = new Date();
+  const date = now.toISOString().split("T")[0];
+  const minutes = now.getMinutes();
+  const roundedMinutes = minutes < 30 ? 30 : 0;
+  const roundedHours = (now.getHours() + (minutes < 30 ? 0 : 1)) % 24;
+  const time = `${String(roundedHours).padStart(2, "0")}:${String(roundedMinutes).padStart(2, "0")}`;
+  return { date, time };
+}
 
-**Meeting date:** Monday, 2 November 2026  
-**Venue:** WhatsApp Voice Call / Online  
-**Scheduled time:** 11:00 a.m. – 1:45 p.m.  
-**Actual commencement:** 11:04 a.m.  
-**Duration:** 2 hours 41 minutes
-
-### 1. Attendance
-
-The following members were present:
-
-1. Mr. Bright Idahosa — President
-2. Favour Nwabuzor
-3. Enyi Emmanuel
-4. Abasido
-5. Comr. Nelson
-6. Wealth
-7. Catherine — Event Planner
-8. Kingsley
-9. Samuel Ohihon
-
-### 2. Opening
-
-The meeting commenced at 11:04 a.m. with pleasantries and introductions.
-
-### 3. President's Address and Strategic Direction
-
-The President outlined the ambition for the tournament, emphasising that it should deliver an exceptional and memorable experience capable of setting a new benchmark for Scrabble events in Nigeria.
-
-The key priorities were:
-
-- **Exceptional experience:** The tournament should be distinctive, memorable and well organised.
-- **Time management:** Strict adherence to the tournament schedule is essential.
-- **Player satisfaction:** Players' happiness and overall experience must remain central to planning and execution.
-- **Long-term sustainability:** The sponsor is considering organising the tournament twice yearly, subject to the success of the first edition.
-
-### 4. Tournament Operations and Competition Structure
-
-**Game flow**
-
-All games in a round must be completed before the next round begins. This was emphasised as an important operational requirement.
-
-**Tournament format**
-
-A 22-game structure, benchmarked against WESPA standards, was proposed. The final number of games remains to be confirmed.
-
-**Expected participation and registration**
-
-- Expected participation: 250–300 players.
-- Registration closing date: 14 November 2026.
-
-**Screens and visual presentation**
-
-The number and dimensions of screens are yet to be determined. Screen requirements will be finalised after confirming the number of screens required.
-
-The screens are also expected to display sponsor videos.
-
-**Proposed innovations**
-
-The following concepts were discussed:
-
-- **Scrabble Bee:** An interactive word challenge incorporating AI-generated or AI-assisted word selection. All words must strictly comply with CSW24, the official tournament lexicon. AI must not introduce or validate words outside the scope of CSW24.
-- **Quiz segment:** A proposed interactive quiz for participants and/or attendees.
-- **12-letter word showcase:** A showcase of 12-letter words during each round.
-
-These concepts require further development and confirmation.
-
-**Venue and logistics**
-
-- The operational team is expected to be on ground one week before the tournament.
-- A site visit to Benin was planned for the following weekend.
-- The alternative hall is intended for the opening and Day 1.
-- The main hall is intended to be opened for use from Day 2.
-
-### 5. Hospitality and Guest Experience
-
-The meeting emphasised the importance of delivering a distinctive hospitality experience.
-
-Areas discussed included:
-
-- Airport reception for invited guests.
-- Hotel arrangements and confirmation of international guests.
-- Efficient feeding arrangements.
-- Goody bags, with particular attention to children.
-- Red-carpet arrivals and guest reception.
-
-### 6. Entertainment and Media
-
-**Media coverage**
-
-The aspiration is to secure distinctive, high-quality media coverage, including live coverage by major television stations such as Channels TV and TVC.
-
-The President confirmed that leading television stations are being targeted.
-
-**Entertainment**
-
-The following activities were discussed for the tournament's dinner and entertainment programme:
-
-- Interviews with prominent personalities and superstars.
-- Fashion runway.
-- Comedy performances.
-
-Catherine is responsible for developing the entertainment plan.
-
-**Prizes**
-
-- Per-round cash prizes, to be presented in envelopes, were discussed.
-- Prizes for veterans remain to be determined.
-
-### 7. Questions and Contributions
-
-Comr. Nelson sought clarification on the prospects for national television coverage.
-
-The President reiterated that major television stations are being targeted.
-
-The importance of reliable internet connectivity was also emphasised. Backup internet arrangements were identified as critical to uninterrupted tournament operations.
-
-### 8. Action Register
-
-| Action | Responsible party | Status |
-|---|---|---|
-| Develop the entertainment plan | Catherine | Outstanding |
-| Prepare the media coverage plan | Media crew | Outstanding |
-| Conduct the Benin site visit | Organising team; lead to be assigned | Planned |
-| Confirm number and dimensions of screens | To be assigned | Outstanding |
-| Finalise the proposed 22-game structure | To be assigned | Outstanding |
-| Confirm international guests | To be assigned | Outstanding |
-| Confirm hotel arrangements | To be assigned | Outstanding |
-| Finalise prize structure, including veteran prizes | To be assigned | Outstanding |
-| Confirm sponsor video requirements | To be assigned | Outstanding |
-| Establish primary and backup internet arrangements | To be assigned | Outstanding |
-| Monitor registration and communicate the closing date | To be assigned | Pending |
-
-### 9. Closing
-
-The meeting was adjourned at 1:45 p.m.
-
-The next meeting was scheduled to hold via WhatsApp.
-
----
-
-### 10. Matters Requiring Follow-up
-
-The following items remain open for consideration and resolution at subsequent meetings:
-
-1. Finalise the proposed 22-game tournament structure.
-2. Develop the Scrabble Bee concept, ensuring strict compliance with CSW24.
-3. Clarify the format and execution of the quiz and 12-letter word showcase.
-4. Assign individual owners and deadlines to outstanding operational actions.
-5. Confirm screen requirements, venue logistics and backup internet arrangements.
-6. Finalise hospitality, media, entertainment and prize arrangements.
-
-**Document status:** Cleaned-up record of the previous meeting. Proposals and outstanding matters have deliberately not been presented as final decisions.`;
+const COMMON_TIMEZONES = [
+  "Africa/Lagos",
+  "Africa/Johannesburg",
+  "Africa/Nairobi",
+  "Africa/Cairo",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Toronto",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "UTC",
+];
 
 export function NewMeetingModal({
   isOpen,
   onClose,
-  userTimezone = "Africa/Lagos",
+  userTimezone,
   onSuccess,
 }: NewMeetingModalProps) {
+  const initialTimezone = useMemo(() => {
+    if (userTimezone) return userTimezone;
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch {
+      return "UTC";
+    }
+  }, [userTimezone]);
+
+  const initialDateTime = useMemo(() => getDefaultDateTime(), []);
+
   // Form fields
   const [title, setTitle] = useState("");
-  const [date, setDate] = useState("2026-11-05");
-  const [time, setTime] = useState("21:00");
-  const [durationMins, setDurationMins] = useState(120);
-  const [timezone, setTimezone] = useState(userTimezone || "Africa/Lagos");
-  const [description, setDescription] = useState("");
+  const [date, setDate] = useState(initialDateTime.date);
+  const [time, setTime] = useState(initialDateTime.time);
+  const [durationMins, setDurationMins] = useState(45);
+  const [timezone, setTimezone] = useState(initialTimezone);
   const [preparationMaterial, setPreparationMaterial] = useState("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -207,26 +91,25 @@ export function NewMeetingModal({
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedWhatsApp, setCopiedWhatsApp] = useState(false);
 
-  const handleLoadFOFTemplate = () => {
-    setTitle("FOF Scrabble Tournament Planning");
-    setDate("2026-11-05");
-    setTime("21:00");
-    setDurationMins(120);
-    setTimezone("Africa/Lagos");
-    setDescription(
-      "Organising committee meeting for the 2026 Festus Osifo Foundation Scrabble Tournament, competition structure, and operational logistics."
-    );
-    setPreparationMaterial(FOF_CLEANED_MINUTES);
-    setError(null);
-  };
+  // Timezones list (Common first, then full IANA deduplicated)
+  const allTimezones = useMemo(() => {
+    try {
+      const iana = Intl.supportedValuesOf("timeZone");
+      const set = new Set([initialTimezone, ...COMMON_TIMEZONES, ...iana]);
+      return Array.from(set);
+    } catch {
+      const set = new Set([initialTimezone, ...COMMON_TIMEZONES]);
+      return Array.from(set);
+    }
+  }, [initialTimezone]);
 
   const handleReset = () => {
+    const next = getDefaultDateTime();
     setTitle("");
-    setDate("2026-11-05");
-    setTime("21:00");
-    setDurationMins(120);
-    setTimezone(userTimezone || "Africa/Lagos");
-    setDescription("");
+    setDate(next.date);
+    setTime(next.time);
+    setDurationMins(45);
+    setTimezone(initialTimezone);
     setPreparationMaterial("");
     setCreatedResult(null);
     setError(null);
@@ -235,7 +118,7 @@ export function NewMeetingModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
-      setError("Meeting title is required.");
+      setError("Please enter a meeting title.");
       return;
     }
 
@@ -257,7 +140,7 @@ export function NewMeetingModal({
           startTime: time,
           durationMins,
           timezone,
-          description: description.trim() || undefined,
+          description: preparationMaterial.trim() ? preparationMaterial.trim().slice(0, 200) : undefined,
           preparationMaterial: preparationMaterial.trim() || undefined,
         }),
       });
@@ -294,9 +177,8 @@ export function NewMeetingModal({
 
   const formattedStartTime = createdResult
     ? new Intl.DateTimeFormat("en-US", {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
+        weekday: "short",
+        month: "short",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
@@ -306,7 +188,7 @@ export function NewMeetingModal({
     : "";
 
   const whatsappMessage = createdResult
-    ? `You're invited to ${createdResult.meeting.title} on Morrow.\nDate & Time: ${formattedStartTime}\nJoin link & preparation materials: ${fullInvitationUrl}\nNo account needed. Open on your phone to review minutes and enter the room.`
+    ? `You're invited to ${createdResult.meeting.title} on Morrow.\nDate & Time: ${formattedStartTime}\nJoin link & agenda: ${fullInvitationUrl}\nNo account needed. Open on your phone to enter the room.`
     : "";
 
   const handleCopyLink = () => {
@@ -348,51 +230,51 @@ export function NewMeetingModal({
         handleReset();
         onClose();
       }}
-      size="lg"
+      size="md"
     >
       {({ close }) => (
         <>
           <ModalHeader
-            title={createdResult ? "Meeting Invitation Ready" : "Create Group Meeting"}
+            title={createdResult ? "Meeting Invitation Ready" : "New Group Meeting"}
             description={
               createdResult
                 ? "Your shareable invitation link has been generated and the Morrow Room is provisioned."
-                : "Create an independent group meeting, load previous minutes, and generate a shareable WhatsApp link."
+                : "Schedule a group meeting with a persistent room, shareable invite link, and preparation materials."
             }
           />
 
           <ModalBody className="max-h-[75vh] overflow-y-auto">
             {createdResult ? (
               /* SUCCESS STATE */
-              <div className="flex flex-col gap-6 py-2">
+              <div className="flex flex-col gap-5 py-1">
                 <div className="flex items-center justify-between p-4 rounded-2xl bg-accent-50/60 dark:bg-accent-950/20 border border-accent-200 dark:border-accent-900">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-caption-1-semibold text-accent-600 uppercase font-semibold">
-                      Persistent Room Provisioned
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="text-caption-2-medium text-accent-600 uppercase font-semibold">
+                      Room Ready
                     </span>
-                    <h3 className="text-title-3-semibold text-text-primary">
+                    <h3 className="text-body-medium font-semibold text-text-primary truncate">
                       {createdResult.meeting.title}
                     </h3>
-                    <span className="text-body-2-regular text-text-secondary">
+                    <span className="text-caption-1-medium text-text-secondary">
                       {formattedStartTime}
                     </span>
                   </div>
-                  <Chip color="lime" variant="bold">
+                  <Chip color="lime" variant="bold" className="shrink-0">
                     Active
                   </Chip>
                 </div>
 
                 {/* Shareable Link Box */}
-                <div className="flex flex-col gap-2">
-                  <span className="text-caption-1-semibold text-text-primary font-medium">
-                    Shareable Invitation Link (Guests require no account)
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-caption-1-semibold text-text-primary">
+                    Shareable Invitation Link (No account required for attendees)
                   </span>
-                  <div className="flex items-center gap-2 p-2 rounded-xl border border-border-button-default bg-background-secondary-default">
+                  <div className="flex items-center gap-2 p-1.5 rounded-xl border border-border-button-default bg-background-secondary-default">
                     <input
                       type="text"
                       readOnly
                       value={fullInvitationUrl}
-                      className="w-full bg-transparent text-text-primary text-body-medium font-mono ps-1 outline-none select-all"
+                      className="w-full bg-transparent text-text-primary text-body-2-medium font-mono ps-2 outline-none select-all truncate"
                     />
                     <Button
                       variant="secondary"
@@ -403,17 +285,14 @@ export function NewMeetingModal({
                       {copiedLink ? "Copied" : "Copy"}
                     </Button>
                   </div>
-                  <span className="text-caption-2-medium text-text-tertiary">
-                    Send this link to the WhatsApp group. Invitees open it on their phones, register in 5 seconds, read previous minutes, and enter the call.
-                  </span>
                 </div>
 
                 {/* 1-Click WhatsApp Share Pre-formatted message */}
-                <div className="flex flex-col gap-2 p-4 rounded-2xl bg-background-secondary-default/50 border border-border-button-default">
+                <div className="flex flex-col gap-2 p-3.5 rounded-2xl bg-background-secondary-default/50 border border-border-button-default">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-text-primary font-semibold text-caption-1-semibold">
-                      <RiWhatsappLine className="size-4.5 text-emerald-600" />
-                      <span>1-Click WhatsApp Invite Message</span>
+                    <div className="flex items-center gap-1.5 text-text-primary font-semibold text-caption-1-semibold">
+                      <RiWhatsappLine className="size-4 text-emerald-600" />
+                      <span>WhatsApp Invite</span>
                     </div>
                     <Button
                       variant="secondary"
@@ -424,7 +303,7 @@ export function NewMeetingModal({
                       {copiedWhatsApp ? "Sent!" : "Share / Copy"}
                     </Button>
                   </div>
-                  <div className="p-3 rounded-xl bg-background-primary-default border border-border-button-default text-caption-1-medium text-text-secondary font-mono whitespace-pre-wrap leading-relaxed select-all">
+                  <div className="p-2.5 rounded-xl bg-background-primary-default border border-border-button-default text-caption-2-medium text-text-secondary font-mono whitespace-pre-wrap leading-relaxed select-all">
                     {whatsappMessage}
                   </div>
                 </div>
@@ -433,7 +312,7 @@ export function NewMeetingModal({
                 <div className="flex items-center justify-between pt-2">
                   <Button
                     variant="primary"
-                    size="medium"
+                    size="small"
                     leadingIcon={RiVideoOnLine}
                     trailingIcon={RiArrowRightLine}
                     onClick={() => {
@@ -444,7 +323,7 @@ export function NewMeetingModal({
                   </Button>
                   <Button
                     variant="secondary"
-                    size="medium"
+                    size="small"
                     onClick={() => {
                       handleReset();
                       close();
@@ -455,31 +334,8 @@ export function NewMeetingModal({
                 </div>
               </div>
             ) : (
-              /* MEETING CREATION FORM */
-              <form onSubmit={handleSubmit} className="flex flex-col gap-5 py-2">
-                {/* Quick Pilot Template CTA */}
-                <div className="flex items-center justify-between p-3.5 rounded-2xl bg-accent-50/50 dark:bg-accent-950/20 border border-accent-200 dark:border-accent-900">
-                  <div className="flex items-center gap-2.5">
-                    <RiSparklingLine className="size-5 text-accent-600 shrink-0" />
-                    <div className="flex flex-col">
-                      <span className="text-caption-1-semibold text-text-primary font-semibold">
-                        FOF Scrabble Tournament Pilot
-                      </span>
-                      <span className="text-caption-2-medium text-text-secondary">
-                        Prefill 5 Nov 2026, 9:00 PM Africa/Lagos & cleaned 2 Nov minutes
-                      </span>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="xs"
-                    onClick={handleLoadFOFTemplate}
-                  >
-                    Load Pilot Template
-                  </Button>
-                </div>
-
+              /* STREAMLINED CREATION FORM */
+              <form onSubmit={handleSubmit} className="flex flex-col gap-4 py-1">
                 {error && (
                   <div className="p-3 rounded-xl bg-background-error-default/10 border border-border-error-default text-text-error-primary text-body-2-medium">
                     {error}
@@ -487,56 +343,60 @@ export function NewMeetingModal({
                 )}
 
                 <Input
-                  label="Meeting title"
+                  label="Meeting Title"
                   value={title}
                   onChange={setTitle}
-                  placeholder="e.g. FOF Scrabble Tournament Planning"
+                  placeholder="e.g. Product Review & Planning"
                   isRequired
                 />
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-body-medium text-text-primary font-medium">
+                    <label className="text-caption-1-semibold text-text-primary">
                       Date <span className="text-text-error-primary">*</span>
                     </label>
-                    <input
-                      type="date"
-                      required
-                      value={date}
-                      onChange={(e) => setDate(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-medium outline-none"
-                    />
+                    <div className="relative">
+                      <input
+                        type="date"
+                        required
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-2-medium outline-none focus:border-border-focus-ring"
+                      />
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-body-medium text-text-primary font-medium">
+                    <label className="text-caption-1-semibold text-text-primary">
                       Start Time <span className="text-text-error-primary">*</span>
                     </label>
-                    <input
-                      type="time"
-                      required
-                      value={time}
-                      onChange={(e) => setTime(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-medium outline-none"
-                    />
+                    <div className="relative">
+                      <input
+                        type="time"
+                        required
+                        value={time}
+                        onChange={(e) => setTime(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-2-medium outline-none focus:border-border-focus-ring"
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-body-medium text-text-primary font-medium">
+                    <label className="text-caption-1-semibold text-text-primary">
                       Duration
                     </label>
-                    <div className="grid grid-cols-4 gap-2">
-                      {[30, 60, 90, 120].map((mins) => (
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[30, 45, 60, 90].map((mins) => (
                         <button
                           key={mins}
                           type="button"
                           onClick={() => setDurationMins(mins)}
-                          className={`py-2 px-1 rounded-lg text-body-2-medium font-medium transition-all cursor-pointer text-center ${
+                          className={`py-1.5 rounded-lg text-caption-1-semibold transition-all cursor-pointer text-center ${
                             durationMins === mins
-                              ? "bg-accent-500 text-white shadow-xs"
-                              : "border border-border-button-default bg-background-secondary-default text-text-secondary hover:text-text-primary"
+                              ? "bg-accent-500 text-white shadow-xs font-semibold"
+                              : "border border-border-button-default bg-background-secondary-default text-text-secondary hover:text-text-primary hover:bg-background-secondary-hover"
                           }`}
                         >
                           {mins}m
@@ -546,42 +406,38 @@ export function NewMeetingModal({
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-body-medium text-text-primary font-medium">
-                      Timezone
+                    <label className="text-caption-1-semibold text-text-primary flex items-center gap-1">
+                      <RiGlobalLine className="size-3.5 text-text-tertiary" />
+                      <span>Timezone</span>
                     </label>
-                    <input
-                      type="text"
+                    <select
                       value={timezone}
                       onChange={(e) => setTimezone(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-medium outline-none"
-                      placeholder="e.g. Africa/Lagos"
-                    />
+                      className="w-full px-3 py-2 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-caption-1-medium outline-none focus:border-border-focus-ring truncate cursor-pointer"
+                    >
+                      {allTimezones.map((tz) => (
+                        <option key={tz} value={tz}>
+                          {tz.replace(/_/g, " ")}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
-                <Textarea
-                  label="Description / Purpose (optional)"
-                  value={description}
-                  onChange={setDescription}
-                  placeholder="Context shown in the meeting invitation lobby."
-                  rows={2}
-                />
-
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-body-medium text-text-primary font-medium">
-                      Preparation Material & Previous Minutes (Markdown)
+                    <label className="text-caption-1-semibold text-text-primary">
+                      Agenda & Preparation Notes (Optional)
                     </label>
                     <span className="text-caption-2-medium text-text-tertiary">
-                      Read-only for invitees in lobby & room
+                      Markdown supported
                     </span>
                   </div>
-                  <textarea
-                    rows={8}
+                  <Textarea
                     value={preparationMaterial}
-                    onChange={(e) => setPreparationMaterial(e.target.value)}
-                    placeholder="Paste previous meeting minutes, agenda notes, or background context (supports Markdown headings, lists, tables)."
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-2-regular font-mono leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+                    onChange={setPreparationMaterial}
+                    placeholder="Key discussion points, topics, or background context for attendees..."
+                    rows={4}
                   />
                 </div>
               </form>
@@ -591,11 +447,12 @@ export function NewMeetingModal({
           {!createdResult && (
             <ModalFooter>
               <div className="w-full flex items-center justify-between">
-                <Button variant="ghost" onClick={close}>
+                <Button variant="ghost" size="small" onClick={close}>
                   Cancel
                 </Button>
                 <Button
                   variant="primary"
+                  size="small"
                   onClick={handleSubmit}
                   disabled={isSubmitting}
                 >

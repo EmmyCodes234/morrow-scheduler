@@ -9,6 +9,9 @@ import { Chip } from "@/components/base/badges/chip";
 import { Switch } from "@/components/base/switch/switch";
 import { SwitchCard } from "@/components/base/switch/switch-card";
 import { GoogleCalendarIcon } from "@/components/icons/google-calendar";
+import { GoogleMeetIcon } from "@/components/icons/google-meet";
+import { ZoomIcon } from "@/components/icons/zoom";
+import { MicrosoftTeamsIcon } from "@/components/icons/microsoft-teams";
 import {
   HugeCalendar,
   HugeClock,
@@ -35,8 +38,9 @@ import { NewEventModal, type EventFormData } from "@/components/scheduling/modal
 import { NewMeetingModal } from "@/components/scheduling/modals/new-meeting-modal";
 import { RescheduleModal } from "@/components/scheduling/modals/reschedule-modal";
 import { ZoomModal } from "@/components/scheduling/modals/zoom-modal";
+import { TeamsModal } from "@/components/scheduling/modals/teams-modal";
 import { GCalModal } from "@/components/scheduling/modals/gcal-modal";
-import { MorrowLogo } from "@/components/brand/morrow-logo";
+import { MorrowLogo, MorrowIcon } from "@/components/brand/morrow-logo";
 
 interface EventTypeItem {
   id: string;
@@ -109,9 +113,10 @@ export interface DashboardViewProps {
   onOpenNewEventModal?: () => void;
   onOpenRescheduleModal?: (booking: BookingItem) => void;
   onPreviewPublicBooking?: () => void;
+  initialUser?: HostUser;
 }
 
-interface HostUser {
+export interface HostUser {
   id: string;
   name: string;
   email: string;
@@ -123,6 +128,7 @@ interface HostUser {
   welcomeMessage?: string | null;
   defaultLocationType?: string;
   zoomMeetingUrl?: string;
+  teamsMeetingUrl?: string;
   hasGoogleCalendar?: boolean;
 }
 
@@ -130,14 +136,15 @@ export function DashboardView({
   onOpenNewEventModal: externalOpenNewEvent,
   onOpenRescheduleModal: externalOpenReschedule,
   onPreviewPublicBooking,
+  initialUser,
 }: DashboardViewProps) {
   const [activeTab, setActiveTab] = useState<string>("events");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(!initialUser);
 
   // Dynamic user profile from Neon
-  const [user, setUser] = useState<HostUser | null>(null);
+  const [user, setUser] = useState<HostUser | null>(initialUser || null);
 
   // Event types from Neon
   const [eventTypes, setEventTypes] = useState<EventTypeItem[]>([]);
@@ -156,8 +163,12 @@ export function DashboardView({
   const [isNewMeetingOpen, setIsNewMeetingOpen] = useState(false);
   const [meetings, setMeetings] = useState<any[]>([]);
   const [copiedMeetingId, setCopiedMeetingId] = useState<string | null>(null);
+  const [openingEarlyId, setOpeningEarlyId] = useState<string | null>(null);
+  const [cancellingMeetingId, setCancellingMeetingId] = useState<string | null>(null);
+  const [viewingAttendeesMeeting, setViewingAttendeesMeeting] = useState<any | null>(null);
   const [editingEvent, setEditingEvent] = useState<EventTypeItem | null>(null);
   const [isZoomModalOpen, setIsZoomModalOpen] = useState(false);
+  const [isTeamsModalOpen, setIsTeamsModalOpen] = useState(false);
   const [isGCalModalOpen, setIsGCalModalOpen] = useState(false);
   const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
   const [activeBooking, setActiveBooking] = useState<BookingItem | null>(null);
@@ -217,6 +228,7 @@ export function DashboardView({
             welcomeMessage: data.user.welcomeMessage,
             defaultLocationType: data.user.defaultLocationType || "google_meet",
             zoomMeetingUrl: data.user.zoomMeetingUrl || "",
+            teamsMeetingUrl: data.user.teamsMeetingUrl || "",
             hasGoogleCalendar: data.user.hasGoogleCalendar ?? true,
           });
         }
@@ -240,7 +252,8 @@ export function DashboardView({
               slug: et.slug,
               duration: et.durationMins || 30,
               description: et.description || "",
-              location: et.locationType === "zoom" ? "Zoom Meetings" : "Google Meet",
+              location: et.locationType === "zoom" ? "Zoom Meetings" : et.locationType === "teams" ? "Microsoft Teams" : et.locationType === "phone" ? "Phone Call" : et.locationType === "in_person" ? "In Person" : "Google Meet",
+              locationType: et.locationType || "google_meet",
               active: et.isActive ?? true,
             }))
           );
@@ -283,6 +296,7 @@ export function DashboardView({
   };
 
   const handleOpenEarlyMeeting = async (meetingId: string) => {
+    setOpeningEarlyId(meetingId);
     try {
       const res = await fetch(`/api/meetings/${meetingId}/open-early`, { method: "POST" });
       if (res.ok) {
@@ -294,6 +308,27 @@ export function DashboardView({
       }
     } catch {
       showNotification("Error opening room early.");
+    } finally {
+      setOpeningEarlyId(null);
+    }
+  };
+
+  const handleCancelMeeting = async (meetingId: string) => {
+    if (!window.confirm("Are you sure you want to cancel this meeting?")) return;
+    setCancellingMeetingId(meetingId);
+    try {
+      const res = await fetch(`/api/meetings/${meetingId}`, { method: "DELETE" });
+      if (res.ok) {
+        showNotification("Meeting cancelled.");
+        loadMeetings();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        showNotification(d.error || "Failed to cancel meeting.");
+      }
+    } catch {
+      showNotification("Error cancelling meeting.");
+    } finally {
+      setCancellingMeetingId(null);
     }
   };
 
@@ -404,6 +439,32 @@ export function DashboardView({
     showNotification("Zoom meetings configured as default provider");
   };
 
+  // Teams management
+  const handleSaveTeams = async (url: string, setActive: boolean) => {
+    const res = await fetch("/api/user/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        teamsMeetingUrl: url,
+        defaultLocationType: setActive ? "teams" : "google_meet",
+      }),
+    });
+    if (!res.ok) throw new Error("Failed to save Teams details");
+    const data = await res.json();
+    if (data.user) {
+      setUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              teamsMeetingUrl: data.user.teamsMeetingUrl,
+              defaultLocationType: data.user.defaultLocationType,
+            }
+          : null
+      );
+    }
+    showNotification("Microsoft Teams configured as default provider");
+  };
+
   const handleSwitchToGoogleMeet = async () => {
     const res = await fetch("/api/user/me", {
       method: "PATCH",
@@ -468,6 +529,7 @@ export function DashboardView({
           slug: data.slug,
           durationMins: data.duration,
           description: data.description,
+          locationType: data.locationType || "google_meet",
         }),
       });
       if (res.ok) {
@@ -588,14 +650,16 @@ export function DashboardView({
 
   if (isLoading || !user) {
     return (
-      <div className="min-h-[70vh] flex flex-col items-center justify-center gap-3 text-text-secondary">
-        <div className="size-8 rounded-full border-2 border-accent-500 border-t-transparent animate-spin" />
-        <span className="text-body-medium">Loading your Morrow calendar...</span>
+      <div className="min-h-[70vh] flex flex-col items-center justify-center">
+        <MorrowIcon size={44} showBadge={true} className="animate-pulse" />
+
       </div>
     );
   }
 
   const isZoomActive = user.defaultLocationType === "zoom";
+  const isTeamsActive = user.defaultLocationType === "teams";
+  const isGoogleMeetActive = !isZoomActive && !isTeamsActive;
 
   return (
     <div className="flex flex-col lg:flex-row w-full gap-6 lg:gap-8 items-start relative">
@@ -775,7 +839,7 @@ export function DashboardView({
 
                     <div className="flex items-center gap-2 text-body-2-regular text-text-secondary">
                       <HugeVideo className="size-4 shrink-0 text-foreground-icon-secondary" />
-                      <span>{isZoomActive ? "Zoom Meetings" : "Google Meet"}</span>
+                      <span>{event.location || (isZoomActive ? "Zoom Meetings" : isTeamsActive ? "Microsoft Teams" : "Google Meet")}</span>
                     </div>
                   </div>
 
@@ -892,7 +956,14 @@ export function DashboardView({
                               </Badge>
                             </div>
                             <span className="text-body-2-regular text-text-secondary">
-                              {formattedDate} ({m.timezone || "UTC"}) • {m.attendees?.length || 0} registered
+                              {formattedDate} ({m.timezone || "UTC"}) •{" "}
+                              <button
+                                type="button"
+                                onClick={() => setViewingAttendeesMeeting(m)}
+                                className="underline hover:text-text-primary cursor-pointer transition-colors"
+                              >
+                                {m.attendees?.length || 0} registered
+                              </button>
                             </span>
                             {m.description && (
                               <p className="text-caption-1-medium text-text-tertiary line-clamp-1">
@@ -916,9 +987,22 @@ export function DashboardView({
                             <Button
                               variant="secondary"
                               size="xs"
+                              disabled={openingEarlyId === m.id}
                               onClick={() => handleOpenEarlyMeeting(m.id)}
                             >
-                              Open early
+                              {openingEarlyId === m.id ? "Opening..." : "Open early"}
+                            </Button>
+                          )}
+
+                          {m.status === "scheduled" && (
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              disabled={cancellingMeetingId === m.id}
+                              onClick={() => handleCancelMeeting(m.id)}
+                              className="text-text-error-primary hover:bg-status-danger-background"
+                            >
+                              {cancellingMeetingId === m.id ? "Cancelling..." : "Cancel"}
                             </Button>
                           )}
 
@@ -1006,7 +1090,18 @@ export function DashboardView({
                           {b.status}
                         </Badge>
 
-                        {b.roomToken && b.status !== "Cancelled" && (
+                        {b.meetLink && b.status !== "Cancelled" && (
+                          <Button
+                            variant="primary"
+                            size="xs"
+                            leadingIcon={HugeVideo}
+                            onClick={() => window.open(b.meetLink, "_blank")}
+                          >
+                            {b.meetLink.includes("zoom.us") ? "Join Zoom" : "Join Meet"}
+                          </Button>
+                        )}
+
+                        {b.roomToken && !b.meetLink && b.status !== "Cancelled" && (
                           <Button
                             variant="primary"
                             size="xs"
@@ -1016,18 +1111,6 @@ export function DashboardView({
                           >
                             Open Room
                           </Button>
-                        )}
-
-                        {b.meetLink && b.status !== "Cancelled" && !b.roomToken && (
-                          <a
-                            href={b.meetLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-body-2-regular font-medium bg-accent-50 text-accent-700 hover:bg-accent-100 transition-colors"
-                          >
-                            <HugeVideo className="size-3.5" />
-                            <span>Join</span>
-                          </a>
                         )}
 
                         {b.status !== "Cancelled" && (
@@ -1278,22 +1361,25 @@ export function DashboardView({
 
               {/* Google Meet Card */}
               <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex items-center justify-between shadow-2xs">
-                <div className="flex flex-col gap-1 max-w-lg">
-                  <div className="flex items-center gap-2">
-                    <span className="text-body-medium font-semibold text-text-primary">
-                      Google Meet
+                <div className="flex items-center gap-4 max-w-lg">
+                  <GoogleMeetIcon className="size-10 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-body-medium font-semibold text-text-primary">
+                        Google Meet
+                      </span>
+                      {isGoogleMeetActive && (
+                        <Chip color="blue" variant="bold">Default Provider</Chip>
+                      )}
+                    </div>
+                    <span className="text-body-2-regular text-text-secondary">
+                      Automatically generate unique Google Meet video links for all scheduled bookings.
                     </span>
-                    {!isZoomActive && (
-                      <Chip color="blue" variant="bold">Default Provider</Chip>
-                    )}
                   </div>
-                  <span className="text-body-2-regular text-text-secondary">
-                    Automatically generate unique Google Meet video links for all scheduled bookings.
-                  </span>
                 </div>
 
                 <Switch
-                  isSelected={!isZoomActive}
+                  isSelected={isGoogleMeetActive}
                   onChange={async (selected) => {
                     if (selected) {
                       await handleSwitchToGoogleMeet();
@@ -1308,18 +1394,21 @@ export function DashboardView({
               {/* Zoom Meetings Card */}
               <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-3 shadow-2xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex flex-col gap-1 max-w-lg">
-                    <div className="flex items-center gap-2">
-                      <span className="text-body-medium font-semibold text-text-primary">
-                        Zoom Meetings
+                  <div className="flex items-center gap-4 max-w-lg">
+                    <ZoomIcon className="size-10 shrink-0" />
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-body-medium font-semibold text-text-primary">
+                          Zoom Meetings
+                        </span>
+                        {isZoomActive && (
+                          <Chip color="lime" variant="bold">Default Provider</Chip>
+                        )}
+                      </div>
+                      <span className="text-body-2-regular text-text-secondary">
+                        Use your Personal Zoom Meeting room as your meeting location for guest bookings.
                       </span>
-                      {isZoomActive && (
-                        <Chip color="lime" variant="bold">Default Provider</Chip>
-                      )}
                     </div>
-                    <span className="text-body-2-regular text-text-secondary">
-                      Use your Personal Zoom Meeting room as your meeting location for guest bookings.
-                    </span>
                   </div>
 
                   <Switch
@@ -1343,7 +1432,7 @@ export function DashboardView({
                 {user.zoomMeetingUrl && (
                   <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
                     <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
-                      <HugeVideo className="size-4 shrink-0 text-accent-500" />
+                      <ZoomIcon className="size-4 shrink-0" />
                       <span className="font-mono text-text-primary truncate">
                         {user.zoomMeetingUrl}
                       </span>
@@ -1356,6 +1445,76 @@ export function DashboardView({
                       onClick={() => setIsZoomModalOpen(true)}
                     >
                       Edit link
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Microsoft Teams Card */}
+              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4 max-w-lg">
+                    <MicrosoftTeamsIcon className="size-10 shrink-0" />
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-body-medium font-semibold text-text-primary">
+                          Microsoft Teams
+                        </span>
+                        {isTeamsActive && (
+                          <Chip color="purple" variant="bold">Default Provider</Chip>
+                        )}
+                      </div>
+                      <span className="text-body-2-regular text-text-secondary">
+                        Use your Microsoft Teams meeting link as your meeting location for guest bookings.
+                      </span>
+                    </div>
+                  </div>
+
+                  <Switch
+                    isSelected={isTeamsActive}
+                    onChange={async (selected) => {
+                      if (selected) {
+                        if (user.teamsMeetingUrl) {
+                          await handleSaveTeams(user.teamsMeetingUrl, true);
+                        } else {
+                          setIsTeamsModalOpen(true);
+                        }
+                      } else {
+                        await handleSwitchToGoogleMeet();
+                      }
+                    }}
+                    aria-label="Microsoft Teams Toggle"
+                  />
+                </div>
+
+                {/* If Teams link exists, show the link bar */}
+                {user.teamsMeetingUrl ? (
+                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
+                    <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
+                      <MicrosoftTeamsIcon className="size-4 shrink-0" />
+                      <span className="font-mono text-text-primary truncate">
+                        {user.teamsMeetingUrl}
+                      </span>
+                    </div>
+
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      leadingIcon={HugeEdit}
+                      onClick={() => setIsTeamsModalOpen(true)}
+                    >
+                      Edit link
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
+                    <span className="text-text-tertiary">No Teams meeting link configured</span>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => setIsTeamsModalOpen(true)}
+                    >
+                      Configure Link
                     </Button>
                   </div>
                 )}
@@ -1382,7 +1541,7 @@ export function DashboardView({
         }}
         event={editingEvent}
         userSlug={user.slug}
-        defaultLocation={isZoomActive ? "Zoom Meetings" : "Google Meet"}
+        defaultLocation={isZoomActive ? "Zoom Meetings" : isTeamsActive ? "Microsoft Teams" : "Google Meet"}
         onSave={handleSaveEvent}
         onDelete={handleDeleteEvent}
       />
@@ -1406,6 +1565,15 @@ export function DashboardView({
         onDisableZoom={handleSwitchToGoogleMeet}
       />
 
+      <TeamsModal
+        isOpen={isTeamsModalOpen}
+        onClose={() => setIsTeamsModalOpen(false)}
+        currentTeamsUrl={user.teamsMeetingUrl}
+        isTeamsActive={isTeamsActive}
+        onSaveTeams={handleSaveTeams}
+        onDisableTeams={handleSwitchToGoogleMeet}
+      />
+
       <GCalModal
         isOpen={isGCalModalOpen}
         onClose={() => setIsGCalModalOpen(false)}
@@ -1418,6 +1586,64 @@ export function DashboardView({
         isOpen={tourOpen}
         onClose={() => setTourOpen(false)}
       />
+      {viewingAttendeesMeeting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-3xl border border-border-button-default bg-background-primary-default p-6 shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border-button-default">
+              <div>
+                <h3 className="text-title-3-semibold text-text-primary">{viewingAttendeesMeeting.title}</h3>
+                <p className="text-caption-1-medium text-text-secondary">
+                  {viewingAttendeesMeeting.attendees?.length || 0} Registered Attendees
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingAttendeesMeeting(null)}
+                className="p-1 rounded-full text-text-secondary hover:text-text-primary cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto divide-y divide-border-button-default">
+              {(!viewingAttendeesMeeting.attendees || viewingAttendeesMeeting.attendees.length === 0) ? (
+                <div className="py-8 text-center text-caption-1-medium text-text-tertiary">
+                  No attendees have registered yet. Share the invitation link to invite guests.
+                </div>
+              ) : (
+                viewingAttendeesMeeting.attendees.map((att: any, idx: number) => (
+                  <div key={att.id || idx} className="py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar
+                        size="sm"
+                        initials={att.name ? att.name.slice(0, 2).toUpperCase() : "G"}
+                        color="blue"
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-body-2-medium font-semibold text-text-primary truncate">
+                          {att.name}
+                        </span>
+                        <span className="text-caption-2-medium text-text-secondary truncate">
+                          {att.email}
+                        </span>
+                      </div>
+                    </div>
+                    <Badge color={att.status === "attended" ? "primary" : "neutral"}>
+                      {att.status || "registered"}
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-border-button-default">
+              <Button variant="secondary" size="small" onClick={() => setViewingAttendeesMeeting(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

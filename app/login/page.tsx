@@ -3,8 +3,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { LoginView } from "@/components/scheduling/login-view";
-
-export const instant = false;
+import { MorrowIcon } from "@/components/brand/morrow-logo";
 
 export default async function LoginPage() {
   await connection();
@@ -16,7 +15,13 @@ export default async function LoginPage() {
 
   return (
     <div className="min-h-screen bg-background-full flex items-center justify-center p-4">
-      <Suspense fallback={<div className="text-body-medium text-text-secondary">Loading...</div>}>
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center">
+            <MorrowIcon size={44} showBadge={true} className="animate-pulse" />
+          </div>
+        }
+      >
         <LoginView />
       </Suspense>
     </div>

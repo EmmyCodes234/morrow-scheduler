@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     sendAttendeeConfirmationEmail({
       toEmail: attendeeEmail,
       attendeeName,
-      hostName: "FOF Planning Committee",
+      hostName: ((result.meeting as any)?.host?.name || "The Host"),
       meetingTitle,
       startTime: meetingStartTime,
       timezone: meetingTimezone,

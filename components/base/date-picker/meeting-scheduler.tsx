@@ -9,6 +9,9 @@ import { RiCalendarLine, RiFlagLine, RiGlobalLine } from "@remixicon/react";
 import { Avatar } from "@/components/base/avatar/avatar";
 import { Button } from "@/components/base/buttons/button";
 import { ChevronDownSmall } from "@/components/foundations/icons/chevrons";
+import { GoogleMeetIcon } from "@/components/icons/google-meet";
+import { ZoomIcon } from "@/components/icons/zoom";
+import { MicrosoftTeamsIcon } from "@/components/icons/microsoft-teams";
 import { MonthPanel, popoverClassName, triggerButtonClassName } from "@/components/base/date-picker/shared";
 import { cx } from "@/utils/cx";
 import { useDismissOnOutsidePress } from "@/utils/use-dismiss-on-outside-press";
@@ -126,9 +129,15 @@ function GlyphIcon({ icon: Icon }: { icon: typeof RiGlobalLine }) {
   return <Icon className="size-5 shrink-0 text-foreground-icon-primary" aria-hidden />;
 }
 
-/** Figma's exact Google Meet mark, 20×20 (`public/brand/google_meet.png`). */
-function GoogleMeetIcon() {
-  return <Image src="/brand/google_meet.png" alt="" width={20} height={20} className="size-5 shrink-0" />;
+function ConferencingIcon({ text }: { text: string }) {
+  const lower = text.toLowerCase();
+  if (lower.includes("zoom")) {
+    return <ZoomIcon className="size-5 shrink-0" />;
+  }
+  if (lower.includes("teams")) {
+    return <MicrosoftTeamsIcon className="size-5 shrink-0" />;
+  }
+  return <GoogleMeetIcon className="size-5 shrink-0" />;
 }
 
 function HourFormatToggle({ use24h, onChange }: { use24h: boolean; onChange: (use24h: boolean) => void }) {
@@ -260,7 +269,11 @@ export function MeetingScheduler({
                 <div className="mt-auto flex flex-col gap-3">
                   <InfoRow icon={<GlyphIcon icon={RiGlobalLine} />}>{meeting.durationMinutes} minutes</InfoRow>
                   {meeting.language && <InfoRow icon={<GlyphIcon icon={RiFlagLine} />}>{meeting.language}</InfoRow>}
-                  {meeting.conferencing && <InfoRow icon={<GoogleMeetIcon />}>{meeting.conferencing}</InfoRow>}
+                  {meeting.conferencing && (
+                    <InfoRow icon={<ConferencingIcon text={meeting.conferencing} />}>
+                      {meeting.conferencing}
+                    </InfoRow>
+                  )}
                 </div>
               </div>
 
