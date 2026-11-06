@@ -13,6 +13,7 @@ export interface ZoomModalProps {
   onClose: () => void;
   currentZoomUrl?: string;
   zoomEmail?: string | null;
+  hasZoomOAuth?: boolean;
   isZoomActive?: boolean;
   onSaveZoom: (url: string, setActive: boolean) => Promise<void>;
   onDisableZoom?: () => Promise<void>;
@@ -24,6 +25,7 @@ export function ZoomModal({
   onClose,
   currentZoomUrl = "",
   zoomEmail = null,
+  hasZoomOAuth = false,
   isZoomActive = false,
   onSaveZoom,
   onDisableZoom,
@@ -102,7 +104,7 @@ export function ZoomModal({
           <ModalBody>
             <div className="flex flex-col gap-4">
               {/* OAUTH 1-CLICK CONNECTION */}
-              {zoomEmail ? (
+              {(zoomEmail || hasZoomOAuth) ? (
                 <div className="p-4 rounded-2xl border border-border-button-default bg-background-secondary-default flex flex-col gap-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
@@ -112,7 +114,7 @@ export function ZoomModal({
                           Zoom Connected
                         </span>
                         <span className="text-caption-2-medium text-text-secondary">
-                          {zoomEmail}
+                          {zoomEmail || "Authenticated via Zoom OAuth"}
                         </span>
                       </div>
                     </div>
@@ -123,7 +125,7 @@ export function ZoomModal({
                     )}
                   </div>
                   <p className="text-body-2-regular text-text-secondary">
-                    Connected as <span className="font-semibold text-text-primary">{zoomEmail}</span>. Dedicated meeting links and passcodes are created automatically for every booking.
+                    Connected as <span className="font-semibold text-text-primary">{zoomEmail || "Zoom Account"}</span>. Dedicated meeting links and passcodes are created automatically for every booking.
                   </p>
                   <div className="flex items-center justify-between pt-1">
                     {!isZoomActive ? (
@@ -230,7 +232,7 @@ export function ZoomModal({
                 >
                   Switch to Google Meet
                 </Button>
-              ) : !isZoomActive && zoomEmail ? (
+              ) : !isZoomActive && (zoomEmail || hasZoomOAuth) ? (
                 <Button
                   variant="primary"
                   size="small"

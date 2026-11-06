@@ -232,6 +232,9 @@ export function DashboardView({
             defaultLocationType: data.user.defaultLocationType || "google_meet",
             zoomMeetingUrl: data.user.zoomMeetingUrl || "",
             teamsMeetingUrl: data.user.teamsMeetingUrl || "",
+            zoomEmail: data.user.zoomEmail || null,
+            zoomConnectedAt: data.user.zoomConnectedAt || null,
+            hasZoomOAuth: Boolean(data.user.hasZoomOAuth),
             hasGoogleCalendar: data.user.hasGoogleCalendar ?? true,
           });
         }
@@ -479,6 +482,9 @@ export function DashboardView({
               ...prev,
               teamsMeetingUrl: data.user.teamsMeetingUrl,
               defaultLocationType: data.user.defaultLocationType,
+              zoomEmail: data.user.zoomEmail ?? prev.zoomEmail,
+              hasZoomOAuth: data.user.hasZoomOAuth ?? prev.hasZoomOAuth,
+              zoomConnectedAt: data.user.zoomConnectedAt ?? prev.zoomConnectedAt,
             }
           : null
       );
@@ -502,6 +508,9 @@ export function DashboardView({
           ? {
               ...prev,
               defaultLocationType: data.user.defaultLocationType,
+              zoomEmail: data.user.zoomEmail ?? prev.zoomEmail,
+              hasZoomOAuth: data.user.hasZoomOAuth ?? prev.hasZoomOAuth,
+              zoomConnectedAt: data.user.zoomConnectedAt ?? prev.zoomConnectedAt,
             }
           : null
       );
@@ -1425,13 +1434,13 @@ export function DashboardView({
                         {isZoomActive && (
                           <Chip color="lime" variant="bold">Default Provider</Chip>
                         )}
-                        {user.zoomEmail && (
+                        {(user.zoomEmail || user.hasZoomOAuth) && (
                           <Chip color="blue" variant="bold">Connected</Chip>
                         )}
                       </div>
                       <span className="text-body-2-regular text-text-secondary">
-                        {user.zoomEmail
-                          ? `Connected via OAuth as ${user.zoomEmail}. Dynamic per-booking meeting links generated automatically.`
+                        {user.zoomEmail || user.hasZoomOAuth
+                          ? `Connected via OAuth${user.zoomEmail ? ` as ${user.zoomEmail}` : ""}. Dynamic per-booking meeting links generated automatically.`
                           : "Use dynamic Zoom rooms via OAuth or configure your personal meeting room."}
                       </span>
                     </div>
@@ -1455,12 +1464,12 @@ export function DashboardView({
                 </div>
 
                 {/* Zoom Footer Status Bar */}
-                {(user.zoomEmail || user.zoomMeetingUrl) ? (
+                {(user.zoomEmail || user.hasZoomOAuth || user.zoomMeetingUrl) ? (
                   <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
                     <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
                       <ZoomIcon className="size-4 shrink-0" />
                       <span className="font-mono text-text-primary truncate">
-                        {user.zoomEmail ? `OAuth: ${user.zoomEmail}` : user.zoomMeetingUrl}
+                        {user.zoomEmail ? `OAuth: ${user.zoomEmail}` : user.hasZoomOAuth ? "OAuth: Account Connected" : user.zoomMeetingUrl}
                       </span>
                     </div>
 
@@ -1600,6 +1609,7 @@ export function DashboardView({
         onClose={() => setIsZoomModalOpen(false)}
         currentZoomUrl={user.zoomMeetingUrl}
         zoomEmail={user.zoomEmail}
+        hasZoomOAuth={user.hasZoomOAuth}
         isZoomActive={isZoomActive}
         onSaveZoom={handleSaveZoom}
         onDisableZoom={handleSwitchToGoogleMeet}
