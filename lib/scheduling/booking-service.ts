@@ -1040,6 +1040,11 @@ export async function processBooking(
       meetLink = location.locationUrl || host.zoomMeetingUrl || undefined;
     }
   }
+
+  // Provision Microsoft Teams link
+  if (location.locationType === "teams") {
+    meetLink = location.locationUrl || host.teamsMeetingUrl || undefined;
+  }
   let gcalEventId: string | undefined = undefined;
   let calendarSynced = false;
   let finalCalendarSyncStatus: CalendarSyncStatus = initialCalendarSyncStatus;

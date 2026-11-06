@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { cx } from "@/utils/cx";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
 import { DateCalendar } from "@/components/base/date-picker/date-calendar";
 import { Button } from "@/components/base/buttons/button";
@@ -277,6 +278,8 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
   const eventLocationLabel =
     selectedEvent.location === "zoom"
       ? "Zoom Meeting"
+      : selectedEvent.location === "teams"
+      ? "Microsoft Teams"
       : selectedEvent.location === "in_person"
       ? "In-Person Meeting"
       : selectedEvent.location === "phone"
@@ -344,10 +347,12 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
               <div className="flex flex-col gap-2.5 pt-3 border-t border-border-button-default">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 text-caption-1-semibold text-text-tertiary uppercase tracking-wider">
-                    <HugeVideo className="size-3.5 text-accent-500" />
+                    <HugeVideo className={cx("size-3.5", confirmedMeetLink.includes("teams.microsoft.com") ? "text-[#5B5FC7]" : "text-accent-500")} />
                     <span>
                       {confirmedMeetLink.includes("zoom.us")
                         ? "Zoom Video Call"
+                        : confirmedMeetLink.includes("teams.microsoft.com")
+                        ? "Microsoft Teams Call"
                         : "Google Meet Video Call"}
                     </span>
                   </div>
@@ -364,11 +369,16 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
                 <Button
                   variant="primary"
                   size="medium"
-                  className="w-full justify-center text-body-medium font-semibold shadow-xs"
+                  className={cx(
+                    "w-full justify-center text-body-medium font-semibold shadow-xs",
+                    confirmedMeetLink.includes("teams.microsoft.com") && "bg-[#5B5FC7] hover:bg-[#4E52B2] text-white border-transparent"
+                  )}
                   onClick={() => window.open(confirmedMeetLink, "_blank")}
                 >
                   {confirmedMeetLink.includes("zoom.us")
                     ? "Join Zoom Meeting"
+                    : confirmedMeetLink.includes("teams.microsoft.com")
+                    ? "Join Microsoft Teams Meeting"
                     : "Join Google Meet"}
                 </Button>
               </div>

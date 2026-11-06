@@ -35,6 +35,7 @@ import { NewEventModal, type EventFormData } from "@/components/scheduling/modal
 import { NewMeetingModal } from "@/components/scheduling/modals/new-meeting-modal";
 import { RescheduleModal } from "@/components/scheduling/modals/reschedule-modal";
 import { ZoomModal } from "@/components/scheduling/modals/zoom-modal";
+import { TeamsModal } from "@/components/scheduling/modals/teams-modal";
 import { GCalModal } from "@/components/scheduling/modals/gcal-modal";
 import { MorrowLogo } from "@/components/brand/morrow-logo";
 
@@ -123,6 +124,7 @@ interface HostUser {
   welcomeMessage?: string | null;
   defaultLocationType?: string;
   zoomMeetingUrl?: string;
+  teamsMeetingUrl?: string;
   hasGoogleCalendar?: boolean;
 }
 
@@ -161,6 +163,7 @@ export function DashboardView({
   const [viewingAttendeesMeeting, setViewingAttendeesMeeting] = useState<any | null>(null);
   const [editingEvent, setEditingEvent] = useState<EventTypeItem | null>(null);
   const [isZoomModalOpen, setIsZoomModalOpen] = useState(false);
+  const [isTeamsModalOpen, setIsTeamsModalOpen] = useState(false);
   const [isGCalModalOpen, setIsGCalModalOpen] = useState(false);
   const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
   const [activeBooking, setActiveBooking] = useState<BookingItem | null>(null);
@@ -220,6 +223,7 @@ export function DashboardView({
             welcomeMessage: data.user.welcomeMessage,
             defaultLocationType: data.user.defaultLocationType || "google_meet",
             zoomMeetingUrl: data.user.zoomMeetingUrl || "",
+            teamsMeetingUrl: data.user.teamsMeetingUrl || "",
             hasGoogleCalendar: data.user.hasGoogleCalendar ?? true,
           });
         }
@@ -243,7 +247,7 @@ export function DashboardView({
               slug: et.slug,
               duration: et.durationMins || 30,
               description: et.description || "",
-              location: et.locationType === "zoom" ? "Zoom Meetings" : et.locationType === "phone" ? "Phone Call" : et.locationType === "in_person" ? "In Person" : "Google Meet",
+              location: et.locationType === "zoom" ? "Zoom Meetings" : et.locationType === "teams" ? "Microsoft Teams" : et.locationType === "phone" ? "Phone Call" : et.locationType === "in_person" ? "In Person" : "Google Meet",
               locationType: et.locationType || "google_meet",
               active: et.isActive ?? true,
             }))
@@ -428,6 +432,32 @@ export function DashboardView({
       );
     }
     showNotification("Zoom meetings configured as default provider");
+  };
+
+  // Teams management
+  const handleSaveTeams = async (url: string, setActive: boolean) => {
+    const res = await fetch("/api/user/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        teamsMeetingUrl: url,
+        defaultLocationType: setActive ? "teams" : "google_meet",
+      }),
+    });
+    if (!res.ok) throw new Error("Failed to save Teams details");
+    const data = await res.json();
+    if (data.user) {
+      setUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              teamsMeetingUrl: data.user.teamsMeetingUrl,
+              defaultLocationType: data.user.defaultLocationType,
+            }
+          : null
+      );
+    }
+    showNotification("Microsoft Teams configured as default provider");
   };
 
   const handleSwitchToGoogleMeet = async () => {
@@ -623,6 +653,8 @@ export function DashboardView({
   }
 
   const isZoomActive = user.defaultLocationType === "zoom";
+  const isTeamsActive = user.defaultLocationType === "teams";
+  const isGoogleMeetActive = !isZoomActive && !isTeamsActive;
 
   return (
     <div className="flex flex-col lg:flex-row w-full gap-6 lg:gap-8 items-start relative">
@@ -802,7 +834,7 @@ export function DashboardView({
 
                     <div className="flex items-center gap-2 text-body-2-regular text-text-secondary">
                       <HugeVideo className="size-4 shrink-0 text-foreground-icon-secondary" />
-                      <span>{isZoomActive ? "Zoom Meetings" : "Google Meet"}</span>
+                      <span>{event.location || (isZoomActive ? "Zoom Meetings" : isTeamsActive ? "Microsoft Teams" : "Google Meet")}</span>
                     </div>
                   </div>
 
@@ -1329,7 +1361,7 @@ export function DashboardView({
                     <span className="text-body-medium font-semibold text-text-primary">
                       Google Meet
                     </span>
-                    {!isZoomActive && (
+                    {isGoogleMeetActive && (
                       <Chip color="blue" variant="bold">Default Provider</Chip>
                     )}
                   </div>
@@ -1339,7 +1371,7 @@ export function DashboardView({
                 </div>
 
                 <Switch
-                  isSelected={!isZoomActive}
+                  isSelected={isGoogleMeetActive}
                   onChange={async (selected) => {
                     if (selected) {
                       await handleSwitchToGoogleMeet();
@@ -1406,6 +1438,73 @@ export function DashboardView({
                   </div>
                 )}
               </div>
+
+              {/* Microsoft Teams Card */}
+              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-1 max-w-lg">
+                    <div className="flex items-center gap-2">
+                      <span className="text-body-medium font-semibold text-text-primary">
+                        Microsoft Teams
+                      </span>
+                      {isTeamsActive && (
+                        <Chip color="purple" variant="bold">Default Provider</Chip>
+                      )}
+                    </div>
+                    <span className="text-body-2-regular text-text-secondary">
+                      Use your Microsoft Teams meeting link as your meeting location for guest bookings.
+                    </span>
+                  </div>
+
+                  <Switch
+                    isSelected={isTeamsActive}
+                    onChange={async (selected) => {
+                      if (selected) {
+                        if (user.teamsMeetingUrl) {
+                          await handleSaveTeams(user.teamsMeetingUrl, true);
+                        } else {
+                          setIsTeamsModalOpen(true);
+                        }
+                      } else {
+                        await handleSwitchToGoogleMeet();
+                      }
+                    }}
+                    aria-label="Microsoft Teams Toggle"
+                  />
+                </div>
+
+                {/* If Teams link exists, show the link bar */}
+                {user.teamsMeetingUrl ? (
+                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
+                    <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
+                      <HugeVideo className="size-4 shrink-0 text-[#5B5FC7]" />
+                      <span className="font-mono text-text-primary truncate">
+                        {user.teamsMeetingUrl}
+                      </span>
+                    </div>
+
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      leadingIcon={HugeEdit}
+                      onClick={() => setIsTeamsModalOpen(true)}
+                    >
+                      Edit link
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
+                    <span className="text-text-tertiary">No Teams meeting link configured</span>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => setIsTeamsModalOpen(true)}
+                    >
+                      Configure Link
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1428,7 +1527,7 @@ export function DashboardView({
         }}
         event={editingEvent}
         userSlug={user.slug}
-        defaultLocation={isZoomActive ? "Zoom Meetings" : "Google Meet"}
+        defaultLocation={isZoomActive ? "Zoom Meetings" : isTeamsActive ? "Microsoft Teams" : "Google Meet"}
         onSave={handleSaveEvent}
         onDelete={handleDeleteEvent}
       />
@@ -1450,6 +1549,15 @@ export function DashboardView({
         isZoomActive={isZoomActive}
         onSaveZoom={handleSaveZoom}
         onDisableZoom={handleSwitchToGoogleMeet}
+      />
+
+      <TeamsModal
+        isOpen={isTeamsModalOpen}
+        onClose={() => setIsTeamsModalOpen(false)}
+        currentTeamsUrl={user.teamsMeetingUrl}
+        isTeamsActive={isTeamsActive}
+        onSaveTeams={handleSaveTeams}
+        onDisableTeams={handleSwitchToGoogleMeet}
       />
 
       <GCalModal

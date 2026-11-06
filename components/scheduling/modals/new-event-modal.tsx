@@ -14,7 +14,7 @@ export interface EventFormData {
   slug: string;
   description?: string;
   location?: string;
-  locationType?: "google_meet" | "zoom" | "phone" | "in_person";
+  locationType?: "google_meet" | "zoom" | "teams" | "phone" | "in_person";
 }
 
 export interface NewEventModalProps {
@@ -42,8 +42,14 @@ export function NewEventModal({
   const [duration, setDuration] = useState<number>(event?.duration || 30);
   const [slug, setSlug] = useState(event?.slug || "30min");
   const [description, setDescription] = useState(event?.description || "");
-  const [locationType, setLocationType] = useState<"google_meet" | "zoom" | "phone" | "in_person">(
-    event?.locationType || (defaultLocation.toLowerCase().includes("zoom") ? "zoom" : "google_meet")
+  const [locationType, setLocationType] = useState<"google_meet" | "zoom" | "teams" | "phone" | "in_person">(
+    event?.locationType || (
+      defaultLocation.toLowerCase().includes("zoom")
+        ? "zoom"
+        : defaultLocation.toLowerCase().includes("teams")
+        ? "teams"
+        : "google_meet"
+    )
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -54,14 +60,29 @@ export function NewEventModal({
       setDuration(event.duration);
       setSlug(event.slug);
       setDescription(event.description || "");
-      setLocationType(event.locationType || (defaultLocation.toLowerCase().includes("zoom") ? "zoom" : "google_meet"));
+      setLocationType(
+        event.locationType || (
+          defaultLocation.toLowerCase().includes("zoom")
+            ? "zoom"
+            : defaultLocation.toLowerCase().includes("teams")
+            ? "teams"
+            : "google_meet"
+        )
+      );
     } else {
       setTitle("30 Min Strategy Call");
       setDuration(30);
       setSlug("30min");
       setDescription("");
+      setLocationType(
+        defaultLocation.toLowerCase().includes("zoom")
+          ? "zoom"
+          : defaultLocation.toLowerCase().includes("teams")
+          ? "teams"
+          : "google_meet"
+      );
     }
-  }, [event, isOpen]);
+  }, [event, isOpen, defaultLocation]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -206,6 +227,22 @@ export function NewEventModal({
                     <div className="flex flex-col min-w-0">
                       <span className="text-body-2-medium font-semibold truncate">Zoom</span>
                       <span className="text-caption-2-medium text-text-tertiary truncate">Personal meeting room</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLocationType("teams")}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                      locationType === "teams"
+                        ? "border-[#5B5FC7] bg-[#5B5FC7]/10 text-text-primary shadow-2xs"
+                        : "border-border-button-default bg-background-secondary-default text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    <HugeVideo className="size-4 shrink-0 text-[#5B5FC7]" />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-body-2-medium font-semibold truncate">Teams</span>
+                      <span className="text-caption-2-medium text-text-tertiary truncate">Microsoft Teams</span>
                     </div>
                   </button>
 

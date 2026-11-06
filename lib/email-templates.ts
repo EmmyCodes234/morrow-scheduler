@@ -144,12 +144,27 @@ function resolveLocationDisplay(opts: {
   locationUrl?: string;
   meetLink?: string;
 }): { label: string; detail: string; ctaUrl?: string } | null {
-  const locType = opts.locationType || (opts.meetLink?.includes("zoom") ? "zoom" : opts.meetLink ? "google_meet" : undefined);
+  const locType = opts.locationType || (
+    opts.meetLink?.includes("zoom")
+      ? "zoom"
+      : opts.meetLink?.includes("teams")
+      ? "teams"
+      : opts.meetLink
+      ? "google_meet"
+      : undefined
+  );
   const targetUrl = opts.locationUrl || opts.meetLink;
 
   if (locType === "zoom") {
     return {
       label: "Zoom Meeting",
+      detail: targetUrl || "Link will be shared by host",
+      ctaUrl: targetUrl,
+    };
+  }
+  if (locType === "teams") {
+    return {
+      label: "Microsoft Teams",
       detail: targetUrl || "Link will be shared by host",
       ctaUrl: targetUrl,
     };

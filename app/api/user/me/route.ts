@@ -32,6 +32,7 @@ export async function GET() {
         welcomeMessage: host.welcomeMessage,
         defaultLocationType: host.defaultLocationType || "google_meet",
         zoomMeetingUrl: host.zoomMeetingUrl || "",
+        teamsMeetingUrl: host.teamsMeetingUrl || "",
         zoomEmail: host.zoomEmail || null,
         zoomConnectedAt: host.zoomConnectedAt || null,
         bufferMins: host.bufferMins ?? 10,
@@ -74,6 +75,7 @@ export async function PATCH(req: NextRequest) {
     if (body.welcomeMessage !== undefined) updateData.welcomeMessage = body.welcomeMessage;
     if (body.defaultLocationType !== undefined) updateData.defaultLocationType = body.defaultLocationType;
     if (body.zoomMeetingUrl !== undefined) updateData.zoomMeetingUrl = body.zoomMeetingUrl.trim();
+    if (body.teamsMeetingUrl !== undefined) updateData.teamsMeetingUrl = body.teamsMeetingUrl.trim();
     if (body.bufferMins !== undefined) updateData.bufferMins = Number(body.bufferMins);
     if (body.minNoticeHours !== undefined) updateData.minNoticeHours = Number(body.minNoticeHours);
     if (body.maxBookingDays !== undefined) updateData.maxBookingDays = Number(body.maxBookingDays);
@@ -115,6 +117,7 @@ export async function PATCH(req: NextRequest) {
         welcomeMessage: updated.welcomeMessage,
         defaultLocationType: updated.defaultLocationType,
         zoomMeetingUrl: updated.zoomMeetingUrl,
+        teamsMeetingUrl: updated.teamsMeetingUrl || "",
         bufferMins: updated.bufferMins,
         minNoticeHours: updated.minNoticeHours,
         maxBookingDays: updated.maxBookingDays,

@@ -28,6 +28,7 @@ export const users = pgTable(
     logoUrl: text("logo_url"),
     defaultLocationType: text("default_location_type").default("google_meet"),
     zoomMeetingUrl: text("zoom_meeting_url"),
+    teamsMeetingUrl: text("teams_meeting_url"),
     zoomAccessToken: text("zoom_access_token"),
     zoomRefreshToken: text("zoom_refresh_token"),
     zoomTokenExpiry: timestamp("zoom_token_expiry", { withTimezone: true }),

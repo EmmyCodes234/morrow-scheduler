@@ -15,11 +15,12 @@ export interface LocationResolutionInput {
   host?: {
     defaultLocationType?: string | null;
     zoomMeetingUrl?: string | null;
+    teamsMeetingUrl?: string | null;
   } | null;
 }
 
 export interface ResolvedLocation {
-  locationType: "google_meet" | "zoom" | "in_person" | "phone" | "custom";
+  locationType: "google_meet" | "zoom" | "teams" | "in_person" | "phone" | "custom";
   locationUrl?: string;
   source: "event" | "host" | "fallback";
 }
@@ -29,12 +30,16 @@ export function resolveEffectiveLocation(input: LocationResolutionInput): Resolv
   const eventLocUrl = input.eventType?.locationUrl?.trim();
   const hostLocType = input.host?.defaultLocationType?.trim();
   const hostZoomUrl = input.host?.zoomMeetingUrl?.trim();
+  const hostTeamsUrl = input.host?.teamsMeetingUrl?.trim();
 
   // Tier 1: Explicit event-specific configuration
   if (eventLocType && eventLocType !== "host_default") {
     let finalUrl = eventLocUrl || undefined;
     if (eventLocType === "zoom" && !finalUrl && hostZoomUrl) {
       finalUrl = hostZoomUrl;
+    }
+    if (eventLocType === "teams" && !finalUrl && hostTeamsUrl) {
+      finalUrl = hostTeamsUrl;
     }
     return {
       locationType: eventLocType as ResolvedLocation["locationType"],
@@ -48,6 +53,9 @@ export function resolveEffectiveLocation(input: LocationResolutionInput): Resolv
     let finalUrl = eventLocUrl || undefined;
     if (hostLocType === "zoom" && !finalUrl && hostZoomUrl) {
       finalUrl = hostZoomUrl;
+    }
+    if (hostLocType === "teams" && !finalUrl && hostTeamsUrl) {
+      finalUrl = hostTeamsUrl;
     }
     return {
       locationType: hostLocType as ResolvedLocation["locationType"],
