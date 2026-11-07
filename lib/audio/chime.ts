@@ -118,3 +118,71 @@ export function playTimerWarningChime(): void {
   osc.start(now);
   osc.stop(now + 0.45);
 }
+
+/**
+ * Delightful marimba triad chime when a new booking arrives in real-time.
+ * Notes: C5 -> E5 -> G5 -> C6
+ */
+export function playBookingChime(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const notes = [
+    { freq: 523.25, time: 0 },     // C5
+    { freq: 659.25, time: 0.08 },  // E5
+    { freq: 783.99, time: 0.16 },  // G5
+    { freq: 1046.5, time: 0.24 },  // C6
+  ];
+
+  const baseTime = ctx.currentTime;
+
+  notes.forEach(({ freq, time }) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, baseTime + time);
+
+    gain.gain.setValueAtTime(0.001, baseTime + time);
+    gain.gain.linearRampToValueAtTime(0.35, baseTime + time + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, baseTime + time + 0.6);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(baseTime + time);
+    osc.stop(baseTime + time + 0.65);
+  });
+}
+
+/**
+ * Gentle two-tone descend chime when a meeting is cancelled.
+ */
+export function playCancelChime(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const baseTime = ctx.currentTime;
+  const notes = [
+    { freq: 783.99, time: 0 },     // G5
+    { freq: 587.33, time: 0.14 },  // D5
+  ];
+
+  notes.forEach(({ freq, time }) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(freq, baseTime + time);
+
+    gain.gain.setValueAtTime(0.001, baseTime + time);
+    gain.gain.linearRampToValueAtTime(0.2, baseTime + time + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, baseTime + time + 0.45);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(baseTime + time);
+    osc.stop(baseTime + time + 0.5);
+  });
+}

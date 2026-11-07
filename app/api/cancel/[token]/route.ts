@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 import {
   cancelBooking,
   getBookingForCancellation,
@@ -103,6 +104,15 @@ export async function POST(
         { error: result.error, errorCode: result.errorCode },
         { status }
       );
+    }
+
+    if (result.booking) {
+      realtimeBus.broadcast(`host:${result.booking.hostId}`, "booking.cancelled", {
+        id: result.booking.id,
+        status: "Cancelled",
+        guestName: result.booking.guestName,
+        eventTitle: result.booking.eventType?.title || "Meeting",
+      });
     }
 
     // Strict whitelist: return ONLY the public sanitized DTO

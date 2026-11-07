@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 
 export async function GET() {
   try {
@@ -121,6 +122,38 @@ export async function PATCH(req: NextRequest) {
       .set(updateData)
       .where(eq(users.id, host.id))
       .returning();
+
+    try {
+      realtimeBus.broadcast(`host:${updated.id}`, "user.updated", {
+        id: updated.id,
+        name: updated.name,
+        email: updated.email,
+        slug: updated.slug,
+        avatarUrl: updated.avatarUrl,
+        timezone: updated.timezone,
+        brandColor: updated.brandColor,
+        welcomeMessage: updated.welcomeMessage,
+        defaultLocationType: updated.defaultLocationType,
+        zoomMeetingUrl: updated.zoomMeetingUrl,
+        teamsMeetingUrl: updated.teamsMeetingUrl,
+        officeStatus: updated.officeStatus,
+        officeTopic: updated.officeTopic,
+        officeSpeedChatMins: updated.officeSpeedChatMins,
+      });
+      if (updated.slug) {
+        realtimeBus.broadcast(`public:host:${updated.slug}`, "user.updated", {
+          name: updated.name,
+          slug: updated.slug,
+          avatarUrl: updated.avatarUrl,
+          brandColor: updated.brandColor,
+          welcomeMessage: updated.welcomeMessage,
+          officeStatus: updated.officeStatus,
+          officeTopic: updated.officeTopic,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to broadcast realtime user update:", err);
+    }
 
     return NextResponse.json({
       success: true,

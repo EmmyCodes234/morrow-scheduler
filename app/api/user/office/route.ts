@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/db";
 import { users, officeKnocks } from "@/db/schema";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 import { eq, desc, and, or, inArray } from "drizzle-orm";
 
 export async function GET(req: NextRequest) {
@@ -124,18 +125,28 @@ export async function PATCH(req: NextRequest) {
       .where(eq(users.id, host.id))
       .returning();
 
-    return NextResponse.json({
-      success: true,
-      user: {
+    const officePayload = {
+      officeStatus: updated.officeStatus,
+      officeTopic: updated.officeTopic,
+      officeSpeedChatMins: updated.officeSpeedChatMins,
+      officeNotifyEmail: updated.officeNotifyEmail,
+      officeAutoSchedule: updated.officeAutoSchedule,
+      officeScheduleDays: updated.officeScheduleDays,
+      officeScheduleStart: updated.officeScheduleStart,
+      officeScheduleEnd: updated.officeScheduleEnd,
+    };
+
+    realtimeBus.broadcast(`host:${host.id}`, "office.status_changed", officePayload);
+    if (host.slug) {
+      realtimeBus.broadcast(`public:host:${host.slug}`, "office.status_changed", {
         officeStatus: updated.officeStatus,
         officeTopic: updated.officeTopic,
-        officeSpeedChatMins: updated.officeSpeedChatMins,
-        officeNotifyEmail: updated.officeNotifyEmail,
-        officeAutoSchedule: updated.officeAutoSchedule,
-        officeScheduleDays: updated.officeScheduleDays,
-        officeScheduleStart: updated.officeScheduleStart,
-        officeScheduleEnd: updated.officeScheduleEnd,
-      },
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      user: officePayload,
     });
   } catch (err) {
     console.error("Error updating host office settings:", err);

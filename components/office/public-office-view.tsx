@@ -19,6 +19,7 @@ import {
 } from "@/components/icons/hugeicons";
 import { MorrowLogo } from "@/components/brand/morrow-logo";
 import { playDoorKnock, playDoorbellChime } from "@/lib/audio/chime";
+import { useMorrowRealtime } from "@/lib/realtime/use-realtime";
 import { PublicBookingView, type PublicHost, type PublicEventType } from "@/components/scheduling/public-booking";
 
 export interface PublicOfficeViewProps {
@@ -67,6 +68,35 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, []);
+
+  // Realtime by Default: Instant admission, queue promotion, and door state events
+  useMorrowRealtime({
+    channels: activeKnockId
+      ? [`knock:${activeKnockId}`, `public:host:${host.slug}`]
+      : [`public:host:${host.slug}`],
+    enabled: true,
+    onEvent: (event) => {
+      if (event.type === "knock.admitted") {
+        setMeetLink(event.payload.meetLink);
+        setOfficeState("admitted");
+        playDoorbellChime();
+      } else if (event.type === "knock.promoted") {
+        setSecondsRemaining(60);
+        setOfficeState("ringing");
+        playDoorbellChime();
+      } else if (
+        event.type === "knock.declined" ||
+        event.type === "knock.missed" ||
+        event.type === "knock.cancelled"
+      ) {
+        setOfficeState("fallback");
+      } else if (event.type === "office.status_changed") {
+        if (event.payload.officeStatus === "closed" && officeState === "idle") {
+          setOfficeState("fallback");
+        }
+      }
+    },
+  });
 
   // Status polling for queued and ringing knocks
   useEffect(() => {

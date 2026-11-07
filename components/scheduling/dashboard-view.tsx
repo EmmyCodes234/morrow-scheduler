@@ -8,6 +8,7 @@ import { Badge } from "@/components/base/badges/badge";
 import { Chip } from "@/components/base/badges/chip";
 import { Switch } from "@/components/base/switch/switch";
 import { SwitchCard } from "@/components/base/switch/switch-card";
+import { cx } from "@/utils/cx";
 import { GoogleCalendarIcon } from "@/components/icons/google-calendar";
 import { GoogleMeetIcon } from "@/components/icons/google-meet";
 import { ZoomIcon } from "@/components/icons/zoom";
@@ -44,6 +45,9 @@ import { HostOfficeView } from "@/components/office/host-office-view";
 import { DoorbellAlertModal, type OfficeKnock } from "@/components/office/doorbell-alert-modal";
 import { OfficeStatusPill } from "@/components/office/office-status-pill";
 import { DashboardAnalyticsView } from "@/components/analytics/dashboard-analytics-view";
+import { useMorrowRealtime } from "@/lib/realtime/use-realtime";
+import { playDoorbellChime, playBookingChime, playCancelChime } from "@/lib/audio/chime";
+import { UnifiedSettingsView, type SettingsTab } from "@/components/settings/unified-settings-view";
 
 interface EventTypeItem {
   id: string;
@@ -167,6 +171,7 @@ export function DashboardView({
   initialUser,
 }: DashboardViewProps) {
   const [activeTab, setActiveTab] = useState<string>("events");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("profile");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(!initialUser);
@@ -218,6 +223,92 @@ export function DashboardView({
     setStatusNotification(msg);
     setTimeout(() => setStatusNotification(null), 3000);
   };
+
+  // Realtime by Default: Comprehensive host subscriptions across all features
+  const { isConnected: isRealtimeConnected } = useMorrowRealtime({
+    channels: user?.id ? [`host:${user.id}`] : [],
+    enabled: Boolean(user?.id),
+    onEvent: (event) => {
+      if (event.type === "booking.created") {
+        setBookings((prev) => {
+          if (prev.some((b) => b.id === event.payload.id)) return prev;
+          return [event.payload, ...prev];
+        });
+        showNotification(`New booking from ${event.payload.guestName || "guest"}!`);
+        playBookingChime();
+      } else if (event.type === "booking.cancelled") {
+        setBookings((prev) =>
+          prev.map((b) => (b.id === event.payload.id ? { ...b, status: "Cancelled" } : b))
+        );
+        showNotification(`Booking cancelled by ${event.payload.guestName || "guest"}`);
+        playCancelChime();
+      } else if (event.type === "event_type.created") {
+        const et = event.payload;
+        setEventTypes((prev) => {
+          if (prev.some((e) => e.id === et.id)) return prev;
+          return [
+            {
+              id: et.id,
+              title: et.title,
+              slug: et.slug,
+              duration: et.durationMins || 30,
+              description: et.description || "",
+              location: et.locationType === "zoom" ? "Zoom Meetings" : et.locationType === "teams" ? "Microsoft Teams" : "Google Meet",
+              locationType: et.locationType || "google_meet",
+              active: et.isActive ?? true,
+              maxAttendees: et.maxAttendees || 1,
+              showRemainingSpots: et.showRemainingSpots ?? true,
+            },
+            ...prev,
+          ];
+        });
+        showNotification(`Event type created: ${et.title}`);
+      } else if (event.type === "event_type.updated") {
+        const et = event.payload;
+        setEventTypes((prev) =>
+          prev.map((e) => {
+            if (e.id === et.id) {
+              return {
+                ...e,
+                title: et.title !== undefined ? et.title : e.title,
+                slug: et.slug !== undefined ? et.slug : e.slug,
+                duration: et.durationMins !== undefined ? et.durationMins : e.duration,
+                description: et.description !== undefined ? et.description : e.description,
+                locationType: et.locationType !== undefined ? et.locationType : e.locationType,
+                active: et.isActive !== undefined ? et.isActive : e.active,
+                maxAttendees: et.maxAttendees !== undefined ? et.maxAttendees : e.maxAttendees,
+                showRemainingSpots: et.showRemainingSpots !== undefined ? et.showRemainingSpots : e.showRemainingSpots,
+              };
+            }
+            return e;
+          })
+        );
+      } else if (event.type === "event_type.deleted") {
+        setEventTypes((prev) => prev.filter((e) => e.id !== event.payload.id));
+        showNotification("Event type removed");
+      } else if (event.type === "user.updated") {
+        setUser((prev) => (prev ? { ...prev, ...event.payload } : prev));
+      } else if (event.type === "availability.updated") {
+        loadAvailability();
+      } else if (event.type === "knock.created") {
+        setOfficeKnocks((prev) => {
+          if (prev.some((k) => k.id === event.payload.id)) return prev;
+          return [event.payload, ...prev];
+        });
+        if (event.payload.status === "ringing") {
+          playDoorbellChime();
+        }
+      } else if (event.type === "knock.updated") {
+        setOfficeKnocks((prev) =>
+          prev.map((k) => (k.id === event.payload.id ? { ...k, ...event.payload } : k))
+        );
+      } else if (event.type === "knock.cancelled") {
+        setOfficeKnocks((prev) => prev.filter((k) => k.id !== event.payload.id));
+      } else if (event.type === "office.status_changed") {
+        setUser((prev) => (prev ? { ...prev, ...event.payload } : prev));
+      }
+    },
+  });
 
   const loadUserData = () => {
     // 1. Fetch authenticated user profile
@@ -770,13 +861,6 @@ export function DashboardView({
       onClick: () => setActiveTab("bookings"),
     },
     {
-      key: "availability",
-      label: "Working hours",
-      icon: HugeClock,
-      onClick: () => setActiveTab("availability"),
-      dataTour: "nav-working-hours",
-    },
-    {
       key: "contacts",
       label: "Contacts",
       icon: HugeContacts,
@@ -790,10 +874,14 @@ export function DashboardView({
       onClick: () => setActiveTab("analytics"),
     },
     {
-      key: "integrations",
-      label: "Integrations",
-      icon: HugeVideo,
-      onClick: () => setActiveTab("integrations"),
+      key: "settings",
+      label: "Settings",
+      icon: HugeSettings,
+      onClick: () => {
+        setSettingsTab("profile");
+        setActiveTab("settings");
+      },
+      dataTour: "nav-settings",
     },
     {
       key: "public-page",
@@ -841,6 +929,18 @@ export function DashboardView({
         </div>
 
         <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-primary-default text-caption-1-medium text-text-secondary select-none"
+            title={isRealtimeConnected ? "Realtime sync active across all features" : "Connecting to realtime event stream..."}
+          >
+            <span
+              className={cx(
+                "size-2 rounded-full",
+                isRealtimeConnected ? "bg-status-lime-text animate-pulse" : "bg-status-amber-text"
+              )}
+            />
+            <span className="hidden sm:inline">{isRealtimeConnected ? "Live" : "Connecting..."}</span>
+          </div>
           <OfficeStatusPill
             status={user.officeStatus || "closed"}
             slug={user.slug}
@@ -863,7 +963,7 @@ export function DashboardView({
             <DashboardSidebar
               mobile={true}
               onClose={() => setIsMobileMenuOpen(false)}
-              selected={activeTab}
+              selected={activeTab === "availability" || activeTab === "integrations" ? "settings" : (activeTab as any)}
               items={sidebarNavItems.map((item) => ({
                 ...item,
                 onClick: () => {
@@ -876,6 +976,11 @@ export function DashboardView({
                 setIsMobileMenuOpen(false);
                 setTourOpen(true);
               }}
+              onOpenSettings={() => {
+                setIsMobileMenuOpen(false);
+                setSettingsTab("profile");
+                setActiveTab("settings");
+              }}
             />
           </div>
         </div>
@@ -883,11 +988,15 @@ export function DashboardView({
 
       {/* PERSISTENT DESKTOP BOARDUI SIDEBAR */}
       <DashboardSidebar
-        selected={activeTab}
+        selected={activeTab === "availability" || activeTab === "integrations" ? "settings" : (activeTab as any)}
         items={sidebarNavItems}
         user={user}
         showThemeToggle={false}
         onStartTour={() => setTourOpen(true)}
+        onOpenSettings={() => {
+          setSettingsTab("profile");
+          setActiveTab("settings");
+        }}
         className="shrink-0 sticky top-6 h-[calc(100vh-3rem)] hidden lg:flex"
       />
 
@@ -1175,102 +1284,6 @@ export function DashboardView({
         )}
 
         {/* ========================================================================= */}
-        {/* VIEW 3: WORKING HOURS */}
-        {/* ========================================================================= */}
-        {activeTab === "availability" && (
-          <div className="flex flex-col gap-6">
-            <div className="flex flex-col gap-1 pb-6 border-b border-border-button-default">
-              <h1 className="text-title-1-medium text-text-primary">Working hours</h1>
-              <p className="text-body-regular text-text-secondary">
-                Set standard weekly availability when guests are allowed to schedule time with you.
-              </p>
-            </div>
-
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 sm:p-8 flex flex-col gap-6 max-w-2xl shadow-2xs">
-              <div className="flex flex-col gap-4 divide-y divide-border-button-default">
-                {workingDays.map((day, idx) => (
-                  <div key={day.dayOfWeek} className="pt-4 first:pt-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <Switch
-                        isSelected={day.isEnabled}
-                        onChange={(selected) => {
-                          setWorkingDays((prev) =>
-                            prev.map((d, i) => (i === idx ? { ...d, isEnabled: selected } : d))
-                          );
-                        }}
-                        aria-label={`Toggle ${day.dayName}`}
-                      />
-                      <span className="text-body-medium text-text-primary font-medium w-28">
-                        {day.dayName}
-                      </span>
-                    </div>
-
-                    {day.isEnabled ? (
-                      <div className="flex items-center gap-2 text-body-medium text-text-secondary">
-                        <select
-                          value={day.startTime}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setWorkingDays((prev) =>
-                              prev.map((d, i) => (i === idx ? { ...d, startTime: val } : d))
-                            );
-                          }}
-                          aria-label={`${day.dayName} start time`}
-                          className="px-3 py-1.5 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-2-regular outline-none cursor-pointer"
-                        >
-                          {TIME_OPTIONS.map((t) => (
-                            <option key={t.value} value={t.value}>
-                              {t.label}
-                            </option>
-                          ))}
-                        </select>
-                        <span>–</span>
-                        <select
-                          value={day.endTime}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setWorkingDays((prev) =>
-                              prev.map((d, i) => (i === idx ? { ...d, endTime: val } : d))
-                            );
-                          }}
-                          aria-label={`${day.dayName} end time`}
-                          className="px-3 py-1.5 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-2-regular outline-none cursor-pointer"
-                        >
-                          {TIME_OPTIONS.map((t) => (
-                            <option key={t.value} value={t.value}>
-                              {t.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ) : (
-                      <span className="text-body-2-regular text-text-tertiary italic ps-10 sm:ps-0">
-                        Unavailable
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div className="pt-4 border-t border-border-button-default flex items-center justify-between">
-                <div className="flex items-center gap-2 text-body-2-regular text-text-secondary">
-                  <HugeGlobe className="size-4 text-accent-500" />
-                  <span>Timezone: {user.timezone}</span>
-                </div>
-                <Button
-                  variant="primary"
-                  size="small"
-                  disabled={isSavingHours}
-                  onClick={handleSaveWorkingHours}
-                >
-                  {isSavingHours ? "Saving..." : hoursSavedSuccess ? "Hours saved!" : "Save hours"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ========================================================================= */}
         {/* VIEW 4: CONTACTS */}
         {/* ========================================================================= */}
         {activeTab === "contacts" && (
@@ -1340,224 +1353,54 @@ export function DashboardView({
         )}
 
         {/* ========================================================================= */}
-        {/* VIEW 6: INTEGRATIONS */}
+        {/* VIEW: UNIFIED SETTINGS HUB */}
         {/* ========================================================================= */}
-        {activeTab === "integrations" && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="flex flex-col gap-1 pb-6 border-b border-border-button-default">
-              <h1 className="text-title-1-medium text-text-primary">Integrations</h1>
-              <p className="text-body-regular text-text-secondary">
-                Connect your calendar, video meeting providers, and communication tools.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-4">
-              {/* Google Calendar Card */}
-              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs">
-                <div className="flex items-center gap-4">
-                  <GoogleCalendarIcon className="size-10 shrink-0" />
-                  <div className="flex flex-col">
-                    <div className="flex items-center gap-2">
-                      <span className="text-body-medium font-semibold text-text-primary">
-                        Google Calendar
-                      </span>
-                      <Chip color="lime" variant="bold">Connected</Chip>
-                    </div>
-                    <span className="text-body-2-regular text-text-secondary">
-                      Synchronizes busy slots to prevent double-bookings automatically.
-                    </span>
-                  </div>
-                </div>
-
-                <Button
-                  variant="secondary"
-                  size="small"
-                  onClick={() => setIsGCalModalOpen(true)}
-                >
-                  Configure
-                </Button>
-              </div>
-
-              {/* Google Meet Card */}
-              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex items-center justify-between shadow-2xs">
-                <div className="flex items-center gap-4 max-w-lg">
-                  <GoogleMeetIcon className="size-10 shrink-0" />
-                  <div className="flex flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-body-medium font-semibold text-text-primary">
-                        Google Meet
-                      </span>
-                      {isGoogleMeetActive && (
-                        <Chip color="blue" variant="bold">Default Provider</Chip>
-                      )}
-                    </div>
-                    <span className="text-body-2-regular text-text-secondary">
-                      Automatically generate unique Google Meet video links for all scheduled bookings.
-                    </span>
-                  </div>
-                </div>
-
-                <Switch
-                  isSelected={isGoogleMeetActive}
-                  onChange={async (selected) => {
-                    if (selected) {
-                      await handleSwitchToGoogleMeet();
-                    } else {
-                      setIsZoomModalOpen(true);
-                    }
-                  }}
-                  aria-label="Google Meet Toggle"
-                />
-              </div>
-
-              {/* Zoom Meetings Card */}
-              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-3 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4 max-w-lg">
-                    <ZoomIcon className="size-10 shrink-0" />
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-body-medium font-semibold text-text-primary">
-                          Zoom Meetings
-                        </span>
-                        {isZoomActive && (
-                          <Chip color="lime" variant="bold">Default Provider</Chip>
-                        )}
-                        {(user.zoomEmail || user.hasZoomOAuth) && (
-                          <Chip color="blue" variant="bold">Connected</Chip>
-                        )}
-                      </div>
-                      <span className="text-body-2-regular text-text-secondary">
-                        {user.zoomEmail || user.hasZoomOAuth
-                          ? `Connected via OAuth${user.zoomEmail ? ` as ${user.zoomEmail}` : ""}. Dynamic per-booking meeting links generated automatically.`
-                          : "Use dynamic Zoom rooms via OAuth or configure your personal meeting room."}
-                      </span>
-                    </div>
-                  </div>
-
-                  <Switch
-                    isSelected={isZoomActive}
-                    onChange={async (selected) => {
-                      if (selected) {
-                        if (user.hasZoomOAuth || user.zoomEmail || user.zoomMeetingUrl) {
-                          await handleSaveZoom(user.zoomMeetingUrl || "", true);
-                        } else {
-                          setIsZoomModalOpen(true);
-                        }
-                      } else {
-                        await handleSwitchToGoogleMeet();
-                      }
-                    }}
-                    aria-label="Zoom Meetings Toggle"
-                  />
-                </div>
-
-                {/* Zoom Footer Status Bar */}
-                {(user.zoomEmail || user.hasZoomOAuth || user.zoomMeetingUrl) ? (
-                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
-                    <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
-                      <ZoomIcon className="size-4 shrink-0" />
-                      <span className="font-mono text-text-primary truncate">
-                        {user.zoomEmail ? `OAuth: ${user.zoomEmail}` : user.hasZoomOAuth ? "OAuth: Account Connected" : user.zoomMeetingUrl}
-                      </span>
-                    </div>
-
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      leadingIcon={HugeEdit}
-                      onClick={() => setIsZoomModalOpen(true)}
-                    >
-                      Configure
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
-                    <span className="text-body-2-regular text-text-secondary">
-                      No Zoom account or personal meeting room configured
-                    </span>
-                    <Button
-                      variant="secondary"
-                      size="xs"
-                      onClick={() => setIsZoomModalOpen(true)}
-                    >
-                      Configure Zoom
-                    </Button>
-                  </div>
-                )}
-              </div>
-
-              {/* Microsoft Teams Card */}
-              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-3 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4 max-w-lg">
-                    <MicrosoftTeamsIcon className="size-10 shrink-0" />
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-body-medium font-semibold text-text-primary">
-                          Microsoft Teams
-                        </span>
-                        {isTeamsActive && (
-                          <Chip color="purple" variant="bold">Default Provider</Chip>
-                        )}
-                      </div>
-                      <span className="text-body-2-regular text-text-secondary">
-                        Use your Microsoft Teams meeting link as your meeting location for guest bookings.
-                      </span>
-                    </div>
-                  </div>
-
-                  <Switch
-                    isSelected={isTeamsActive}
-                    onChange={async (selected) => {
-                      if (selected) {
-                        if (user.teamsMeetingUrl) {
-                          await handleSaveTeams(user.teamsMeetingUrl, true);
-                        } else {
-                          setIsTeamsModalOpen(true);
-                        }
-                      } else {
-                        await handleSwitchToGoogleMeet();
-                      }
-                    }}
-                    aria-label="Microsoft Teams Toggle"
-                  />
-                </div>
-
-                {/* If Teams link exists, show the link bar */}
-                {user.teamsMeetingUrl ? (
-                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
-                    <div className="flex items-center gap-2 text-text-secondary truncate max-w-md">
-                      <MicrosoftTeamsIcon className="size-4 shrink-0" />
-                      <span className="font-mono text-text-primary truncate">
-                        {user.teamsMeetingUrl}
-                      </span>
-                    </div>
-
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      leadingIcon={HugeEdit}
-                      onClick={() => setIsTeamsModalOpen(true)}
-                    >
-                      Edit link
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="pt-3 border-t border-border-button-default flex items-center justify-between text-body-2-regular">
-                    <span className="text-text-tertiary">No Teams meeting link configured</span>
-                    <Button
-                      variant="secondary"
-                      size="xs"
-                      onClick={() => setIsTeamsModalOpen(true)}
-                    >
-                      Configure Link
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+        {(activeTab === "settings" || activeTab === "availability" || activeTab === "integrations") && (
+          <UnifiedSettingsView
+            user={user}
+            defaultTab={
+              activeTab === "availability"
+                ? "availability"
+                : activeTab === "integrations"
+                ? "integrations"
+                : settingsTab
+            }
+            workingDays={workingDays}
+            onUpdateUser={async (patch) => {
+              const res = await fetch("/api/user/me", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(patch),
+              });
+              if (!res.ok) throw new Error("Failed to update profile");
+              const data = await res.json();
+              if (data.user) {
+                setUser((prev) => (prev ? { ...prev, ...data.user } : null));
+              }
+            }}
+            onUpdateWorkingDays={async (newDays) => {
+              setWorkingDays(newDays);
+              const res = await fetch("/api/availability", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  days: newDays.map((d) => ({
+                    dayOfWeek: d.dayOfWeek,
+                    startTime: d.startTime,
+                    endTime: d.endTime,
+                    isEnabled: d.isEnabled,
+                  })),
+                  timezone: user.timezone,
+                }),
+              });
+              if (!res.ok) throw new Error("Failed to save working hours");
+            }}
+            onShowNotification={showNotification}
+            onRefreshData={() => {
+              loadUserData();
+              loadAvailability();
+            }}
+          />
         )}
 
         {/* ========================================================================= */}

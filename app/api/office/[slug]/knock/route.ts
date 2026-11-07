@@ -4,6 +4,7 @@ import { users, officeKnocks } from "@/db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { sendDoorbellKnockEmail } from "@/lib/email";
 import { isHostWithinOfficeSchedule } from "@/lib/office/office-service";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 
 const EMAIL_REGEX =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
@@ -119,17 +120,31 @@ export async function POST(
       }).catch((err) => console.error("[Doorbell Alert] Failed to dispatch knock email:", err));
     }
 
+    // Broadcast instant real-time event to host and visitor
+    const knockPayload = {
+      id: created.id,
+      guestName: created.guestName,
+      guestEmail: created.guestEmail,
+      guestAvatarUrl: created.guestAvatarUrl,
+      topic: created.topic,
+      status: created.status,
+      queuePosition: created.queuePosition || 0,
+      createdAt: created.createdAt.toISOString(),
+      expiresAt: created.status === "ringing"
+        ? new Date(new Date(created.createdAt).getTime() + 60000).toISOString()
+        : undefined,
+    };
+
+    realtimeBus.broadcast(`host:${host.id}`, "knock.created", knockPayload);
+    realtimeBus.broadcast(`knock:${created.id}`, "knock.status", knockPayload);
+    realtimeBus.broadcast(`public:host:${slug}`, "office.knock_received", {
+      knockId: created.id,
+      queuePosition: created.queuePosition,
+    });
+
     return NextResponse.json({
       success: true,
-      knock: {
-        id: created.id,
-        status: created.status,
-        queuePosition: created.queuePosition || 0,
-        createdAt: created.createdAt,
-        expiresAt: created.status === "ringing"
-          ? new Date(new Date(created.createdAt).getTime() + 60000).toISOString()
-          : undefined,
-      },
+      knock: knockPayload,
     }, { status: 201 });
   } catch (err) {
     console.error("Error creating office knock:", err);

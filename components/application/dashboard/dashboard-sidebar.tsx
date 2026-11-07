@@ -230,6 +230,7 @@ export function DashboardSidebar({
   className,
   user,
   onStartTour,
+  onOpenSettings,
 }: {
   /** Rendered inside the mobile drawer: always expanded, close button instead of collapse. */
   mobile?: boolean;
@@ -257,6 +258,7 @@ export function DashboardSidebar({
   };
   /** Callback to launch the interactive product walkthrough tour */
   onStartTour?: () => void;
+  onOpenSettings?: () => void;
 } = {}) {
   const localize = useTemplateCopy();
   const [collapsedState, setCollapsed] = useState(false);
@@ -574,7 +576,7 @@ export function DashboardSidebar({
               icon={HugeSettings}
               label="Settings"
               collapsed={collapsed}
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))}
             />
           )}
         </nav>
@@ -586,7 +588,7 @@ export function DashboardSidebar({
           userName={user?.name}
           userEmail={user?.email}
           initials={user?.initials}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))}
           onSignOut={() => signOut({ callbackUrl: "/login" })}
         />
       </div>

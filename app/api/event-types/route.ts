@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { eventTypes, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 
 export async function GET(req: NextRequest) {
   try {
@@ -78,6 +79,15 @@ export async function POST(req: NextRequest) {
         minAttendees: Number(minAttendees) || 1,
       })
       .returning();
+
+    try {
+      realtimeBus.broadcast(`host:${host.id}`, "event_type.created", created);
+      if (host.slug) {
+        realtimeBus.broadcast(`public:host:${host.slug}`, "event_type.created", created);
+      }
+    } catch (err) {
+      console.error("Failed to broadcast realtime event type creation:", err);
+    }
 
     return NextResponse.json({ eventType: created }, { status: 201 });
   } catch (err) {

@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { availability, users } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 
 function to24Hour(timeStr?: string, fallback: string = "09:00"): string {
   if (!timeStr) return fallback;
@@ -94,6 +95,20 @@ export async function POST(req: NextRequest) {
       where: eq(availability.userId, host.id),
       orderBy: [asc(availability.dayOfWeek)],
     });
+
+    try {
+      realtimeBus.broadcast(`host:${host.id}`, "availability.updated", {
+        availability: updated,
+        timezone: timezone || host.timezone,
+      });
+      if (host.slug) {
+        realtimeBus.broadcast(`public:host:${host.slug}`, "availability.updated", {
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    } catch (err) {
+      console.error("Failed to broadcast realtime availability update:", err);
+    }
 
     return NextResponse.json({ success: true, availability: updated });
   } catch (err) {

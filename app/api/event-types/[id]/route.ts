@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { eventTypes, users } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 
 export async function PATCH(
   req: NextRequest,
@@ -57,6 +58,15 @@ export async function PATCH(
       .where(eq(eventTypes.id, id))
       .returning();
 
+    try {
+      realtimeBus.broadcast(`host:${host.id}`, "event_type.updated", updated);
+      if (host.slug) {
+        realtimeBus.broadcast(`public:host:${host.slug}`, "event_type.updated", updated);
+      }
+    } catch (err) {
+      console.error("Failed to broadcast realtime event type update:", err);
+    }
+
     return NextResponse.json({ success: true, eventType: updated });
   } catch (err) {
     console.error("Error updating event type:", err);
@@ -94,6 +104,15 @@ export async function DELETE(
     }
 
     await db.delete(eventTypes).where(eq(eventTypes.id, id));
+
+    try {
+      realtimeBus.broadcast(`host:${host.id}`, "event_type.deleted", { id });
+      if (host.slug) {
+        realtimeBus.broadcast(`public:host:${host.slug}`, "event_type.deleted", { id });
+      }
+    } catch (err) {
+      console.error("Failed to broadcast realtime event type deletion:", err);
+    }
 
     return NextResponse.json({ success: true, deletedId: id });
   } catch (err) {

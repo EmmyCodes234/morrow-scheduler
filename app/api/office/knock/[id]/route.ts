@@ -8,6 +8,7 @@ import {
   promoteNextQueuedKnock,
   isHostWithinOfficeSchedule,
 } from "@/lib/office/office-service";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 
 export async function GET(
   req: NextRequest,
@@ -117,6 +118,8 @@ export async function PATCH(
         .where(eq(officeKnocks.id, knock.id))
         .returning();
 
+      realtimeBus.broadcast(`host:${knock.hostId}`, "knock.cancelled", { id: updated.id });
+      realtimeBus.broadcast(`knock:${updated.id}`, "knock.cancelled", { id: updated.id });
       return NextResponse.json({ success: true, knock: updated });
     }
 
@@ -185,6 +188,17 @@ export async function PATCH(
         speedChatMins: host.officeSpeedChatMins || 10,
       }).catch((err) => console.error("[Google Calendar] Failed to create speed-chat hold:", err));
 
+      realtimeBus.broadcast(`knock:${updatedKnock.id}`, "knock.admitted", {
+        id: updatedKnock.id,
+        status: "admitted",
+        meetLink,
+      });
+      realtimeBus.broadcast(`host:${host.id}`, "knock.updated", {
+        id: updatedKnock.id,
+        status: "admitted",
+        meetLink,
+      });
+
       return NextResponse.json({
         success: true,
         knock: updatedKnock,
@@ -202,8 +216,21 @@ export async function PATCH(
         .where(eq(officeKnocks.id, knock.id))
         .returning();
 
+      realtimeBus.broadcast(`knock:${updatedKnock.id}`, "knock.declined", {
+        id: updatedKnock.id,
+        status: "declined",
+      });
+      realtimeBus.broadcast(`host:${host.id}`, "knock.updated", {
+        id: updatedKnock.id,
+        status: "declined",
+      });
+
       // Check if another visitor is in queue and promote them
-      await promoteNextQueuedKnock(host.id);
+      const promoted = await promoteNextQueuedKnock(host.id);
+      if (promoted) {
+        realtimeBus.broadcast(`knock:${promoted.id}`, "knock.promoted", promoted);
+        realtimeBus.broadcast(`host:${host.id}`, "knock.created", promoted);
+      }
 
       return NextResponse.json({ success: true, knock: updatedKnock });
     }
@@ -232,6 +259,20 @@ export async function PATCH(
             updatedAt: new Date(),
           })
           .where(eq(users.id, host.id));
+      }
+
+      realtimeBus.broadcast(`knock:${updatedKnock.id}`, "knock.concluded", {
+        id: updatedKnock.id,
+        status: "concluded",
+      });
+      realtimeBus.broadcast(`host:${host.id}`, "knock.updated", {
+        id: updatedKnock.id,
+        status: "concluded",
+      });
+
+      if (nextPromoted) {
+        realtimeBus.broadcast(`knock:${nextPromoted.id}`, "knock.promoted", nextPromoted);
+        realtimeBus.broadcast(`host:${host.id}`, "knock.created", nextPromoted);
       }
 
       return NextResponse.json({

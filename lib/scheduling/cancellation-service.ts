@@ -16,6 +16,8 @@ import {
   resolveTimezone,
 } from "@/lib/scheduling/timezone";
 
+import { realtimeBus } from "@/lib/realtime/event-bus";
+
 export interface CancelBookingParams {
   /** The booking ID (for host) or cancelToken (for guest) */
   identifier: string;
@@ -798,6 +800,23 @@ export async function cancelBooking(
   const safeNotificationStatus: SafeNotificationStatus = mapDispatchResultToSafeStatus(notifyResult);
 
   // 11. Fetch final record
+  try {
+    realtimeBus.broadcast(`host:${existing.hostId}`, "booking.cancelled", {
+      id: existing.id,
+      guestName: existing.guestName,
+      guestEmail: existing.guestEmail,
+      eventTitle: existing.eventType?.title || "Meeting",
+      reason: sanitizedReason,
+    });
+    if (existing.host?.slug) {
+      realtimeBus.broadcast(`public:host:${existing.host.slug}`, "booking.cancelled", {
+        id: existing.id,
+        eventSlug: existing.eventType?.slug,
+      });
+    }
+  } catch (err) {
+    console.error("Failed to broadcast realtime cancellation:", err);
+  }
   const finalBooking = await dbClient.query.bookings.findFirst({
     where: eq(bookings.id, existing.id),
     with: { eventType: true, host: true },

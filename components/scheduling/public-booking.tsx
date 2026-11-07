@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { cx } from "@/utils/cx";
+import { useMorrowRealtime } from "@/lib/realtime/use-realtime";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
 import { DateCalendar } from "@/components/base/date-picker/date-calendar";
 import { Button } from "@/components/base/buttons/button";
@@ -77,6 +78,23 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
     } catch {
       return "UTC";
     }
+  });
+
+  const [liveOfficeStatus, setLiveOfficeStatus] = useState<string>(host?.officeStatus || "closed");
+  const [liveOfficeTopic, setLiveOfficeTopic] = useState<string | null>(host?.officeTopic || null);
+
+  // Realtime by Default: Live door state and live slot updates
+  useMorrowRealtime({
+    channels: host?.slug ? [`public:host:${host.slug}`] : [],
+    enabled: Boolean(host?.slug),
+    onEvent: (event) => {
+      if (event.type === "office.status_changed") {
+        setLiveOfficeStatus(event.payload.officeStatus || "closed");
+        if (event.payload.officeTopic !== undefined) {
+          setLiveOfficeTopic(event.payload.officeTopic);
+        }
+      }
+    },
   });
 
   const [selectedEvent, setSelectedEvent] = useState<PublicEventType>(defaultEvent);
@@ -306,7 +324,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
   return (
     <div className="w-full max-w-5xl mx-auto flex flex-col gap-4">
       {/* Live Virtual Office Drop-in Banner */}
-      {host?.officeStatus && host.officeStatus !== "closed" && (
+      {liveOfficeStatus && liveOfficeStatus !== "closed" && (
         <div className="p-4 rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
           <div className="flex items-center gap-3.5 min-w-0">
             <span className="relative flex size-3 shrink-0">
@@ -316,16 +334,16 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-body-medium font-semibold text-text-primary truncate">
-                  {host.name} is available for office hours right now
+                  {(host?.name || 'Host')} is available for office hours right now
                 </span>
-                <Chip color={host.officeStatus === "open" ? "lime" : "yellow"} variant="caption">
-                  {host.officeStatus === "open" ? "Door Open" : "In Meeting"}
+                <Chip color={liveOfficeStatus === "open" ? "lime" : "yellow"} variant="caption">
+                  {liveOfficeStatus === "open" ? "Door Open" : "In Meeting"}
                 </Chip>
               </div>
               <p className="text-caption-1-semibold text-text-secondary truncate">
-                {host.officeTopic
-                  ? `Topic: "${host.officeTopic}"`
-                  : `Knock on their virtual door for a quick ${host.officeSpeedChatMins || 10}-minute chat`}
+                {liveOfficeTopic
+                  ? `Topic: "${liveOfficeTopic}"`
+                  : `Knock on their virtual door for a quick ${host?.officeSpeedChatMins || 10}-minute chat`}
               </p>
             </div>
           </div>
@@ -336,7 +354,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
             leadingIcon={HugeVideo}
             onClick={() => {
               if (typeof window !== "undefined") {
-                window.location.href = `/${host.slug}/office`;
+                if (host?.slug) { window.location.href = `/${host.slug}/office`; }
               }
             }}
             className="shrink-0"

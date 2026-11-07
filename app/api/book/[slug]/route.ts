@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processBooking } from "@/lib/scheduling/booking-service";
 import { parseJsonRequest } from "@/lib/http/parse-json";
+import { realtimeBus } from "@/lib/realtime/event-bus";
 
 export async function POST(
   req: NextRequest,
@@ -38,6 +39,33 @@ export async function POST(
         { error: result.error, errorCode: result.errorCode },
         { status: result.status }
       );
+    }
+
+    if (result.booking) {
+      const b = result.booking as any;
+      const hostId = b.hostId || b.host?.id;
+      if (hostId) {
+        realtimeBus.broadcast(`host:${hostId}`, "booking.created", {
+          id: b.id,
+          guestName: b.guestName,
+          guestEmail: b.guestEmail,
+          eventTitle: b.eventType?.title || "Meeting",
+          date: body.date,
+          time: body.time,
+          status: b.status,
+          meetLink: b.meetLink,
+          isGroup: Boolean(b.isGroup),
+          maxAttendees: b.maxAttendees,
+          attendeeCount: b.attendeeCount || 1,
+          createdAt: b.createdAt || new Date().toISOString(),
+        });
+      }
+
+      realtimeBus.broadcast(`public:host:${slug}`, "slot.booked", {
+        eventTypeId: body.eventTypeId,
+        date: body.date,
+        time: body.time,
+      });
     }
 
     return NextResponse.json(
