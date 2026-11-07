@@ -30,7 +30,10 @@ export interface PublicOfficeViewProps {
 }
 
 export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProps) {
-  const isDoorClosedInitial = host.officeStatus === "closed";
+  const [currentOfficeStatus, setCurrentOfficeStatus] = useState<string>(host.officeStatus || "closed");
+  const [currentOfficeTopic, setCurrentOfficeTopic] = useState<string | null>(host.officeTopic || null);
+
+  const isDoorClosedInitial = (host.officeStatus || "closed") === "closed";
 
   const [officeState, setOfficeState] = useState<"idle" | "queued" | "ringing" | "admitted" | "fallback">(
     isDoorClosedInitial ? "fallback" : "idle"
@@ -59,9 +62,9 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
         .toUpperCase()
     : "H";
 
-  const isDoorOpen = host.officeStatus === "open";
-  const isDoorBusy = host.officeStatus === "busy";
-  const isDoorClosed = host.officeStatus === "closed";
+  const isDoorOpen = currentOfficeStatus === "open";
+  const isDoorBusy = currentOfficeStatus === "busy";
+  const isDoorClosed = currentOfficeStatus === "closed";
 
   const storageKey = `morrow_office_knock_${host.slug}`;
 
@@ -137,8 +140,21 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
         setActiveKnockId(null);
         setOfficeState("fallback");
       } else if (event.type === "office.status_changed") {
-        if (event.payload.officeStatus === "closed" && officeState === "idle") {
-          setOfficeState("fallback");
+        const nextStatus = event.payload.officeStatus || "closed";
+        setCurrentOfficeStatus(nextStatus);
+        if (event.payload.officeTopic !== undefined) {
+          setCurrentOfficeTopic(event.payload.officeTopic);
+        }
+
+        if (nextStatus === "open" || nextStatus === "busy") {
+          // If door was previously closed, reopen the front desk for visitors!
+          if (officeState === "fallback" && !activeKnockId) {
+            setOfficeState("idle");
+          }
+        } else if (nextStatus === "closed") {
+          if (officeState === "idle") {
+            setOfficeState("fallback");
+          }
         }
       }
     },
@@ -353,7 +369,15 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
           </div>
 
           {/* Embedded Calendar Scheduler */}
-          <PublicBookingView host={host} initialEventTypes={eventTypes} />
+          <PublicBookingView
+            host={{
+              ...host,
+              officeStatus: currentOfficeStatus,
+              officeTopic: currentOfficeTopic,
+            }}
+            initialEventTypes={eventTypes}
+            hideOfficeBanner={true}
+          />
         </div>
       ) : (
         /* MAIN OFFICE CARD FOR IDLE, RINGING, QUEUED, & ADMITTED */
@@ -388,7 +412,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
             </div>
 
             {/* Discussion Topic Spotlight Banner */}
-            {host.officeTopic ? (
+            {currentOfficeTopic ? (
               <div className="p-3 sm:p-3.5 rounded-2xl bg-accent-50/60 dark:bg-accent-950/40 border border-accent-200/60 dark:border-accent-800/50 flex items-start gap-2.5 text-start">
                 <span className="text-base leading-none shrink-0 mt-0.5">💬</span>
                 <div className="flex flex-col min-w-0">
@@ -396,7 +420,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
                     Current Discussion Focus
                   </span>
                   <span className="text-body-2-medium text-text-primary font-medium">
-                    &ldquo;{host.officeTopic}&rdquo;
+                    &ldquo;{currentOfficeTopic}&rdquo;
                   </span>
                 </div>
               </div>

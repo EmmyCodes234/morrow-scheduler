@@ -60,9 +60,10 @@ export interface PublicEventType {
 export interface PublicBookingViewProps {
   host?: PublicHost;
   initialEventTypes?: PublicEventType[];
+  hideOfficeBanner?: boolean;
 }
 
-export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookingViewProps) {
+export function PublicBookingView({ host, initialEventTypes = [], hideOfficeBanner = false }: PublicBookingViewProps) {
   const activeEvents = initialEventTypes.filter((e) => e.active !== false);
   const defaultEvent = activeEvents[0] || {
     id: "default",
@@ -324,7 +325,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
   return (
     <div className="w-full max-w-5xl mx-auto flex flex-col gap-4">
       {/* Live Virtual Office Drop-in Banner */}
-      {liveOfficeStatus && liveOfficeStatus !== "closed" && (
+      {!hideOfficeBanner && liveOfficeStatus && liveOfficeStatus !== "closed" && (
         <div className="p-4 rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
           <div className="flex items-center gap-3.5 min-w-0">
             <span className="relative flex size-3 shrink-0">
