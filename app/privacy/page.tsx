@@ -56,7 +56,7 @@ export default function PrivacyPolicyPage() {
         <section className="flex flex-col gap-2">
           <h2 className="text-title-3-semibold text-text-primary">4. Data Security &amp; Retention</h2>
           <p>
-            All OAuth tokens and user data are securely encrypted in transit and at rest using Neon serverless database infrastructure. We never sell, rent, or monetize personal data or calendar information to third parties or advertisers.
+            All OAuth tokens and user data are securely encrypted in transit and at rest using modern enterprise cloud infrastructure. We never sell, rent, or monetize personal data or calendar information to third parties or advertisers.
           </p>
         </section>
 

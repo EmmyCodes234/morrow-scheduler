@@ -737,3 +737,43 @@ export function buildHostCancellationEmail(data: {
     } : undefined,
   });
 }
+
+export function buildHostDoorbellNotificationEmail(params: {
+  guestName: string;
+  guestEmail: string;
+  topic: string;
+  speedChatMins: number;
+  admitUrl: string;
+}): string {
+  const safeGuestName = escapeHtml(params.guestName);
+  const safeGuestEmail = escapeHtml(params.guestEmail);
+  const safeTopic = escapeHtml(params.topic);
+
+  return renderBoardUIEmailLayout({
+    previewText: `${safeGuestName} is knocking on your Morrow door: "${safeTopic}"`,
+    headline: "Doorbell Ringing",
+    subheadline: `${safeGuestName} is waiting at your digital desk right now`,
+    badgeText: "Office Drop-In",
+    badgeVariant: "lime",
+    contentHtml: `
+      <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; margin: 16px 0;">
+        <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 600; text-transform: uppercase; color: #64748B;">Visitor's Topic:</p>
+        <p style="margin: 0; font-size: 15px; color: #0F172A; font-style: italic; line-height: 1.5;">&ldquo;${safeTopic}&rdquo;</p>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px;">
+        <tr>
+          <td style="color: #64748B; padding: 6px 0;">Visitor:</td>
+          <td style="color: #0F172A; font-weight: 600; text-align: right;">${safeGuestName} (${safeGuestEmail})</td>
+        </tr>
+        <tr>
+          <td style="color: #64748B; padding: 6px 0;">Speed Chat Window:</td>
+          <td style="color: #0F172A; font-weight: 600; text-align: right;">${params.speedChatMins} minutes</td>
+        </tr>
+      </table>
+    `,
+    primaryCta: {
+      label: "Admit Visitor into Video Room",
+      url: params.admitUrl,
+    },
+  });
+}

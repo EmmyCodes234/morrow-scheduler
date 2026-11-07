@@ -229,7 +229,7 @@ export async function getBookingForCancellation(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let attendeeRecord: any = null;
 
-  if (!booking) {
+  if (!booking && dbClient.query?.bookingAttendees?.findFirst) {
     const attendee = await dbClient.query.bookingAttendees.findFirst({
       where: eq(bookingAttendees.cancelToken, token.trim()),
       with: {
@@ -474,7 +474,7 @@ export async function cancelBooking(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let attendeeRecord: any = null;
 
-  if (!existing && identifierType === "token") {
+  if (!existing && identifierType === "token" && dbClient.query?.bookingAttendees?.findFirst) {
     const attendee = await dbClient.query.bookingAttendees.findFirst({
       where: eq(bookingAttendees.cancelToken, identifier.trim()),
       with: {

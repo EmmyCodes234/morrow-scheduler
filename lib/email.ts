@@ -6,6 +6,7 @@ import {
   buildGuestCancellationEmail,
   buildHostCancellationEmail,
   buildOtpEmail,
+  buildHostDoorbellNotificationEmail,
 } from "./email-templates";
 
 export interface BookingEmailPayload {
@@ -451,6 +452,60 @@ export async function sendHostCancellationEmail(
     return true;
   } catch (err) {
     console.error("[Email] Failed to send host cancellation email:", err);
+    return false;
+  }
+}
+
+export interface DoorbellKnockEmailPayload {
+  toEmail: string;
+  guestName: string;
+  guestEmail: string;
+  topic: string;
+  speedChatMins: number;
+  admitUrl: string;
+}
+
+export async function sendDoorbellKnockEmail(
+  payload: DoorbellKnockEmailPayload
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || apiKey.includes("re_...") || !apiKey.startsWith("re_")) {
+    console.log("[Email] Resend API key not configured, skipping doorbell alert to:", payload.toEmail);
+    return false;
+  }
+
+  const html = buildHostDoorbellNotificationEmail({
+    guestName: payload.guestName,
+    guestEmail: payload.guestEmail,
+    topic: payload.topic,
+    speedChatMins: payload.speedChatMins,
+    admitUrl: payload.admitUrl,
+  });
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "Morrow Doorbell <notifications@usemorrow.xyz>",
+        to: [payload.toEmail],
+        subject: `🚪 Doorbell: ${payload.guestName} is knocking right now`,
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.error(`[Email] Resend API error (${res.status}):`, err);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("[Email] Failed to send doorbell email:", err);
     return false;
   }
 }

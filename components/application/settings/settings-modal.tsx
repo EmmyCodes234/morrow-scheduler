@@ -572,7 +572,7 @@ export function SettingsModal({
 
                   <SwitchCard
                     title="Email Notifications"
-                    description="Dispatch instant confirmation and calendar invites via Resend."
+                    description="Dispatch instant confirmation and calendar invites to you and your guests."
                     defaultSelected={true}
                   />
                 </div>

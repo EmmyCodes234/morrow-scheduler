@@ -41,6 +41,10 @@ export async function GET() {
         maxBookingDays: host.maxBookingDays ?? 30,
         onboardedAt: host.onboardedAt,
         hasGoogleCalendar: Boolean(host.googleAccessToken || host.googleRefreshToken),
+        officeStatus: host.officeStatus || "closed",
+        officeTopic: host.officeTopic || null,
+        officeSpeedChatMins: host.officeSpeedChatMins || 10,
+        officeNotifyEmail: host.officeNotifyEmail !== false,
       },
     });
   } catch (err) {
@@ -80,6 +84,19 @@ export async function PATCH(req: NextRequest) {
     if (body.bufferMins !== undefined) updateData.bufferMins = Number(body.bufferMins);
     if (body.minNoticeHours !== undefined) updateData.minNoticeHours = Number(body.minNoticeHours);
     if (body.maxBookingDays !== undefined) updateData.maxBookingDays = Number(body.maxBookingDays);
+    if (body.officeStatus !== undefined && ["open", "busy", "closed"].includes(body.officeStatus)) {
+      updateData.officeStatus = body.officeStatus;
+    }
+    if (body.officeTopic !== undefined) {
+      updateData.officeTopic = typeof body.officeTopic === "string" ? body.officeTopic.trim().slice(0, 140) : null;
+    }
+    if (body.officeSpeedChatMins !== undefined) {
+      const mins = Number(body.officeSpeedChatMins);
+      if ([5, 10, 15, 20].includes(mins)) updateData.officeSpeedChatMins = mins;
+    }
+    if (body.officeNotifyEmail !== undefined) {
+      updateData.officeNotifyEmail = Boolean(body.officeNotifyEmail);
+    }
 
     if (body.slug !== undefined) {
       const sanitizedSlug = body.slug
@@ -127,6 +144,10 @@ export async function PATCH(req: NextRequest) {
         maxBookingDays: updated.maxBookingDays,
         onboardedAt: updated.onboardedAt,
         hasGoogleCalendar: Boolean(updated.googleAccessToken || updated.googleRefreshToken),
+        officeStatus: updated.officeStatus,
+        officeTopic: updated.officeTopic,
+        officeSpeedChatMins: updated.officeSpeedChatMins,
+        officeNotifyEmail: updated.officeNotifyEmail,
       },
     });
   } catch (err) {

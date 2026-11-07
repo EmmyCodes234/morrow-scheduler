@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { DashboardSidebar, type DashboardNavItem } from "@/components/application/dashboard/dashboard-sidebar";
 import { Button } from "@/components/base/buttons/button";
 import { Avatar } from "@/components/base/avatar/avatar";
@@ -40,6 +40,9 @@ import { ZoomModal } from "@/components/scheduling/modals/zoom-modal";
 import { TeamsModal } from "@/components/scheduling/modals/teams-modal";
 import { GCalModal } from "@/components/scheduling/modals/gcal-modal";
 import { MorrowLogo, MorrowIcon } from "@/components/brand/morrow-logo";
+import { HostOfficeView } from "@/components/office/host-office-view";
+import { DoorbellAlertModal, type OfficeKnock } from "@/components/office/doorbell-alert-modal";
+import { OfficeStatusPill } from "@/components/office/office-status-pill";
 
 interface EventTypeItem {
   id: string;
@@ -144,6 +147,10 @@ export interface HostUser {
   zoomConnectedAt?: Date | string | null;
   hasZoomOAuth?: boolean;
   hasGoogleCalendar?: boolean;
+  officeStatus?: "open" | "busy" | "closed";
+  officeTopic?: string | null;
+  officeSpeedChatMins?: number;
+  officeNotifyEmail?: boolean;
 }
 
 export function DashboardView({
@@ -166,6 +173,9 @@ export function DashboardView({
   // Bookings from Neon
   const [bookings, setBookings] = useState<BookingItem[]>([]);
   const [contacts, setContacts] = useState<ContactItem[]>([]);
+
+  // Office Hours Knocks & Doorbell state
+  const [officeKnocks, setOfficeKnocks] = useState<OfficeKnock[]>([]);
 
   // Working hours
   const [workingDays, setWorkingDays] = useState<WorkingDay[]>(DEFAULT_DAYS);
@@ -241,6 +251,10 @@ export function DashboardView({
             zoomConnectedAt: data.user.zoomConnectedAt || null,
             hasZoomOAuth: Boolean(data.user.hasZoomOAuth),
             hasGoogleCalendar: data.user.hasGoogleCalendar ?? true,
+            officeStatus: data.user.officeStatus || "closed",
+            officeTopic: data.user.officeTopic || null,
+            officeSpeedChatMins: data.user.officeSpeedChatMins || 10,
+            officeNotifyEmail: data.user.officeNotifyEmail !== false,
           });
         }
         setIsLoading(false);
@@ -326,13 +340,139 @@ export function DashboardView({
       .catch((err) => console.error("Error loading availability:", err));
   };
 
+  const loadOfficeState = useCallback(async () => {
+    try {
+      const res = await fetch("/api/user/office");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.knocks && Array.isArray(data.knocks)) {
+        setOfficeKnocks(data.knocks);
+      }
+      if (data.officeStatus) {
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                officeStatus: data.officeStatus,
+                officeTopic: data.officeTopic ?? prev.officeTopic,
+                officeSpeedChatMins: data.officeSpeedChatMins ?? prev.officeSpeedChatMins,
+                officeNotifyEmail: data.officeNotifyEmail ?? prev.officeNotifyEmail,
+              }
+            : null
+        );
+      }
+    } catch (err) {
+      console.error("Error loading office state:", err);
+    }
+  }, []);
+
   useEffect(() => {
     loadUserData();
     loadEventTypes();
     loadBookings();
     loadContacts();
     loadAvailability();
-  }, []);
+    loadOfficeState();
+  }, [loadOfficeState]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        loadOfficeState();
+      }
+    }, 3500);
+    return () => clearInterval(interval);
+  }, [loadOfficeState]);
+
+  // Office hours actions
+  const handleAdmitKnock = async (knockId: string): Promise<string | null> => {
+    try {
+      const res = await fetch(`/api/office/knock/${knockId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "admit" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showNotification(err.error || "Failed to admit knock");
+        return null;
+      }
+      const data = await res.json();
+      showNotification("Visitor admitted into office");
+      loadOfficeState();
+      return data.meetLink || null;
+    } catch (err) {
+      console.error("Error admitting knock:", err);
+      showNotification("Failed to admit visitor");
+      return null;
+    }
+  };
+
+  const handleDeclineKnock = async (knockId: string): Promise<void> => {
+    try {
+      const res = await fetch(`/api/office/knock/${knockId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "decline" }),
+      });
+      if (!res.ok) throw new Error("Failed to decline knock");
+      showNotification("Knock redirected to calendar");
+      loadOfficeState();
+    } catch (err) {
+      console.error("Error declining knock:", err);
+      showNotification("Failed to decline knock");
+    }
+  };
+
+  const handleConcludeKnock = async (knockId: string): Promise<void> => {
+    try {
+      const res = await fetch(`/api/office/knock/${knockId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "conclude" }),
+      });
+      if (!res.ok) throw new Error("Failed to conclude chat");
+      showNotification("Speed chat concluded");
+      loadOfficeState();
+    } catch (err) {
+      console.error("Error concluding knock:", err);
+      showNotification("Failed to conclude chat");
+    }
+  };
+
+  const handleUpdateOfficeSettings = async (settings: {
+    officeStatus?: "open" | "busy" | "closed";
+    officeTopic?: string;
+    officeSpeedChatMins?: number;
+    officeNotifyEmail?: boolean;
+  }): Promise<void> => {
+    try {
+      const res = await fetch("/api/user/office", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      if (!res.ok) throw new Error("Failed to update office settings");
+      const data = await res.json();
+      if (data.user) {
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                officeStatus: data.user.officeStatus,
+                officeTopic: data.user.officeTopic,
+                officeSpeedChatMins: data.user.officeSpeedChatMins,
+                officeNotifyEmail: data.user.officeNotifyEmail,
+              }
+            : null
+        );
+      }
+      showNotification("Office hours updated");
+    } catch (err) {
+      console.error("Error updating office settings:", err);
+      showNotification("Failed to update office settings");
+    }
+  };
 
   const handleCopy = (id: string, path: string) => {
     if (!user) return;
@@ -576,6 +716,13 @@ export function DashboardView({
     }
   };
 
+  // Active unexpired ringing knocks count for badge
+  const activeRingingCount = officeKnocks.filter(
+    (k) =>
+      k.status === "ringing" &&
+      (!k.isExpired || !k.expiresAt || new Date(k.expiresAt).getTime() > Date.now())
+  ).length;
+
   // Dedicated sidebar navigation
   const sidebarNavItems: DashboardNavItem[] = [
     {
@@ -584,6 +731,13 @@ export function DashboardView({
       icon: HugeLink,
       badge: eventTypes.length,
       onClick: () => setActiveTab("events"),
+    },
+    {
+      key: "office",
+      label: "Office hours",
+      icon: HugeCheckIn,
+      badge: activeRingingCount > 0 ? `${activeRingingCount} ringing` : user?.officeStatus === "open" ? "Open" : undefined,
+      onClick: () => setActiveTab("office"),
     },
     {
       key: "bookings",
@@ -663,7 +817,16 @@ export function DashboardView({
           <MorrowLogo size={28} />
         </div>
 
-        <Avatar size="sm" initials={user.initials} color="blue" />
+        <div className="flex items-center gap-2">
+          <OfficeStatusPill
+            status={user.officeStatus || "closed"}
+            slug={user.slug}
+            speedChatMins={user.officeSpeedChatMins || 10}
+            onUpdateStatus={(newStatus) => handleUpdateOfficeSettings({ officeStatus: newStatus })}
+            onUpdateSpeedChatMins={(mins) => handleUpdateOfficeSettings({ officeSpeedChatMins: mins })}
+          />
+          <Avatar size="sm" initials={user.initials} color="blue" />
+        </div>
       </div>
 
       {/* MOBILE DRAWER (overlay) */}
@@ -725,6 +888,14 @@ export function DashboardView({
               </div>
 
               <div className="flex items-center gap-2.5">
+                <OfficeStatusPill
+                  status={user.officeStatus || "closed"}
+                  slug={user.slug}
+                  speedChatMins={user.officeSpeedChatMins || 10}
+                  onUpdateStatus={(newStatus) => handleUpdateOfficeSettings({ officeStatus: newStatus })}
+                  onUpdateSpeedChatMins={(mins) => handleUpdateOfficeSettings({ officeSpeedChatMins: mins })}
+                />
+
                 <Button
                   variant="ghost"
                   leadingIcon={HugeSparkles}
@@ -1386,6 +1557,31 @@ export function DashboardView({
             </div>
           </div>
         )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 7: VIRTUAL OFFICE HOURS */}
+        {/* ========================================================================= */}
+        {activeTab === "office" && (
+          <HostOfficeView
+            user={{
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              slug: user.slug,
+              officeStatus: user.officeStatus || "closed",
+              officeTopic: user.officeTopic,
+              officeSpeedChatMins: user.officeSpeedChatMins || 10,
+              officeNotifyEmail: user.officeNotifyEmail !== false,
+              defaultLocationType: user.defaultLocationType,
+              zoomMeetingUrl: user.zoomMeetingUrl,
+              teamsMeetingUrl: user.teamsMeetingUrl,
+            }}
+            knocks={officeKnocks}
+            onUpdateSettings={handleUpdateOfficeSettings}
+            onAdmitKnock={handleAdmitKnock}
+            onDeclineKnock={handleDeclineKnock}
+          />
+        )}
       </div>
 
       {/* MODALS */}
@@ -1444,6 +1640,15 @@ export function DashboardView({
       <ProductTour
         isOpen={tourOpen}
         onClose={() => setTourOpen(false)}
+      />
+
+      {/* Persistent Virtual Office Doorbell & Active Speed-Chat Timer HUD */}
+      <DoorbellAlertModal
+        knocks={officeKnocks}
+        hostSpeedChatMins={user.officeSpeedChatMins || 10}
+        onAdmit={handleAdmitKnock}
+        onDecline={handleDeclineKnock}
+        onConclude={handleConcludeKnock}
       />
     </div>
   );

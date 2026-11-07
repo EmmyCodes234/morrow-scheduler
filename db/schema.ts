@@ -37,6 +37,11 @@ export const users = pgTable(
     bufferMins: integer("buffer_mins").default(10),
     minNoticeHours: integer("min_notice_hours").default(2),
     maxBookingDays: integer("max_booking_days").default(30),
+    officeStatus: text("office_status").notNull().default("closed"), // "open", "busy", "closed"
+    officeTopic: text("office_topic"),
+    officeSpeedChatMins: integer("office_speed_chat_mins").notNull().default(10),
+    officeNotifyEmail: boolean("office_notify_email").notNull().default(true),
+    officeWebPushSubscriptions: jsonb("office_web_push_subscriptions").$type<Array<{ endpoint: string; keys: { p256dh: string; auth: string } }>>().default([]),
     onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -198,6 +203,31 @@ export const bookingAttendees = pgTable(
   ]
 );
 
+export const officeKnocks = pgTable(
+  "office_knocks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    hostId: uuid("host_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    guestName: text("guest_name").notNull(),
+    guestEmail: text("guest_email").notNull(),
+    guestAvatarUrl: text("guest_avatar_url"),
+    topic: text("topic").notNull(), // "What's on your mind?"
+    status: text("status").notNull().default("ringing"), // "ringing", "admitted", "declined", "missed", "cancelled"
+    meetLink: text("meet_link"),
+    admittedAt: timestamp("admitted_at", { withTimezone: true }),
+    concludedAt: timestamp("concluded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("office_knocks_host_idx").on(table.hostId),
+    index("office_knocks_status_idx").on(table.status),
+    index("office_knocks_created_at_idx").on(table.createdAt),
+  ]
+);
+
 export const contacts = pgTable(
   "contacts",
   {
@@ -353,6 +383,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   bookings: many(bookings),
   contacts: many(contacts),
   meetings: many(meetings),
+  knocks: many(officeKnocks),
 }));
 
 export const meetingsRelations = relations(meetings, ({ one, many }) => ({
@@ -396,6 +427,13 @@ export const bookingAttendeesRelations = relations(bookingAttendees, ({ one }) =
   booking: one(bookings, {
     fields: [bookingAttendees.bookingId],
     references: [bookings.id],
+  }),
+}));
+
+export const officeKnocksRelations = relations(officeKnocks, ({ one }) => ({
+  host: one(users, {
+    fields: [officeKnocks.hostId],
+    references: [users.id],
   }),
 }));
 
@@ -464,3 +502,6 @@ export type NewVerificationToken = typeof verificationTokens.$inferInsert;
 
 export type Room = typeof rooms.$inferSelect;
 export type NewRoom = typeof rooms.$inferInsert;
+
+export type OfficeKnock = typeof officeKnocks.$inferSelect;
+export type NewOfficeKnock = typeof officeKnocks.$inferInsert;
