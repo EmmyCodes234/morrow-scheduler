@@ -53,7 +53,7 @@ export default async function PublicOfficePage({
   });
 
   return (
-    <div className="min-h-[100dvh] bg-background-full flex items-start sm:items-center justify-center py-4 px-3 sm:py-8 sm:px-6 lg:px-8">
+    <div className="min-h-[100dvh] bg-background-full flex items-start sm:items-center justify-center p-4 sm:p-6 lg:p-8">
       <PublicOfficeView
         host={{
           id: host.id,

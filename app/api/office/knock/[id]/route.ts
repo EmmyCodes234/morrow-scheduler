@@ -138,14 +138,56 @@ export async function PATCH(
     }
 
     if (action === "admit") {
-      // Determine host's video room URL
-      let meetLink: string = "https://meet.google.com/new";
-      if (host.defaultLocationType === "zoom" && host.zoomMeetingUrl) {
-        meetLink = host.zoomMeetingUrl;
-      } else if (host.defaultLocationType === "teams" && host.teamsMeetingUrl) {
-        meetLink = host.teamsMeetingUrl;
-      } else if (host.zoomMeetingUrl) {
-        meetLink = host.zoomMeetingUrl;
+      let meetLink: string | null = null;
+      let googleCalendarEventId: string | null = null;
+
+      // 1. If host has Google Calendar connected, synchronously provision a real, unique Google Meet link!
+      if (host.googleAccessToken || host.googleRefreshToken) {
+        try {
+          const gcalResult = await createOfficeHoursCalendarEvent({
+            host: {
+              id: host.id,
+              name: host.name,
+              email: host.email,
+              timezone: host.timezone,
+              googleAccessToken: host.googleAccessToken,
+              googleRefreshToken: host.googleRefreshToken,
+            },
+            knock: {
+              id: knock.id,
+              guestName: knock.guestName,
+              guestEmail: knock.guestEmail,
+              topic: knock.topic,
+            },
+            speedChatMins: host.officeSpeedChatMins || 10,
+          });
+
+          if (gcalResult?.meetLink) {
+            meetLink = gcalResult.meetLink;
+            googleCalendarEventId = gcalResult.eventId;
+          }
+        } catch (err) {
+          console.error("[Google Calendar] Failed to create speed-chat hold:", err);
+        }
+      }
+
+      // 2. If host has Zoom or Teams configured
+      if (!meetLink) {
+        if (host.defaultLocationType === "zoom" && host.zoomMeetingUrl) {
+          meetLink = host.zoomMeetingUrl;
+        } else if (host.defaultLocationType === "teams" && host.teamsMeetingUrl) {
+          meetLink = host.teamsMeetingUrl;
+        } else if (host.zoomMeetingUrl) {
+          meetLink = host.zoomMeetingUrl;
+        } else if (host.teamsMeetingUrl) {
+          meetLink = host.teamsMeetingUrl;
+        }
+      }
+
+      // 3. Fallback: NEVER use "https://meet.google.com/new" (which puts host and guest in separate rooms)!
+      // If host has no external provider configured, provide a dedicated Morrow meeting room for this knock
+      if (!meetLink) {
+        meetLink = `${process.env.NEXT_PUBLIC_APP_URL || ""}/room/office_${knock.id}`;
       }
 
       const [updatedKnock] = await db
@@ -153,6 +195,7 @@ export async function PATCH(
         .set({
           status: "admitted",
           meetLink,
+          ...(googleCalendarEventId ? { googleCalendarEventId } : {}),
           admittedAt: new Date(),
           updatedAt: new Date(),
         })
@@ -167,26 +210,6 @@ export async function PATCH(
           updatedAt: new Date(),
         })
         .where(eq(users.id, host.id));
-
-      // Automatically create a calendar event hold on Google Calendar (Feature 2)
-      createOfficeHoursCalendarEvent({
-        host: {
-          id: host.id,
-          name: host.name,
-          email: host.email,
-          timezone: host.timezone,
-          googleAccessToken: host.googleAccessToken,
-          googleRefreshToken: host.googleRefreshToken,
-        },
-        knock: {
-          id: updatedKnock.id,
-          guestName: updatedKnock.guestName,
-          guestEmail: updatedKnock.guestEmail,
-          topic: updatedKnock.topic,
-          meetLink,
-        },
-        speedChatMins: host.officeSpeedChatMins || 10,
-      }).catch((err) => console.error("[Google Calendar] Failed to create speed-chat hold:", err));
 
       realtimeBus.broadcast(`knock:${updatedKnock.id}`, "knock.admitted", {
         id: updatedKnock.id,

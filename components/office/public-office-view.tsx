@@ -30,8 +30,10 @@ export interface PublicOfficeViewProps {
 }
 
 export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProps) {
+  const isDoorClosedInitial = host.officeStatus === "closed";
+
   const [officeState, setOfficeState] = useState<"idle" | "queued" | "ringing" | "admitted" | "fallback">(
-    host.officeStatus === "closed" ? "fallback" : "idle"
+    isDoorClosedInitial ? "fallback" : "idle"
   );
   const [guestName, setGuestName] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
@@ -61,6 +63,47 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
   const isDoorBusy = host.officeStatus === "busy";
   const isDoorClosed = host.officeStatus === "closed";
 
+  const storageKey = `morrow_office_knock_${host.slug}`;
+
+  // Session Recovery for Mobile: If guest locks screen, switches apps, or reloads
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const savedKnockId = sessionStorage.getItem(storageKey);
+      if (savedKnockId && !activeKnockId) {
+        fetch(`/api/office/knock/${savedKnockId}`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.knock) {
+              const k = data.knock;
+              if (k.status === "admitted" && k.meetLink) {
+                setActiveKnockId(k.id);
+                setMeetLink(k.meetLink);
+                setOfficeState("admitted");
+              } else if (k.status === "ringing") {
+                setActiveKnockId(k.id);
+                setOfficeState("ringing");
+              } else if (k.status === "queued") {
+                setActiveKnockId(k.id);
+                setQueuePosition(k.queuePosition || 1);
+                setOfficeState("queued");
+              } else {
+                sessionStorage.removeItem(storageKey);
+              }
+            } else {
+              sessionStorage.removeItem(storageKey);
+            }
+          })
+          .catch(() => {
+            sessionStorage.removeItem(storageKey);
+          });
+      }
+    } catch {
+      // sessionStorage might be disabled in private mode
+    }
+  }, [storageKey, activeKnockId]);
+
   // Clean up polling interval on unmount
   useEffect(() => {
     return () => {
@@ -88,6 +131,10 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
         event.type === "knock.missed" ||
         event.type === "knock.cancelled"
       ) {
+        try {
+          sessionStorage.removeItem(storageKey);
+        } catch {}
+        setActiveKnockId(null);
         setOfficeState("fallback");
       } else if (event.type === "office.status_changed") {
         if (event.payload.officeStatus === "closed" && officeState === "idle") {
@@ -109,6 +156,9 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
         setSecondsRemaining((prev) => {
           if (prev <= 1) {
             if (timerInterval) clearInterval(timerInterval);
+            try {
+              sessionStorage.removeItem(storageKey);
+            } catch {}
             setOfficeState("fallback");
             return 0;
           }
@@ -138,6 +188,10 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
           } else if (data.knock.status === "declined" || data.knock.status === "missed") {
             if (timerInterval) clearInterval(timerInterval);
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            try {
+              sessionStorage.removeItem(storageKey);
+            } catch {}
+            setActiveKnockId(null);
             setOfficeState("fallback");
           } else if (data.knock.status === "queued" && data.knock.queuePosition) {
             setQueuePosition(data.knock.queuePosition);
@@ -155,7 +209,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
       if (timerInterval) clearInterval(timerInterval);
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
-  }, [officeState, activeKnockId]);
+  }, [officeState, activeKnockId, storageKey]);
 
   const handleKnockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -190,6 +244,10 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
 
       if (data.knock?.id) {
         setActiveKnockId(data.knock.id);
+        try {
+          sessionStorage.setItem(storageKey, data.knock.id);
+        } catch {}
+
         if (data.knock.status === "queued") {
           setQueuePosition(data.knock.queuePosition || 1);
           setOfficeState("queued");
@@ -214,6 +272,9 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
         body: JSON.stringify({ action: "cancel" }),
       }).catch(() => {});
     }
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch {}
     setOfficeState("idle");
     setActiveKnockId(null);
   };
@@ -225,50 +286,56 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
     setTimeout(() => setCopiedRoomLink(false), 2000);
   };
 
+  // Determine conference provider label
+  const isMeet = meetLink?.includes("meet.google.com");
+  const isZoom = meetLink?.includes("zoom.us");
+  const isTeams = meetLink?.includes("teams.microsoft.com");
+  const providerLabel = isZoom ? "Zoom" : isTeams ? "Microsoft Teams" : "Google Meet";
+
   return (
-    <div className="w-full max-w-4xl mx-auto flex flex-col gap-4 sm:gap-6">
-      {/* Brand Header */}
-      <div className="flex items-center justify-between px-1 sm:px-2">
-        <div className="flex items-center gap-2">
+    <div className="w-full max-w-2xl mx-auto flex flex-col gap-4 sm:gap-6">
+      {/* Top Header Bar: Clean branding and door presence */}
+      <header className="flex items-center justify-between px-2 sm:px-3">
+        <div className="flex items-center gap-2.5">
           <MorrowLogo className="h-5 sm:h-6 w-auto" />
-          <span className="text-body-2-regular text-text-tertiary">|</span>
-          <span className="text-body-2-medium text-text-secondary">Office</span>
+          <span className="text-caption-1-medium text-text-tertiary">/</span>
+          <span className="text-body-2-medium text-text-secondary font-medium">Virtual Office</span>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-2">
           {isDoorOpen ? (
-            <Chip color="lime" variant="bold" className="animate-pulse">
-              🟢 Door Open
+            <Chip color="lime" variant="bold" className="flex items-center gap-1.5 px-2.5 py-1">
+              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Door Open</span>
             </Chip>
           ) : isDoorBusy ? (
-            <Chip color="yellow" variant="bold">
-              <span className="hidden sm:inline">🟡 In Call (Queue Open)</span>
-              <span className="sm:hidden">🟡 In Call</span>
+            <Chip color="yellow" variant="bold" className="flex items-center gap-1.5 px-2.5 py-1">
+              <span className="size-2 rounded-full bg-amber-500" />
+              <span>In Meeting</span>
             </Chip>
           ) : (
-            <Chip color="soft" variant="caption">
-              🔴 Office Closed
+            <Chip color="soft" variant="caption" className="flex items-center gap-1.5 px-2.5 py-1">
+              <span className="size-2 rounded-full bg-zinc-400" />
+              <span>Door Closed</span>
             </Chip>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* STATE 5: FALLBACK / CALENDAR SCHEDULER (Single layer card layout to eliminate mobile padding squeeze) */}
+      {/* STATE 5: FALLBACK / CALENDAR SCHEDULER (Single integrated experience) */}
       {officeState === "fallback" ? (
         <div className="flex flex-col gap-4 sm:gap-6 w-full animate-in fade-in duration-300">
-          <div className="p-4 sm:p-5 rounded-3xl bg-background-primary-default border border-border-button-default shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 sm:gap-4">
+          <div className="p-4 sm:p-5 rounded-3xl bg-background-primary-default border border-border-button-default shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="size-10 sm:size-11 rounded-2xl bg-accent-50 dark:bg-accent-950/40 border border-border-button-default flex items-center justify-center shrink-0">
+              <div className="size-10 rounded-2xl bg-accent-50 dark:bg-accent-950/40 border border-border-button-default flex items-center justify-center shrink-0">
                 <HugeCalendar className="size-5 text-accent-600" />
               </div>
               <div className="flex flex-col min-w-0">
                 <span className="text-body-medium font-semibold text-text-primary">
-                  {isDoorClosed ? `${host.name}'s door is currently closed.` : `${host.name} is away from desk.`}
+                  {isDoorClosed ? `${host.name}'s door is closed.` : `${host.name} stepped away.`}
                 </span>
                 <span className="text-caption-1-medium text-text-secondary">
-                  {topic
-                    ? `Your note was sent. Schedule a confirmed slot below to guarantee a call.`
-                    : "Pick a dedicated slot on their calendar below to connect."}
+                  Book a confirmed meeting on their calendar below to guarantee a call.
                 </span>
               </div>
             </div>
@@ -290,51 +357,68 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
         </div>
       ) : (
         /* MAIN OFFICE CARD FOR IDLE, RINGING, QUEUED, & ADMITTED */
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-8 lg:p-10 shadow-sm flex flex-col gap-6 sm:gap-8">
-          {/* Host Identity Hero */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 sm:pb-6 border-b border-border-button-default">
-            <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
-              <Avatar size="lg" initials={hostInitials} src={host.avatarUrl || undefined} color="blue" />
-              <div className="flex flex-col min-w-0">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <h1 className="text-title-2-medium text-text-primary truncate">{host.name}</h1>
-                  <HugeVerified className="size-4 text-accent-500 shrink-0" />
+        <main className="rounded-3xl border border-border-button-default bg-background-primary-default p-5 sm:p-8 lg:p-10 shadow-sm flex flex-col gap-6">
+          {/* Host Profile Hero: Clear, human, mobile-first */}
+          <div className="flex flex-col gap-3.5 pb-5 border-b border-border-button-default">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="relative shrink-0">
+                  <Avatar size="lg" initials={hostInitials} src={host.avatarUrl || undefined} color="blue" />
+                  <span
+                    className={`absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full border-2 border-background-primary-default ${
+                      isDoorOpen ? "bg-emerald-500 animate-pulse" : isDoorBusy ? "bg-amber-500" : "bg-zinc-400"
+                    }`}
+                  />
                 </div>
-                <span className="text-caption-1-medium text-text-secondary truncate">
-                  usemorrow.xyz/{host.slug}/office
-                </span>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <h1 className="text-title-2-medium text-text-primary truncate">{host.name}</h1>
+                    <HugeVerified className="size-4 text-accent-500 shrink-0" />
+                  </div>
+                  <span className="text-caption-1-medium text-text-secondary truncate">
+                    {host.welcomeMessage || "Drop-in speed chats & office hours"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="hidden sm:flex items-center gap-1.5 text-caption-1-semibold text-text-secondary bg-background-secondary-default border border-border-button-default px-3 py-1.5 rounded-full shrink-0">
+                <HugeClock className="size-3.5 text-foreground-icon-secondary" />
+                <span>{host.officeSpeedChatMins || 10} min max</span>
               </div>
             </div>
 
-            <div className="flex flex-wrap sm:flex-col items-start sm:items-end gap-1.5 sm:gap-1">
-              <div className="flex items-center gap-1.5 text-body-2-regular text-text-secondary">
-                <HugeClock className="size-4 text-foreground-icon-secondary shrink-0" />
-                <span>{host.officeSpeedChatMins || 10} min speed-chat</span>
-              </div>
-              {host.officeTopic ? (
-                <div className="inline-flex items-center text-caption-1-semibold text-accent-600 bg-accent-50/80 dark:bg-accent-950/40 border border-accent-200/50 dark:border-accent-800/40 px-2.5 py-0.5 rounded-full max-w-full">
-                  <span className="truncate">&ldquo;{host.officeTopic}&rdquo;</span>
+            {/* Discussion Topic Spotlight Banner */}
+            {host.officeTopic ? (
+              <div className="p-3 sm:p-3.5 rounded-2xl bg-accent-50/60 dark:bg-accent-950/40 border border-accent-200/60 dark:border-accent-800/50 flex items-start gap-2.5 text-start">
+                <span className="text-base leading-none shrink-0 mt-0.5">💬</span>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-caption-2-medium text-text-tertiary uppercase tracking-wider font-semibold">
+                    Current Discussion Focus
+                  </span>
+                  <span className="text-body-2-medium text-text-primary font-medium">
+                    &ldquo;{host.officeTopic}&rdquo;
+                  </span>
                 </div>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </div>
 
           {/* STATE 1: IDLE / PRE-KNOCK FORM */}
           {officeState === "idle" && (
-            <div className="flex flex-col gap-5 sm:gap-6 max-w-lg mx-auto w-full animate-in fade-in duration-200">
-              <div className="text-center flex flex-col gap-1">
+            <div className="flex flex-col gap-5 sm:gap-6 w-full animate-in fade-in duration-200">
+              <div className="text-center sm:text-start flex flex-col gap-1">
                 <h2 className="text-title-2-medium sm:text-title-3-semibold text-text-primary">
-                  {isDoorBusy ? "Join the Drop-In Queue" : "Knock on the Door"}
+                  {isDoorBusy ? "Join the Live Queue" : "Ring the Desk"}
                 </h2>
                 <p className="text-body-regular text-text-secondary">
                   {isDoorBusy
-                    ? `${host.name} is currently speaking with someone. Knock to hold your place next in line.`
-                    : `${host.name} is at their desk. Knock with a quick question to drop in.`}
+                    ? `${host.name} is speaking with a visitor. Knock to secure your turn next.`
+                    : `${host.name} is available now. Knock to drop in for a quick ${host.officeSpeedChatMins || 10}-min video chat.`}
                 </p>
               </div>
 
               {errorMsg && (
-                <div className="p-3.5 rounded-xl bg-destructive-50/30 border border-destructive-200 text-destructive-700 text-body-2-regular">
+                <div className="p-3.5 rounded-xl bg-destructive-50/40 border border-destructive-200 text-destructive-700 text-body-2-regular">
                   {errorMsg}
                 </div>
               )}
@@ -359,15 +443,15 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
 
                 <div className="flex flex-col gap-1">
                   <Textarea
-                    label="What's on your mind?"
-                    placeholder="e.g. Quick question regarding our pilot proposal..."
+                    label="What would you like to discuss?"
+                    placeholder="e.g. Quick feedback on our pilot integration proposal..."
                     value={topic}
                     onChange={(val) => setTopic(val.slice(0, 140))}
                     rows={2}
                     isRequired
                   />
                   <span className="text-caption-2-medium text-text-tertiary text-end">
-                    {topic.length}/140 chars
+                    {topic.length}/140 characters
                   </span>
                 </div>
 
@@ -376,27 +460,34 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
                   variant="primary"
                   size="medium"
                   disabled={isSubmitting || !guestName.trim() || !guestEmail.trim() || !topic.trim()}
-                  className="w-full mt-1 min-h-[48px] justify-center text-body-medium font-semibold"
+                  className="w-full mt-1 min-h-[48px] justify-center text-body-medium font-semibold active:scale-[0.99] transition-transform"
                 >
                   {isSubmitting ? (
                     <div className="flex items-center gap-2">
                       <Spinner size="sm" />
-                      <span>Knocking on desk...</span>
+                      <span>Ringing {host.name}...</span>
                     </div>
+                  ) : isDoorBusy ? (
+                    <span>Hold Place in Queue</span>
                   ) : (
-                    <span>🚪 Knock on Door</span>
+                    <span>Knock on Door ({host.officeSpeedChatMins || 10}m)</span>
                   )}
                 </Button>
+
+                <p className="text-center text-caption-2-medium text-text-tertiary">
+                  Free instant drop-in &bull; Connects directly via {host.defaultLocationType === "zoom" ? "Zoom" : host.defaultLocationType === "teams" ? "Teams" : "Google Meet"}
+                </p>
               </form>
             </div>
           )}
 
           {/* STATE 2: ACTIVE 60-SECOND RINGING SCREEN */}
           {officeState === "ringing" && (
-            <div className="flex flex-col items-center justify-center py-6 sm:py-10 px-2 sm:px-4 text-center gap-5 sm:gap-6 max-w-md mx-auto w-full animate-in fade-in duration-300">
-              <div className="relative flex items-center justify-center size-20 sm:size-24 rounded-full bg-accent-50/80 dark:bg-accent-950/50 border border-accent-200 dark:border-accent-800">
+            <div className="flex flex-col items-center justify-center py-6 sm:py-8 px-2 text-center gap-5 sm:gap-6 max-w-md mx-auto w-full animate-in fade-in duration-300">
+              {/* Concentric pulsing radar ring */}
+              <div className="relative flex items-center justify-center size-20 sm:size-24 rounded-full bg-accent-50/90 dark:bg-accent-950/60 border border-accent-200 dark:border-accent-800">
                 <span className="text-3xl sm:text-4xl animate-bounce">🔔</span>
-                <div className="absolute inset-0 rounded-full border-2 border-accent-500 animate-ping opacity-25" />
+                <div className="absolute inset-0 rounded-full border-2 border-accent-500 animate-ping opacity-30" />
               </div>
 
               <div className="flex flex-col gap-1 sm:gap-2">
@@ -404,11 +495,11 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
                   Ringing {host.name}&apos;s Desk...
                 </h2>
                 <p className="text-body-regular text-text-secondary">
-                  Notifying {host.name} on their desktop and phone. Please keep this tab open.
+                  Sending a live doorbell alert to {host.name}&apos;s devices. Please keep this screen open.
                 </p>
               </div>
 
-              {/* Countdown Badge */}
+              {/* Countdown Progress */}
               <div className="flex items-center gap-2 py-2 px-4 rounded-full bg-background-secondary-default border border-border-button-default">
                 <span className="text-body-medium font-semibold text-accent-600">
                   00:{secondsRemaining < 10 ? `0${secondsRemaining}` : secondsRemaining}
@@ -438,7 +529,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
 
           {/* STATE 3: WAITING ROOM QUEUE */}
           {officeState === "queued" && (
-            <div className="flex flex-col items-center justify-center py-6 sm:py-10 px-2 sm:px-4 text-center gap-5 sm:gap-6 max-w-md mx-auto w-full animate-in fade-in duration-300">
+            <div className="flex flex-col items-center justify-center py-6 sm:py-8 px-2 text-center gap-5 sm:gap-6 max-w-md mx-auto w-full animate-in fade-in duration-300">
               <div className="relative flex items-center justify-center size-16 sm:size-20 rounded-full bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-600">
                 <HugeClock className="size-8 sm:size-10" />
               </div>
@@ -453,12 +544,12 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
                   You&apos;re next in line
                 </h2>
                 <p className="text-body-regular text-text-secondary">
-                  {host.name} is currently speaking with a visitor. Your spot is held and your knock will ring automatically as soon as their call wraps up.
+                  {host.name} is in a session right now. Your place is held and the desk will ring automatically the moment they finish.
                 </p>
               </div>
 
               <div className="py-2.5 px-4 rounded-2xl bg-background-secondary-default border border-border-button-default text-caption-1-semibold text-text-secondary">
-                Est. wait: ~{Math.max(1, queuePosition) * (host.officeSpeedChatMins || 10)} mins &bull; Keep this tab open
+                Est. wait: ~{Math.max(1, queuePosition) * (host.officeSpeedChatMins || 10)} mins &bull; Keep tab open
               </div>
 
               <div className="w-full">
@@ -476,7 +567,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
 
           {/* STATE 4: ADMITTED / VIDEO CALL READY */}
           {officeState === "admitted" && meetLink && (
-            <div className="flex flex-col items-center justify-center py-6 sm:py-10 px-2 sm:px-4 text-center gap-5 sm:gap-6 max-w-md mx-auto w-full animate-in zoom-in-95 duration-300">
+            <div className="flex flex-col items-center justify-center py-6 sm:py-8 px-2 text-center gap-5 sm:gap-6 max-w-md mx-auto w-full animate-in zoom-in-95 duration-300">
               <div className="size-16 sm:size-20 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-600">
                 <HugeCheck className="size-8 sm:size-10" />
               </div>
@@ -484,7 +575,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
               <div className="flex flex-col gap-1.5 sm:gap-2">
                 <h2 className="text-title-1-medium text-text-primary">Door Opened!</h2>
                 <p className="text-body-regular text-text-secondary">
-                  {host.name} has admitted you. Click below to enter your video room.
+                  {host.name} has admitted you. Tap below to enter your video room.
                 </p>
               </div>
 
@@ -497,7 +588,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
                   className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-accent-600 hover:bg-accent-700 text-white py-3.5 px-5 text-body-medium font-semibold transition-all shadow-xs min-h-[48px] active:scale-[0.98]"
                 >
                   <HugeVideo className="size-5" />
-                  <span>Join Video Room</span>
+                  <span>Join {providerLabel} Call</span>
                 </a>
 
                 <Button
@@ -509,10 +600,14 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
                 >
                   {copiedRoomLink ? "Room link copied!" : "Copy meeting link"}
                 </Button>
+
+                <p className="text-caption-2-medium text-text-tertiary">
+                  Opens in your browser or {providerLabel} app
+                </p>
               </div>
             </div>
           )}
-        </div>
+        </main>
       )}
     </div>
   );

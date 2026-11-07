@@ -1,12 +1,60 @@
 import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { getRoomByAccessToken } from "@/lib/room/room-service";
+import { db } from "@/db";
+import { officeKnocks } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { MorrowIcon } from "@/components/brand/morrow-logo";
 import { Spinner } from "@/components/base/spinner/spinner";
 import { Button } from "@/components/base/buttons/button";
 import { HugeVideo, HugeArrowRight } from "@/components/icons/hugeicons";
 
 async function RoomContent({ token }: { token: string }) {
+  // Support office hours drop-in room tokens (e.g. office_<knockId>)
+  if (token.startsWith("office_")) {
+    const knockId = token.replace("office_", "");
+    const knock = await db.query.officeKnocks.findFirst({
+      where: eq(officeKnocks.id, knockId),
+      with: {
+        host: true,
+      },
+    });
+
+    if (!knock) {
+      notFound();
+    }
+
+    if (knock.meetLink && !knock.meetLink.includes(`/room/office_${knock.id}`)) {
+      redirect(knock.meetLink);
+    }
+
+    return (
+      <div className="min-h-screen bg-background-full flex items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-3xl border border-border-button-default bg-background-primary-default p-8 shadow-2xs flex flex-col items-center text-center gap-6">
+          <MorrowIcon size={44} showBadge={true} />
+
+          <div className="flex flex-col gap-1.5">
+            <h1 className="text-title-2-semibold text-text-primary">
+              Virtual Office Session
+            </h1>
+            <p className="text-body-regular text-text-secondary">
+              with {knock.host?.name || "Host"}
+            </p>
+          </div>
+
+          <p className="text-body-2-regular text-text-secondary">
+            Preparing your video connection. Please keep this tab open.
+          </p>
+
+          <div className="flex items-center gap-2 text-caption-1-semibold text-accent-600">
+            <Spinner size="sm" />
+            <span>Connecting...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const room = await getRoomByAccessToken(token);
 
   if (!room) {
@@ -20,8 +68,7 @@ async function RoomContent({ token }: { token: string }) {
     (room.booking?.host as any)?.zoomMeetingUrl ||
     (room.booking?.host as any)?.teamsMeetingUrl ||
     (room as any).meeting?.host?.zoomMeetingUrl ||
-    (room as any).meeting?.host?.teamsMeetingUrl ||
-    "https://meet.google.com/new";
+    (room as any).meeting?.host?.teamsMeetingUrl;
 
   // Seamlessly redirect if conference URL is already known
   if (meetLink) {

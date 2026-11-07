@@ -110,11 +110,11 @@ export async function createOfficeHoursCalendarEvent(params: {
     meetLink?: string | null;
   };
   speedChatMins: number;
-}): Promise<string | null> {
+}): Promise<{ eventId: string | null; meetLink: string | null }> {
   const { host, knock, speedChatMins } = params;
 
   if (!host.googleAccessToken && !host.googleRefreshToken) {
-    return null;
+    return { eventId: null, meetLink: null };
   }
 
   const startTime = new Date();
@@ -140,21 +140,26 @@ export async function createOfficeHoursCalendarEvent(params: {
     });
 
     if (result.success && result.eventId) {
+      const resolvedMeetLink = result.meetLink || null;
       await db
         .update(officeKnocks)
         .set({
           googleCalendarEventId: result.eventId,
+          ...(resolvedMeetLink ? { meetLink: resolvedMeetLink } : {}),
           updatedAt: new Date(),
         })
         .where(eq(officeKnocks.id, knock.id));
 
-      return result.eventId;
+      return {
+        eventId: result.eventId,
+        meetLink: resolvedMeetLink,
+      };
     }
   } catch (err) {
     console.error("[Office Hours] Failed to create Google Calendar event hold:", err);
   }
 
-  return null;
+  return { eventId: null, meetLink: null };
 }
 
 /**
