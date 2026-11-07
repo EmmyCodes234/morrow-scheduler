@@ -268,6 +268,8 @@ export const meetings = pgTable(
     endTime: timestamp("end_time", { withTimezone: true }).notNull(),
     timezone: text("timezone").notNull().default("UTC"),
     status: text("status").notNull().default("scheduled"), // scheduled, in_progress, concluded, cancelled
+    locationType: text("location_type").default("google_meet"),
+    locationUrl: text("location_url"),
     invitationToken: text("invitation_token").notNull().unique(),
     invitationTokenHash: text("invitation_token_hash").notNull().unique(),
     preparationMaterial: text("preparation_material"),

@@ -49,6 +49,12 @@ async function InvitationContent({ invitationToken }: { invitationToken: string 
         preparationMaterial: meeting.preparationMaterial,
         status: meeting.status,
         openedEarlyAt: meeting.openedEarlyAt?.toISOString() || null,
+        locationType: (meeting as any).locationType || "google_meet",
+        locationUrl:
+          (meeting as any).locationUrl ||
+          (meeting.host as any)?.zoomMeetingUrl ||
+          (meeting.host as any)?.teamsMeetingUrl ||
+          "https://meet.google.com/new",
         host: {
           id: meeting.host.id,
           name: meeting.host.name,

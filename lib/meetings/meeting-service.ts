@@ -19,6 +19,8 @@ export interface CreateMeetingInput {
   description?: string | null;
   preparationMaterial?: string | null;
   agenda?: VeraAgendaItem[];
+  locationType?: "google_meet" | "zoom" | "teams" | "in_person" | "phone";
+  locationUrl?: string | null;
 }
 
 export interface RegisteredAttendeeResult {
@@ -72,6 +74,25 @@ export async function createMeeting(
   const rawInvitationToken = crypto.randomBytes(24).toString("hex");
   const invitationTokenHash = hashInvitationToken(rawInvitationToken);
 
+  let locationType = input.locationType;
+  let locationUrl = input.locationUrl?.trim();
+
+  if (!locationType || !locationUrl) {
+    if (host.defaultLocationType === "zoom" && host.zoomMeetingUrl) {
+      locationType = "zoom";
+      locationUrl = host.zoomMeetingUrl;
+    } else if (host.defaultLocationType === "teams" && host.teamsMeetingUrl) {
+      locationType = "teams";
+      locationUrl = host.teamsMeetingUrl;
+    } else if (host.zoomMeetingUrl) {
+      locationType = "zoom";
+      locationUrl = host.zoomMeetingUrl;
+    } else {
+      locationType = "google_meet";
+      locationUrl = "https://meet.google.com/new";
+    }
+  }
+
   const [newMeeting] = await dbClient
     .insert(meetings)
     .values({
@@ -82,6 +103,8 @@ export async function createMeeting(
       endTime,
       timezone,
       status: "scheduled",
+      locationType,
+      locationUrl,
       invitationToken: rawInvitationToken,
       invitationTokenHash,
       preparationMaterial: input.preparationMaterial?.trim() || null,

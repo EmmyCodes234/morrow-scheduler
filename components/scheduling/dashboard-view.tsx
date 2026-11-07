@@ -43,6 +43,7 @@ import { MorrowLogo, MorrowIcon } from "@/components/brand/morrow-logo";
 import { HostOfficeView } from "@/components/office/host-office-view";
 import { DoorbellAlertModal, type OfficeKnock } from "@/components/office/doorbell-alert-modal";
 import { OfficeStatusPill } from "@/components/office/office-status-pill";
+import { DashboardAnalyticsView } from "@/components/analytics/dashboard-analytics-view";
 
 interface EventTypeItem {
   id: string;
@@ -70,6 +71,8 @@ interface BookingItem {
   isGroup?: boolean;
   maxAttendees?: number;
   attendeeCount?: number;
+  duration?: number;
+  createdAt?: string;
   attendees?: Array<{
     id: string;
     guestName: string;
@@ -1327,34 +1330,13 @@ export function DashboardView({
         {/* VIEW 5: ANALYTICS */}
         {/* ========================================================================= */}
         {activeTab === "analytics" && (
-          <div className="flex flex-col gap-8">
-            <div className="flex flex-col gap-1 pb-6 border-b border-border-button-default">
-              <h1 className="text-title-1-medium text-text-primary">Analytics</h1>
-              <p className="text-body-regular text-text-secondary">
-                Computed metrics on scheduling lead times, bookings volume, and attendance.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-              <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-2 shadow-2xs">
-                <span className="text-body-2-regular text-text-secondary">Total Bookings</span>
-                <span className="text-title-1-medium text-text-primary">{bookings.length}</span>
-                <span className="text-caption-1-semibold text-status-lime-text">All time</span>
-              </div>
-
-              <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-2 shadow-2xs">
-                <span className="text-body-2-regular text-text-secondary">Average Lead Time</span>
-                <span className="text-title-1-medium text-text-primary">2.4 days</span>
-                <span className="text-caption-1-semibold text-text-tertiary">Notice window</span>
-              </div>
-
-              <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-2 shadow-2xs">
-                <span className="text-body-2-regular text-text-secondary">No-show Rate</span>
-                <span className="text-title-1-medium text-text-primary">0%</span>
-                <span className="text-caption-1-semibold text-status-lime-text">Perfect record</span>
-              </div>
-            </div>
-          </div>
+          <DashboardAnalyticsView
+            bookings={bookings}
+            eventTypes={eventTypes}
+            officeKnocks={officeKnocks}
+            userTimezone={user.timezone}
+            defaultSpeedChatMins={user.officeSpeedChatMins || 10}
+          />
         )}
 
         {/* ========================================================================= */}

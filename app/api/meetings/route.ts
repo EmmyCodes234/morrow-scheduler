@@ -156,6 +156,8 @@ export async function POST(req: NextRequest) {
       description: description?.trim() || null,
       preparationMaterial: preparationMaterial?.trim() || null,
       agenda: agenda || [],
+      locationType: body.locationType,
+      locationUrl: body.locationUrl,
     });
 
     return NextResponse.json(

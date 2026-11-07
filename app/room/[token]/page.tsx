@@ -15,9 +15,13 @@ async function RoomContent({ token }: { token: string }) {
 
   const meetLink =
     (room as any).meetLink ||
+    (room as any).meeting?.locationUrl ||
     room.booking?.meetLink ||
     (room.booking?.host as any)?.zoomMeetingUrl ||
-    (room.booking?.host as any)?.teamsMeetingUrl;
+    (room.booking?.host as any)?.teamsMeetingUrl ||
+    (room as any).meeting?.host?.zoomMeetingUrl ||
+    (room as any).meeting?.host?.teamsMeetingUrl ||
+    "https://meet.google.com/new";
 
   // Seamlessly redirect if conference URL is already known
   if (meetLink) {
