@@ -315,75 +315,80 @@ export function UnifiedSettingsView({
         </div>
 
         {/* Unified Tab Navigation */}
-        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default overflow-x-auto scrollbar-none touch-pan-x">
+        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default overflow-x-auto scrollbar-none touch-pan-x select-none">
           <button
             type="button"
             onClick={() => setActiveTab("profile")}
             className={cx(
-              "flex items-center gap-2 px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0",
+              "flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0 min-h-[40px]",
               activeTab === "profile"
                 ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                 : "text-text-secondary hover:text-text-primary hover:bg-background-secondary-hover"
             )}
           >
             <HugeUser className="size-4 shrink-0" />
-            <span>Profile & Link</span>
+            <span className="sm:hidden">Profile</span>
+            <span className="hidden sm:inline">Profile & Link</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab("integrations")}
             className={cx(
-              "flex items-center gap-2 px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0",
+              "flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0 min-h-[40px]",
               activeTab === "integrations"
                 ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                 : "text-text-secondary hover:text-text-primary hover:bg-background-secondary-hover"
             )}
           >
             <HugeVideo className="size-4 shrink-0" />
-            <span>Integrations & Video</span>
+            <span className="sm:hidden">Video</span>
+            <span className="hidden sm:inline">Integrations & Video</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab("availability")}
             className={cx(
-              "flex items-center gap-2 px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0",
+              "flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0 min-h-[40px]",
               activeTab === "availability"
                 ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                 : "text-text-secondary hover:text-text-primary hover:bg-background-secondary-hover"
             )}
           >
             <HugeClock className="size-4 shrink-0" />
-            <span>Working Hours</span>
+            <span className="sm:hidden">Hours</span>
+            <span className="hidden sm:inline">Working Hours</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab("office")}
             className={cx(
-              "flex items-center gap-2 px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0",
+              "flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0 min-h-[40px]",
               activeTab === "office"
                 ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                 : "text-text-secondary hover:text-text-primary hover:bg-background-secondary-hover"
             )}
           >
             <HugeCheckIn className="size-4 shrink-0" />
-            <span>Virtual Office</span>
+            <span className="sm:hidden">Office</span>
+            <span className="hidden sm:inline">Virtual Office</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab("appearance")}
             className={cx(
-              "flex items-center gap-2 px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0",
+              "flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-body-medium transition-colors cursor-pointer shrink-0 min-h-[40px]",
               activeTab === "appearance"
                 ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                 : "text-text-secondary hover:text-text-primary hover:bg-background-secondary-hover"
             )}
           >
             <HugePalette className="size-4 shrink-0" />
-            <span>Appearance Studio</span>
+            <span className="sm:hidden">Branding</span>
+            <span className="hidden sm:inline">Appearance Studio</span>
           </button>
         </div>
 
@@ -392,16 +397,16 @@ export function UnifiedSettingsView({
         {/* ========================================================================= */}
         {activeTab === "profile" && (
           <div className="flex flex-col gap-6">
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-5 shadow-2xs">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 shadow-2xs">
               <div className="flex items-center justify-between pb-4 border-b border-border-button-default">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3 sm:gap-4 min-w-0">
                   <Avatar size="lg" initials={user.initials} color="blue" />
-                  <div className="flex flex-col">
-                    <span className="text-body-medium font-semibold text-text-primary">{name || "Your Name"}</span>
-                    <span className="text-body-2-regular text-text-secondary">{user.email}</span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-body-medium font-semibold text-text-primary truncate">{name || "Your Name"}</span>
+                    <span className="text-body-2-regular text-text-secondary truncate">{user.email}</span>
                   </div>
                 </div>
-                <Chip color="lime" variant="caption">Account Active</Chip>
+                <Chip color="lime" variant="caption">Active</Chip>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -416,14 +421,16 @@ export function UnifiedSettingsView({
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-body-2-medium text-text-secondary">Public Booking Handle</label>
-                  <div className="flex items-center gap-2">
-                    <span className="text-body-2-regular text-text-tertiary select-none font-mono">usemorrow.xyz/</span>
-                    <Input
-                      value={slug}
-                      onChange={(val) => setSlug(val)}
-                      placeholder="alex"
-                    />
-                  </div>
+                  <Input
+                    value={slug}
+                    onChange={(val) => setSlug(val)}
+                    leadingAddon={
+                      <span className="text-text-tertiary select-none font-mono text-caption-1-medium ps-1 pe-0.5">
+                        usemorrow.xyz/
+                      </span>
+                    }
+                    placeholder="alex"
+                  />
                 </div>
               </div>
 
@@ -432,7 +439,7 @@ export function UnifiedSettingsView({
                 <select
                   value={timezone}
                   onChange={(e) => setTimezone(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-border-button-default bg-background-primary-default text-text-primary text-body-medium focus:outline-none focus:ring-2 focus:ring-accent-500"
+                  className="w-full px-3 py-2.5 rounded-xl border border-border-button-default bg-background-primary-default text-text-primary text-body-medium focus:outline-none focus:ring-2 focus:ring-accent-500 min-h-[44px]"
                 >
                   <option value="UTC">UTC (Universal Coordinated Time)</option>
                   <option value="America/New_York">Eastern Time (US & Canada) - New York</option>
@@ -464,6 +471,7 @@ export function UnifiedSettingsView({
                 <Button
                   variant="primary"
                   size="medium"
+                  className="w-full sm:w-auto min-h-[48px] justify-center"
                   disabled={isSavingProfile}
                   onClick={handleSaveProfile}
                 >
@@ -480,7 +488,7 @@ export function UnifiedSettingsView({
         {activeTab === "integrations" && (
           <div className="flex flex-col gap-6">
             {/* Default Location Selector Card */}
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-4 shadow-2xs">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-4 shadow-2xs">
               <div className="flex flex-col gap-1">
                 <span className="text-title-2-medium text-text-primary">Default Video Provider</span>
                 <p className="text-body-2-regular text-text-secondary">
@@ -494,7 +502,7 @@ export function UnifiedSettingsView({
                   type="button"
                   onClick={() => handleSetDefaultProvider("google_meet")}
                   className={cx(
-                    "flex flex-col items-start gap-3 p-4 rounded-2xl border text-start transition-all cursor-pointer",
+                    "flex flex-col items-start gap-3 p-4 rounded-2xl border text-start transition-all cursor-pointer min-h-[44px]",
                     isGoogleMeetActive
                       ? "border-accent-500 bg-accent-50/20 dark:bg-accent-950/20 ring-1 ring-accent-500"
                       : "border-border-button-default bg-background-secondary-default hover:bg-background-secondary-hover"
@@ -515,7 +523,7 @@ export function UnifiedSettingsView({
                   type="button"
                   onClick={() => handleSetDefaultProvider("zoom")}
                   className={cx(
-                    "flex flex-col items-start gap-3 p-4 rounded-2xl border text-start transition-all cursor-pointer",
+                    "flex flex-col items-start gap-3 p-4 rounded-2xl border text-start transition-all cursor-pointer min-h-[44px]",
                     isZoomActive
                       ? "border-accent-500 bg-accent-50/20 dark:bg-accent-950/20 ring-1 ring-accent-500"
                       : "border-border-button-default bg-background-secondary-default hover:bg-background-secondary-hover"
@@ -536,7 +544,7 @@ export function UnifiedSettingsView({
                   type="button"
                   onClick={() => handleSetDefaultProvider("teams")}
                   className={cx(
-                    "flex flex-col items-start gap-3 p-4 rounded-2xl border text-start transition-all cursor-pointer",
+                    "flex flex-col items-start gap-3 p-4 rounded-2xl border text-start transition-all cursor-pointer min-h-[44px]",
                     isTeamsActive
                       ? "border-accent-500 bg-accent-50/20 dark:bg-accent-950/20 ring-1 ring-accent-500"
                       : "border-border-button-default bg-background-secondary-default hover:bg-background-secondary-hover"
@@ -555,8 +563,8 @@ export function UnifiedSettingsView({
             </div>
 
             {/* Google Calendar Card */}
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-4 shadow-2xs">
-              <div className="flex items-center justify-between">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-4 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3.5">
                   <GoogleCalendarIcon className="size-10 shrink-0" />
                   <div className="flex flex-col">
@@ -574,8 +582,8 @@ export function UnifiedSettingsView({
             </div>
 
             {/* Zoom Configuration (In-place) */}
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-4 shadow-2xs">
-              <div className="flex items-center justify-between pb-3 border-b border-border-button-default">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-4 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border-button-default">
                 <div className="flex items-center gap-3.5">
                   <ZoomIcon className="size-10 shrink-0" />
                   <div className="flex flex-col">
@@ -601,6 +609,7 @@ export function UnifiedSettingsView({
                   <Button
                     variant="ghost"
                     size="small"
+                    className="w-full sm:w-auto justify-center"
                     disabled={isDisconnectingZoom}
                     onClick={handleDisconnectZoom}
                   >
@@ -610,6 +619,7 @@ export function UnifiedSettingsView({
                   <Button
                     variant="secondary"
                     size="small"
+                    className="w-full sm:w-auto justify-center"
                     onClick={() => {
                       window.location.href = "/api/integrations/zoom/auth";
                     }}
@@ -657,7 +667,7 @@ export function UnifiedSettingsView({
             </div>
 
             {/* Microsoft Teams Configuration (In-place) */}
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-4 shadow-2xs">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-4 shadow-2xs">
               <div className="flex items-center justify-between pb-3 border-b border-border-button-default">
                 <div className="flex items-center gap-3.5">
                   <MicrosoftTeamsIcon className="size-10 shrink-0" />
@@ -720,8 +730,8 @@ export function UnifiedSettingsView({
         {/* ========================================================================= */}
         {activeTab === "availability" && (
           <div className="flex flex-col gap-6">
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-5 shadow-2xs">
-              <div className="flex items-center justify-between pb-4 border-b border-border-button-default">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border-button-default">
                 <div className="flex flex-col">
                   <span className="text-title-2-medium text-text-primary">Weekly Schedule</span>
                   <span className="text-body-2-regular text-text-secondary">
@@ -729,8 +739,9 @@ export function UnifiedSettingsView({
                   </span>
                 </div>
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="small"
+                  className="w-full sm:w-auto justify-center"
                   onClick={handleCopyMondayToWeekdays}
                 >
                   Copy Mon to Weekdays
@@ -739,27 +750,32 @@ export function UnifiedSettingsView({
 
               <div className="flex flex-col divide-y divide-border-button-default">
                 {days.map((day, idx) => (
-                  <div key={day.dayOfWeek} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 w-36">
-                      <Switch
-                        isSelected={day.isEnabled}
-                        onChange={(enabled) => {
-                          setDays((prev) =>
-                            prev.map((d, i) => (i === idx ? { ...d, isEnabled: enabled } : d))
-                          );
-                        }}
-                        aria-label={`Enable ${day.dayName}`}
-                      />
-                      <span className={cx(
-                        "text-body-medium font-medium",
-                        day.isEnabled ? "text-text-primary" : "text-text-tertiary"
-                      )}>
-                        {day.dayName}
-                      </span>
+                  <div key={day.dayOfWeek} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
+                    <div className="flex items-center justify-between w-full sm:w-36">
+                      <div className="flex items-center gap-3">
+                        <Switch
+                          isSelected={day.isEnabled}
+                          onChange={(enabled) => {
+                            setDays((prev) =>
+                              prev.map((d, i) => (i === idx ? { ...d, isEnabled: enabled } : d))
+                            );
+                          }}
+                          aria-label={`Enable ${day.dayName}`}
+                        />
+                        <span className={cx(
+                          "text-body-medium font-medium",
+                          day.isEnabled ? "text-text-primary" : "text-text-tertiary"
+                        )}>
+                          {day.dayName}
+                        </span>
+                      </div>
+                      {!day.isEnabled && (
+                        <span className="text-caption-1-medium text-text-tertiary italic sm:hidden">Unavailable</span>
+                      )}
                     </div>
 
                     {day.isEnabled ? (
-                      <div className="flex items-center gap-2">
+                      <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto">
                         <select
                           value={day.startTime}
                           onChange={(e) => {
@@ -768,13 +784,13 @@ export function UnifiedSettingsView({
                               prev.map((d, i) => (i === idx ? { ...d, startTime: val } : d))
                             );
                           }}
-                          className="px-2.5 py-1.5 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-medium focus:outline-none"
+                          className="w-full sm:w-auto px-2.5 py-2 sm:py-1.5 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-medium focus:outline-none min-h-[40px]"
                         >
                           {TIME_OPTIONS.map((t) => (
                             <option key={t.value} value={t.value}>{t.label}</option>
                           ))}
                         </select>
-                        <span className="text-text-tertiary text-body-2-regular">to</span>
+                        <span className="hidden sm:inline text-text-tertiary text-body-2-regular">to</span>
                         <select
                           value={day.endTime}
                           onChange={(e) => {
@@ -783,7 +799,7 @@ export function UnifiedSettingsView({
                               prev.map((d, i) => (i === idx ? { ...d, endTime: val } : d))
                             );
                           }}
-                          className="px-2.5 py-1.5 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-medium focus:outline-none"
+                          className="w-full sm:w-auto px-2.5 py-2 sm:py-1.5 rounded-xl border border-border-button-default bg-background-secondary-default text-text-primary text-body-medium focus:outline-none min-h-[40px]"
                         >
                           {TIME_OPTIONS.map((t) => (
                             <option key={t.value} value={t.value}>{t.label}</option>
@@ -791,7 +807,7 @@ export function UnifiedSettingsView({
                         </select>
                       </div>
                     ) : (
-                      <span className="text-caption-1-medium text-text-tertiary italic">Unavailable</span>
+                      <span className="hidden sm:inline text-caption-1-medium text-text-tertiary italic">Unavailable</span>
                     )}
                   </div>
                 ))}
@@ -801,6 +817,7 @@ export function UnifiedSettingsView({
                 <Button
                   variant="primary"
                   size="medium"
+                  className="w-full sm:w-auto min-h-[48px] justify-center"
                   disabled={isSavingDays}
                   onClick={handleSaveWorkingHours}
                 >
@@ -816,7 +833,7 @@ export function UnifiedSettingsView({
         {/* ========================================================================= */}
         {activeTab === "office" && (
           <div className="flex flex-col gap-6">
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-5 shadow-2xs">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 shadow-2xs">
               <div className="flex flex-col gap-1 pb-4 border-b border-border-button-default">
                 <span className="text-title-2-medium text-text-primary">Virtual Office Drop-in Rules</span>
                 <p className="text-body-2-regular text-text-secondary">
@@ -830,7 +847,7 @@ export function UnifiedSettingsView({
                   <select
                     value={speedChatMins}
                     onChange={(e) => setSpeedChatMins(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl border border-border-button-default bg-background-primary-default text-text-primary text-body-medium focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-xl border border-border-button-default bg-background-primary-default text-text-primary text-body-medium focus:outline-none min-h-[44px]"
                   >
                     <option value={5}>5 minutes (Quick check-in)</option>
                     <option value={10}>10 minutes (Standard speed-chat)</option>
@@ -849,11 +866,11 @@ export function UnifiedSettingsView({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between p-4 rounded-2xl bg-background-secondary-default border border-border-button-default">
-                <div className="flex flex-col">
+              <div className="flex items-center justify-between p-4 rounded-2xl bg-background-secondary-default border border-border-button-default gap-3">
+                <div className="flex flex-col min-w-0">
                   <span className="text-body-medium font-semibold text-text-primary">Doorbell Email Alerts</span>
                   <span className="text-caption-1-medium text-text-secondary">
-                    Receive an immediate email notification when someone knocks while you are busy.
+                    Receive an immediate email notification when someone knocks.
                   </span>
                 </div>
                 <Switch
@@ -863,8 +880,8 @@ export function UnifiedSettingsView({
                 />
               </div>
 
-              <div className="flex items-center justify-between p-4 rounded-2xl bg-background-secondary-default border border-border-button-default">
-                <div className="flex flex-col">
+              <div className="flex items-center justify-between p-4 rounded-2xl bg-background-secondary-default border border-border-button-default gap-3">
+                <div className="flex flex-col min-w-0">
                   <span className="text-body-medium font-semibold text-text-primary">Auto-schedule Drop-in Hours</span>
                   <span className="text-caption-1-medium text-text-secondary">
                     Automatically flip your office to Open on weekdays between 2:00 PM and 4:00 PM.
@@ -881,6 +898,7 @@ export function UnifiedSettingsView({
                 <Button
                   variant="primary"
                   size="medium"
+                  className="w-full sm:w-auto min-h-[48px] justify-center"
                   disabled={isSavingOffice}
                   onClick={handleSaveOfficeSettings}
                 >
@@ -897,7 +915,7 @@ export function UnifiedSettingsView({
         {activeTab === "appearance" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
             {/* Left Column: Preset Colors & Custom Hex */}
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-5 shadow-2xs">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 shadow-2xs">
               <div className="flex flex-col gap-1 pb-3 border-b border-border-button-default">
                 <span className="text-title-2-medium text-text-primary">Brand Accent Color</span>
                 <p className="text-body-2-regular text-text-secondary">
@@ -916,7 +934,7 @@ export function UnifiedSettingsView({
                       handleSaveAppearance(preset.hex);
                     }}
                     className={cx(
-                      "flex items-center gap-2.5 p-3 rounded-2xl border text-start transition-all cursor-pointer",
+                      "flex items-center gap-2.5 p-3 rounded-2xl border text-start transition-all cursor-pointer min-h-[44px]",
                       brandColor.toLowerCase() === preset.hex.toLowerCase()
                         ? "border-accent-500 bg-background-secondary-hover shadow-2xs ring-1 ring-accent-500"
                         : "border-border-button-default bg-background-secondary-default hover:bg-background-secondary-hover"
@@ -933,7 +951,7 @@ export function UnifiedSettingsView({
 
               <div className="flex flex-col gap-2 pt-2">
                 <label className="text-body-2-medium text-text-secondary">Custom Hex Code</label>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <div className="relative flex items-center flex-1">
                     <span
                       className="absolute left-3 size-4 rounded-full border border-border-button-default shrink-0"
@@ -955,6 +973,7 @@ export function UnifiedSettingsView({
                   <Button
                     variant="secondary"
                     size="medium"
+                    className="w-full sm:w-auto justify-center min-h-[40px]"
                     disabled={isSavingAppearance || !/^#[0-9A-Fa-f]{6}$/.test(customHex)}
                     onClick={() => handleSaveAppearance(customHex)}
                   >
@@ -965,13 +984,13 @@ export function UnifiedSettingsView({
             </div>
 
             {/* Right Column: Live Booking Card Preview */}
-            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-4 shadow-2xs">
+            <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-4 shadow-2xs">
               <div className="flex items-center justify-between pb-3 border-b border-border-button-default">
                 <span className="text-title-2-medium text-text-primary">Live Card Preview</span>
                 <Chip color="soft" variant="caption">Guest Perspective</Chip>
               </div>
 
-              <div className="rounded-2xl border border-border-button-default bg-background-secondary-default p-5 flex flex-col gap-4">
+              <div className="rounded-2xl border border-border-button-default bg-background-secondary-default p-4 sm:p-5 flex flex-col gap-4">
                 <div className="flex items-center gap-3.5">
                   <div
                     className="size-12 rounded-full flex items-center justify-center font-bold text-white shadow-sm"

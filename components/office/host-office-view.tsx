@@ -129,9 +129,9 @@ export function HostOfficeView({
   );
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-5xl">
+    <div className="flex flex-col gap-6 sm:gap-8 w-full max-w-5xl">
       {/* 1. Header & Quick Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border-button-default">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 sm:pb-6 border-b border-border-button-default">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <h1 className="text-title-1-medium text-text-primary">Virtual Office Hours</h1>
@@ -147,17 +147,19 @@ export function HostOfficeView({
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="grid grid-cols-2 sm:flex sm:items-center gap-2.5 w-full sm:w-auto">
           <Button
             variant="secondary"
+            className="w-full sm:w-auto justify-center"
             leadingIcon={copiedLink ? HugeCheck : HugeCopy}
             onClick={handleCopyLink}
           >
-            {copiedLink ? "Link copied" : "Copy office link"}
+            {copiedLink ? "Link copied" : "Copy door link"}
           </Button>
 
           <Button
             variant="ghost"
+            className="w-full sm:w-auto justify-center"
             leadingIcon={HugeGlobe}
             onClick={() => window.open(`/${user.slug}/office`, "_blank")}
           >
@@ -167,24 +169,24 @@ export function HostOfficeView({
       </div>
 
       {/* 2. Public Door URL Banner */}
-      <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-4 min-w-0">
-          <div className="size-11 rounded-2xl bg-accent-50 dark:bg-accent-950/40 border border-border-button-default flex items-center justify-center shrink-0">
+      <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+        <div className="flex items-center gap-3 sm:gap-4 min-w-0 w-full sm:w-auto">
+          <div className="size-10 sm:size-11 rounded-2xl bg-accent-50 dark:bg-accent-950/40 border border-border-button-default flex items-center justify-center shrink-0">
             <HugeVideo className="size-5 text-accent-600" />
           </div>
-          <div className="flex flex-col min-w-0">
-            <div className="text-body-medium font-semibold text-text-primary">
-              Public Door: https://usemorrow.xyz/{user.slug}/office
+          <div className="flex flex-col min-w-0 flex-1">
+            <div className="text-body-medium font-semibold text-text-primary truncate">
+              usemorrow.xyz/{user.slug}/office
             </div>
             <div className="text-caption-1-semibold text-text-secondary truncate">
-              Share in your social bio, email signature, or Slack status when holding office hours.
+              Share in your social bio or Slack status for live speed chats
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <Button variant="secondary" size="small" onClick={handleTestAudio}>
-            {testedAudio ? "Playing chime..." : "Test doorbell audio"}
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-border-button-default/40">
+          <Button variant="secondary" size="small" className="w-full sm:w-auto justify-center" onClick={handleTestAudio}>
+            {testedAudio ? "Chime playing..." : "Test doorbell audio"}
           </Button>
         </div>
       </div>
@@ -192,25 +194,88 @@ export function HostOfficeView({
       {/* 3. Door Controls & Configuration */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Status & Speed-Chat Limit */}
-        <div className="lg:col-span-2 rounded-3xl border border-border-button-default bg-background-primary-default p-6 shadow-xs flex flex-col gap-6">
-          <div className="flex items-center justify-between">
+        <div className="lg:col-span-2 rounded-3xl border border-border-button-default bg-background-primary-default p-5 sm:p-6 shadow-xs flex flex-col gap-6">
+          <div className="flex items-center justify-between pb-3 sm:pb-0 border-b sm:border-b-0 border-border-button-default">
             <h2 className="text-title-2-medium text-text-primary">Door Controls</h2>
             <Button
               variant="primary"
               size="small"
               disabled={isSaving}
               onClick={handleSaveSettings}
+              className="hidden sm:inline-flex"
             >
               {isSaving ? "Saving..." : "Save changes"}
             </Button>
           </div>
 
-          {/* Status Segmented Selector */}
+          {/* Status Selector: Mobile 3-way Segmented Control + Desktop Cards */}
           <div className="flex flex-col gap-2">
             <label className="text-body-medium font-medium text-text-primary">
               Door State
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+
+            {/* Mobile Segmented Bar (< sm) */}
+            <div className="grid grid-cols-3 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default sm:hidden select-none">
+              <button
+                type="button"
+                onClick={() => handleStatusChange("open")}
+                className={cx(
+                  "flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-caption-1-semibold transition-all cursor-pointer min-h-[44px]",
+                  status === "open"
+                    ? "bg-background-primary-default text-text-primary shadow-2xs font-bold ring-1 ring-border-button-default"
+                    : "text-text-secondary hover:text-text-primary"
+                )}
+              >
+                <span className="size-2 rounded-full bg-status-lime-text" />
+                <span>Open</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleStatusChange("busy")}
+                className={cx(
+                  "flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-caption-1-semibold transition-all cursor-pointer min-h-[44px]",
+                  status === "busy"
+                    ? "bg-background-primary-default text-text-primary shadow-2xs font-bold ring-1 ring-border-button-default"
+                    : "text-text-secondary hover:text-text-primary"
+                )}
+              >
+                <span className="size-2 rounded-full bg-status-yellow-text" />
+                <span>Busy</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleStatusChange("closed")}
+                className={cx(
+                  "flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-caption-1-semibold transition-all cursor-pointer min-h-[44px]",
+                  status === "closed"
+                    ? "bg-background-primary-default text-text-primary shadow-2xs font-bold ring-1 ring-border-button-default"
+                    : "text-text-secondary hover:text-text-primary"
+                )}
+              >
+                <span className="size-2 rounded-full bg-text-tertiary" />
+                <span>Closed</span>
+              </button>
+            </div>
+
+            {/* Mobile State Sub-Description Banner */}
+            <div className="sm:hidden px-3.5 py-2 rounded-xl bg-background-secondary-default text-caption-1-medium text-text-secondary flex items-center gap-2">
+              <span className={cx(
+                "size-2 rounded-full shrink-0",
+                status === "open" ? "bg-status-lime-text animate-pulse" : status === "busy" ? "bg-status-yellow-text" : "bg-text-tertiary"
+              )} />
+              <span>
+                {status === "open"
+                  ? "Live knocks enabled. Doorbell rings when visitors arrive."
+                  : status === "busy"
+                  ? "Visitor knocks are held in queue while you are in session."
+                  : "Door shut. Visitors fall back to your calendar."}
+              </span>
+            </div>
+
+            {/* Desktop Option Cards (>= sm) */}
+            <div className="hidden sm:grid sm:grid-cols-3 gap-3">
               {/* Option 1: Open */}
               <button
                 type="button"
@@ -284,26 +349,32 @@ export function HostOfficeView({
 
           {/* Speed-Chat Duration Presets */}
           <div className="flex flex-col gap-2">
-            <label className="text-body-medium font-medium text-text-primary">
-              Speed-Chat Duration
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-body-medium font-medium text-text-primary">
+                Speed-Chat Duration
+              </label>
+              <span className="text-caption-1-semibold text-accent-600">
+                {speedChatMins} min limit
+              </span>
+            </div>
             <p className="text-caption-1-semibold text-text-secondary">
               Morrow automatically warns you at 1 minute remaining to keep sessions brisk.
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+            <div className="grid grid-cols-4 gap-2 pt-1">
               {[5, 10, 15, 20].map((mins) => (
                 <button
                   key={mins}
                   type="button"
                   onClick={() => setSpeedChatMins(mins)}
                   className={cx(
-                    "py-2.5 px-3 rounded-xl text-body-medium font-medium border text-center transition-all cursor-pointer min-h-[44px] flex items-center justify-center",
+                    "py-2.5 px-2 rounded-xl text-body-medium font-semibold border text-center transition-all cursor-pointer min-h-[44px] flex items-center justify-center",
                     speedChatMins === mins
-                      ? "bg-accent-600 text-white border-transparent shadow-xs"
+                      ? "bg-accent-600 text-white border-transparent shadow-xs scale-[1.02]"
                       : "bg-background-secondary-default text-text-primary border-border-button-default hover:bg-background-secondary-hover"
                   )}
                 >
-                  {mins} minutes
+                  <span className="sm:hidden">{mins}m</span>
+                  <span className="hidden sm:inline">{mins} mins</span>
                 </button>
               ))}
             </div>
@@ -313,10 +384,10 @@ export function HostOfficeView({
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <label className="text-body-medium font-medium text-text-primary">
-                Today&apos;s Topic or Discussion Prompt
+                Discussion Topic
               </label>
               <span className="text-caption-1-semibold text-text-tertiary">
-                {topic.length}/140 chars
+                {topic.length}/140
               </span>
             </div>
             <Input
@@ -325,18 +396,18 @@ export function HostOfficeView({
               placeholder="e.g. AMA on AI Agents, Seed Fundraising, or Architecture Reviews"
             />
             <p className="text-caption-1-semibold text-text-secondary">
-              Shown to visitors on your office door before they knock.
+              Displayed on your digital office door before visitors knock.
             </p>
           </div>
 
           {/* Email Notification Toggle */}
-          <div className="pt-4 border-t border-border-button-default flex items-center justify-between">
-            <div className="flex flex-col gap-0.5">
+          <div className="pt-4 border-t border-border-button-default flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-body-medium font-medium text-text-primary">
                 Email Doorbell Alerts
               </span>
               <span className="text-caption-1-semibold text-text-secondary">
-                Receive an instant email notification with a direct link to admit visitors.
+                Receive instant emails with 1-click links to admit visitors.
               </span>
             </div>
             <Switch
@@ -348,13 +419,13 @@ export function HostOfficeView({
 
           {/* Automated Recurring Schedule */}
           <div className="pt-4 border-t border-border-button-default flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex flex-col gap-0.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-0.5 min-w-0">
                 <span className="text-body-medium font-medium text-text-primary">
-                  Automate Office Hours Schedule
+                  Automate Office Schedule
                 </span>
                 <span className="text-caption-1-semibold text-text-secondary">
-                  Automatically open your door during scheduled hours and close it afterwards.
+                  Automatically open and close your door on schedule.
                 </span>
               </div>
               <Switch
@@ -369,16 +440,16 @@ export function HostOfficeView({
                 {/* Days of week selector */}
                 <div className="flex flex-col gap-1.5">
                   <span className="text-caption-1-semibold text-text-primary">Active Days</span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                  <div className="grid grid-cols-7 gap-1.5 sm:flex sm:items-center sm:gap-2">
                     {[
-                      { day: 1, label: "Mon" },
-                      { day: 2, label: "Tue" },
-                      { day: 3, label: "Wed" },
-                      { day: 4, label: "Thu" },
-                      { day: 5, label: "Fri" },
-                      { day: 6, label: "Sat" },
-                      { day: 0, label: "Sun" },
-                    ].map(({ day, label }) => {
+                      { day: 1, label: "M", fullLabel: "Mon" },
+                      { day: 2, label: "T", fullLabel: "Tue" },
+                      { day: 3, label: "W", fullLabel: "Wed" },
+                      { day: 4, label: "T", fullLabel: "Thu" },
+                      { day: 5, label: "F", fullLabel: "Fri" },
+                      { day: 6, label: "S", fullLabel: "Sat" },
+                      { day: 0, label: "S", fullLabel: "Sun" },
+                    ].map(({ day, label, fullLabel }) => {
                       const isSelected = scheduleDays.includes(day);
                       return (
                         <button
@@ -390,13 +461,14 @@ export function HostOfficeView({
                             );
                           }}
                           className={cx(
-                            "px-3 py-1.5 rounded-xl text-caption-1-semibold border transition-all cursor-pointer",
+                            "h-10 sm:h-auto sm:px-3 sm:py-1.5 rounded-xl text-caption-1-semibold border transition-all cursor-pointer flex items-center justify-center min-w-[36px]",
                             isSelected
-                              ? "bg-accent-600 text-white border-transparent"
+                              ? "bg-accent-600 text-white border-transparent shadow-xs"
                               : "bg-background-primary-default text-text-secondary border-border-button-default hover:bg-background-secondary-hover"
                           )}
                         >
-                          {label}
+                          <span className="sm:hidden">{label}</span>
+                          <span className="hidden sm:inline">{fullLabel}</span>
                         </button>
                       );
                     })}
@@ -425,10 +497,21 @@ export function HostOfficeView({
               </div>
             )}
           </div>
+
+          {/* Full-width mobile save changes button */}
+          <Button
+            variant="primary"
+            size="medium"
+            disabled={isSaving}
+            onClick={handleSaveSettings}
+            className="w-full sm:hidden min-h-[48px] justify-center mt-2 shadow-xs"
+          >
+            {isSaving ? "Saving..." : "Save changes"}
+          </Button>
         </div>
 
         {/* Right Column: Tips & Active Destination */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 shadow-xs flex flex-col gap-6">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-5 sm:p-6 shadow-xs flex flex-col gap-6">
           <h2 className="text-title-2-medium text-text-primary">Meeting Room</h2>
 
           <div className="p-4 rounded-2xl bg-background-secondary-default border border-border-button-default flex flex-col gap-2.5">
@@ -464,12 +547,12 @@ export function HostOfficeView({
       </div>
 
       {/* 4. Live Knock Activity Log */}
-      <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 shadow-xs flex flex-col gap-6">
+      <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-5 sm:p-6 shadow-xs flex flex-col gap-5 sm:gap-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <h2 className="text-title-2-medium text-text-primary">Visitor Activity</h2>
             <Chip color="soft" variant="caption">
-              {knocks.length} total knocks
+              {knocks.length} knocks
             </Chip>
           </div>
         </div>
@@ -480,7 +563,7 @@ export function HostOfficeView({
             <div className="text-body-medium font-semibold text-text-primary">
               No knocks yet today
             </div>
-            <p className="text-caption-1-semibold text-text-secondary max-w-sm">
+            <p className="text-caption-1-semibold text-text-secondary max-w-sm px-4">
               Keep your door open and share your link. When visitors ring your doorbell, they will appear here in real time.
             </p>
           </div>
@@ -514,37 +597,47 @@ export function HostOfficeView({
               return (
                 <div
                   key={k.id}
-                  className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  className="py-4 flex flex-col gap-3"
                 >
-                  <div className="flex items-start gap-3 min-w-0">
-                    <Avatar
-                      size="md"
-                      initials={guestInitials}
-                      src={k.guestAvatarUrl || undefined}
-                    />
-                    <div className="flex flex-col min-w-0">
-                      <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar
+                        size="md"
+                        initials={guestInitials}
+                        src={k.guestAvatarUrl || undefined}
+                      />
+                      <div className="flex flex-col min-w-0">
                         <span className="text-body-medium font-semibold text-text-primary truncate">
                           {k.guestName}
                         </span>
-                        <Chip
-                          color={statusColorMap[k.status] || "soft"}
-                          variant="caption"
-                        >
-                          {k.status === "queued" ? `In queue (#${k.queuePosition || 1})` : k.status}
-                        </Chip>
+                        <span className="text-caption-1-semibold text-text-secondary truncate">
+                          {k.guestEmail}
+                        </span>
                       </div>
-                      <span className="text-caption-1-semibold text-text-secondary truncate">
-                        {k.guestEmail}
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Chip
+                        color={statusColorMap[k.status] || "soft"}
+                        variant="caption"
+                      >
+                        {k.status === "queued" ? `Queue #${k.queuePosition || 1}` : k.status}
+                      </Chip>
+                      <span className="text-caption-2-medium text-text-tertiary hidden sm:inline">
+                        {new Date(k.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </span>
-                      <p className="text-body-medium text-text-primary pt-1">
-                        &ldquo;{k.topic}&rdquo;
-                      </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                    <span className="text-caption-1-semibold text-text-tertiary">
+                  <div className="p-3 rounded-xl bg-background-secondary-default/70 border border-border-button-default text-body-2-regular text-text-primary">
+                    &ldquo;{k.topic}&rdquo;
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <span className="text-caption-2-medium text-text-tertiary sm:hidden">
                       {new Date(k.createdAt).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit",
@@ -552,17 +645,19 @@ export function HostOfficeView({
                     </span>
 
                     {isRinging && (
-                      <>
+                      <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto sm:ms-auto">
                         <Button
                           variant="secondary"
                           size="small"
+                          className="w-full sm:w-auto justify-center"
                           onClick={() => onDeclineKnock(k.id)}
                         >
-                          Pass
+                          Decline
                         </Button>
                         <Button
                           variant="primary"
                           size="small"
+                          className="w-full sm:w-auto justify-center"
                           leadingIcon={HugeVideo}
                           onClick={async () => {
                             const link = await onAdmitKnock(k.id);
@@ -571,7 +666,7 @@ export function HostOfficeView({
                         >
                           Admit
                         </Button>
-                      </>
+                      </div>
                     )}
                   </div>
                 </div>

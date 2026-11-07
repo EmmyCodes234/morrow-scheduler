@@ -195,9 +195,9 @@ export function DashboardAnalyticsView({
   }, [dayDistribution]);
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-6xl">
+    <div className="flex flex-col gap-6 sm:gap-8 w-full max-w-6xl">
       {/* Header & Timeframe Selector */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border-button-default">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 sm:pb-6 border-b border-border-button-default">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <h1 className="text-title-1-medium text-text-primary tracking-tight">Analytics</h1>
@@ -208,8 +208,8 @@ export function DashboardAnalyticsView({
           </p>
         </div>
 
-        {/* Timeframe Filter Pills */}
-        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default self-start sm:self-auto overflow-x-auto scrollbar-none max-w-full">
+        {/* Timeframe Filter Segmented Control */}
+        <div className="grid grid-cols-4 sm:flex items-center gap-1 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default w-full sm:w-auto select-none">
           {(
             [
               { id: "7d", label: "Last 7 days", shortLabel: "7d" },
@@ -223,9 +223,9 @@ export function DashboardAnalyticsView({
               type="button"
               onClick={() => setTimeframe(item.id)}
               className={cx(
-                "px-2.5 sm:px-3 py-1.5 rounded-xl text-caption-1-semibold transition-all cursor-pointer whitespace-nowrap min-h-[36px]",
+                "py-2 sm:py-1.5 sm:px-3 rounded-xl text-caption-1-semibold transition-all cursor-pointer text-center min-h-[44px] flex items-center justify-center",
                 timeframe === item.id
-                  ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
+                  ? "bg-background-primary-default text-text-primary shadow-2xs font-bold ring-1 ring-border-button-default"
                   : "text-text-secondary hover:text-text-primary"
               )}
             >
@@ -239,83 +239,81 @@ export function DashboardAnalyticsView({
       {/* Primary KPI Grid (4 Pillars) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* KPI 1: Total Scheduled Bookings */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col justify-between shadow-2xs gap-4">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col justify-between shadow-2xs gap-3">
           <div className="flex items-center justify-between">
-            <span className="text-body-2-medium text-text-secondary font-medium">Scheduled Bookings</span>
-            <div className="size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center">
+            <span className="text-caption-1-semibold text-text-secondary truncate">Bookings</span>
+            <div className="size-7 sm:size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center shrink-0">
               <RiCalendarCheckLine className="size-4" />
             </div>
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-title-1-medium text-text-primary">{totalBookings}</span>
-            <div className="flex items-center gap-2 text-caption-1-medium text-text-secondary">
-              <span>{confirmedCount} confirmed</span>
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary truncate">
+              <span>{confirmedCount} conf</span>
               <span>&bull;</span>
-              <span>{completedCount} completed</span>
+              <span>{completedCount} done</span>
             </div>
           </div>
         </div>
 
         {/* KPI 2: Meeting Hours Hosted */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col justify-between shadow-2xs gap-4">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col justify-between shadow-2xs gap-3">
           <div className="flex items-center justify-between">
-            <span className="text-body-2-medium text-text-secondary font-medium">Meeting Time</span>
-            <div className="size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center">
+            <span className="text-caption-1-semibold text-text-secondary truncate">Meeting Time</span>
+            <div className="size-7 sm:size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center shrink-0">
               <RiTimeLine className="size-4" />
             </div>
           </div>
           <div className="flex flex-col gap-1">
-            <div className="flex items-baseline gap-1.5">
+            <div className="flex items-baseline gap-1">
               <span className="text-title-1-medium text-text-primary">{totalHours}</span>
               <span className="text-body-2-medium text-text-tertiary">hrs</span>
             </div>
-            <span className="text-caption-1-medium text-text-secondary">
-              Across all video calls
+            <span className="text-[11px] font-medium text-text-secondary truncate">
+              Across all calls
             </span>
           </div>
         </div>
 
         {/* KPI 3: Attendance & Reliability Rate */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col justify-between shadow-2xs gap-4">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col justify-between shadow-2xs gap-3">
           <div className="flex items-center justify-between">
-            <span className="text-body-2-medium text-text-secondary font-medium">Reliability Rate</span>
-            <div className="size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center">
+            <span className="text-caption-1-semibold text-text-secondary truncate">Reliability</span>
+            <div className="size-7 sm:size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center shrink-0">
               <RiPercentLine className="size-4" />
             </div>
           </div>
           <div className="flex flex-col gap-1">
-            <div className="flex items-baseline gap-1.5">
+            <div className="flex items-baseline gap-1">
               <span className="text-title-1-medium text-text-primary">{attendanceRate}%</span>
-              <span className="text-caption-1-semibold text-status-lime-text">Attendance</span>
             </div>
-            <span className="text-caption-1-medium text-text-secondary">
-              {cancelledCount} cancellations ({cancellationRate}%)
+            <span className="text-[11px] font-medium text-status-lime-text truncate">
+              {cancellationRate === 0 ? "100% Attended" : `${cancelledCount} cancelled`}
             </span>
           </div>
         </div>
 
         {/* KPI 4: Office Hours Admitted */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col justify-between shadow-2xs gap-4">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col justify-between shadow-2xs gap-3">
           <div className="flex items-center justify-between">
-            <span className="text-body-2-medium text-text-secondary font-medium">Office Hours Speed-Chats</span>
-            <div className="size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center">
+            <span className="text-caption-1-semibold text-text-secondary truncate">Speed-Chats</span>
+            <div className="size-7 sm:size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center shrink-0">
               <RiDoorOpenLine className="size-4" />
             </div>
           </div>
           <div className="flex flex-col gap-1">
-            <div className="flex items-baseline gap-1.5">
+            <div className="flex items-baseline gap-1">
               <span className="text-title-1-medium text-text-primary">{admittedKnocks}</span>
-              <span className="text-caption-1-semibold text-accent-600">Admitted</span>
             </div>
-            <span className="text-caption-1-medium text-text-secondary">
-              {totalKnocks} total knocks ({admissionRate}% admission)
+            <span className="text-[11px] font-medium text-accent-600 truncate">
+              {admissionRate}% admitted
             </span>
           </div>
         </div>
       </div>
 
       {/* Helpful Smart Insights Card */}
-      <div className="rounded-3xl border border-accent-200 dark:border-accent-900 bg-accent-50/50 dark:bg-accent-950/20 p-6 flex flex-col gap-4">
+      <div className="rounded-3xl border border-accent-200 dark:border-accent-900 bg-accent-50/50 dark:bg-accent-950/20 p-4 sm:p-6 flex flex-col gap-4">
         <div className="flex items-center gap-2.5">
           <div className="size-7 rounded-lg bg-accent-500 text-white flex items-center justify-center">
             <HugeSparkles className="size-4" />
@@ -371,9 +369,9 @@ export function DashboardAnalyticsView({
       </div>
 
       {/* Two Column Section: Peak Day Distribution & Event Type Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Left Card: Weekly Demand Distribution */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-6 shadow-2xs">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 sm:gap-6 shadow-2xs">
           <div className="flex flex-col gap-1">
             <span className="text-title-3-semibold text-text-primary">Weekly Booking Distribution</span>
             <span className="text-caption-1-medium text-text-secondary">
@@ -405,7 +403,7 @@ export function DashboardAnalyticsView({
         </div>
 
         {/* Right Card: Event Type Popularity */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-6 shadow-2xs">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 sm:gap-6 shadow-2xs">
           <div className="flex flex-col gap-1">
             <span className="text-title-3-semibold text-text-primary">Event Type Performance</span>
             <span className="text-caption-1-medium text-text-secondary">
@@ -443,8 +441,8 @@ export function DashboardAnalyticsView({
       </div>
 
       {/* Virtual Office Hours Recent Topics & Activity Section */}
-      <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col gap-5 shadow-2xs">
-        <div className="flex items-center justify-between">
+      <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 shadow-2xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 sm:pb-0 border-b sm:border-b-0 border-border-button-default">
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <span className="text-title-3-semibold text-text-primary">Virtual Office Drop-in Feed</span>
