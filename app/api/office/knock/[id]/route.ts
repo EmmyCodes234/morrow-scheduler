@@ -211,6 +211,12 @@ export async function PATCH(
         })
         .where(eq(users.id, host.id));
 
+      // Formulate host's direct link with authuser parameter to prevent Google Meet account switching collision
+      const hostMeetLink =
+        host.email && meetLink.includes("meet.google.com")
+          ? `${meetLink}${meetLink.includes("?") ? "&" : "?"}authuser=${encodeURIComponent(host.email)}`
+          : meetLink;
+
       realtimeBus.broadcast(`knock:${updatedKnock.id}`, "knock.admitted", {
         id: updatedKnock.id,
         status: "admitted",
@@ -219,13 +225,13 @@ export async function PATCH(
       realtimeBus.broadcast(`host:${host.id}`, "knock.updated", {
         id: updatedKnock.id,
         status: "admitted",
-        meetLink,
+        meetLink: hostMeetLink,
       });
 
       return NextResponse.json({
         success: true,
         knock: updatedKnock,
-        meetLink,
+        meetLink: hostMeetLink,
       });
     }
 
