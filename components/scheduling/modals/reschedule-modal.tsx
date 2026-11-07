@@ -71,7 +71,7 @@ export function RescheduleModal({
               </div>
 
               {error && (
-                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-text-error-primary text-body-2-regular flex items-start gap-2">
+                <div className="p-3 rounded-xl bg-background-secondary-default border border-border-error-default text-text-error-primary text-body-2-regular flex items-start gap-2">
                   <RiAlertLine className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>{error}</span>
                 </div>

@@ -48,6 +48,7 @@ import { DashboardAnalyticsView } from "@/components/analytics/dashboard-analyti
 import { useMorrowRealtime } from "@/lib/realtime/use-realtime";
 import { playDoorbellChime, playBookingChime, playCancelChime } from "@/lib/audio/chime";
 import { UnifiedSettingsView, type SettingsTab } from "@/components/settings/unified-settings-view";
+import { DashboardBottomNav } from "@/components/application/dashboard/dashboard-bottom-nav";
 
 interface EventTypeItem {
   id: string;
@@ -914,43 +915,53 @@ export function DashboardView({
         </div>
       )}
 
-      {/* MOBILE TOP BAR (visible < lg) */}
-      <div className="flex lg:hidden items-center justify-between pb-4 border-b border-border-button-default w-full">
-        <div className="flex items-center gap-3">
+      {/* MOBILE STICKY FROSTED APP BAR (visible < lg) */}
+      <header className="sticky top-0 z-30 flex lg:hidden items-center justify-between h-14 -mx-4 -mt-4 px-4 bg-background-full/85 backdrop-blur-md border-b border-border-button-default w-[calc(100%+2rem)] transition-colors select-none">
+        {/* Left: Menu trigger + Brand Logo + Realtime Indicator */}
+        <div className="flex items-center gap-2.5">
           <button
             type="button"
             aria-label="Open navigation menu"
             onClick={() => setIsMobileMenuOpen(true)}
-            className="p-2 rounded-xl bg-background-secondary-default border border-border-button-default text-text-primary hover:bg-background-secondary-hover cursor-pointer"
+            className="p-2 -ms-1 rounded-xl bg-background-secondary-default/80 border border-border-button-default text-text-primary hover:bg-background-secondary-hover active:scale-95 cursor-pointer touch-manipulation"
           >
-            <HugeSidebar className="size-5" />
+            <HugeSidebar className="size-4.5" />
           </button>
-          <MorrowLogo size={28} />
-        </div>
-
-        <div className="flex items-center gap-2">
+          <MorrowLogo size={26} />
           <div
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-button-default bg-background-primary-default text-caption-1-medium text-text-secondary select-none"
-            title={isRealtimeConnected ? "Realtime sync active across all features" : "Connecting to realtime event stream..."}
+            className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-border-button-default bg-background-primary-default/80 text-[11px] font-medium text-text-secondary select-none"
+            title={isRealtimeConnected ? "Universal Realtime sync active across all features" : "Connecting to realtime event stream..."}
           >
             <span
               className={cx(
-                "size-2 rounded-full",
+                "size-1.5 rounded-full",
                 isRealtimeConnected ? "bg-status-lime-text animate-pulse" : "bg-status-amber-text"
               )}
             />
-            <span className="hidden sm:inline">{isRealtimeConnected ? "Live" : "Connecting..."}</span>
+            <span className="text-caption-2-medium">{isRealtimeConnected ? "Live" : "Syncing"}</span>
           </div>
+        </div>
+
+        {/* Right: Compact Office Pill + Avatar Tap Drawer */}
+        <div className="flex items-center gap-2">
           <OfficeStatusPill
+            compact={true}
             status={user.officeStatus || "closed"}
             slug={user.slug}
             speedChatMins={user.officeSpeedChatMins || 10}
             onUpdateStatus={(newStatus) => handleUpdateOfficeSettings({ officeStatus: newStatus })}
             onUpdateSpeedChatMins={(mins) => handleUpdateOfficeSettings({ officeSpeedChatMins: mins })}
           />
-          <Avatar size="sm" initials={user.initials} color="blue" />
+          <button
+            type="button"
+            aria-label="Open profile and menu"
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="rounded-full ring-2 ring-transparent hover:ring-accent-500/30 active:scale-95 transition-all cursor-pointer touch-manipulation"
+          >
+            <Avatar size="sm" initials={user.initials} color="blue" />
+          </button>
         </div>
-      </div>
+      </header>
 
       {/* MOBILE DRAWER (overlay) */}
       {isMobileMenuOpen && (
@@ -1001,7 +1012,7 @@ export function DashboardView({
       />
 
       {/* ACTIVE SECTION CONTENT */}
-      <div className="flex-1 min-w-0 flex flex-col gap-6 w-full">
+      <div className="flex-1 min-w-0 flex flex-col gap-6 w-full pb-24 lg:pb-0">
         {/* ========================================================================= */}
         {/* VIEW 1: EVENT TYPES */}
         {/* ========================================================================= */}
@@ -1019,52 +1030,60 @@ export function DashboardView({
                 </p>
               </div>
 
-              <div className="flex items-center gap-2.5">
-                <OfficeStatusPill
-                  status={user.officeStatus || "closed"}
-                  slug={user.slug}
-                  speedChatMins={user.officeSpeedChatMins || 10}
-                  onUpdateStatus={(newStatus) => handleUpdateOfficeSettings({ officeStatus: newStatus })}
-                  onUpdateSpeedChatMins={(mins) => handleUpdateOfficeSettings({ officeSpeedChatMins: mins })}
-                />
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 w-full sm:w-auto">
+                <div className="hidden lg:block">
+                  <OfficeStatusPill
+                    status={user.officeStatus || "closed"}
+                    slug={user.slug}
+                    speedChatMins={user.officeSpeedChatMins || 10}
+                    onUpdateStatus={(newStatus) => handleUpdateOfficeSettings({ officeStatus: newStatus })}
+                    onUpdateSpeedChatMins={(mins) => handleUpdateOfficeSettings({ officeSpeedChatMins: mins })}
+                  />
+                </div>
 
-                <Button
-                  variant="ghost"
-                  leadingIcon={HugeSparkles}
-                  onClick={() => setTourOpen(true)}
-                  title="Take a quick tour"
-                >
-                  Quick tour
-                </Button>
-
-                <div data-tour="copy-link-btn">
+                <div className="hidden sm:block">
                   <Button
-                    variant="secondary"
-                    leadingIcon={copiedId === "profile" ? HugeCheck : HugeCopy}
-                    onClick={() => handleCopy("profile", "")}
+                    variant="ghost"
+                    leadingIcon={HugeSparkles}
+                    onClick={() => setTourOpen(true)}
+                    title="Take a quick tour"
                   >
-                    {copiedId === "profile" ? "Link copied" : "Copy profile link"}
+                    Quick tour
                   </Button>
                 </div>
 
-                <div data-tour="new-event-btn">
-                  <Button
-                    variant="primary"
-                    leadingIcon={HugeAdd}
-                    onClick={() => {
-                      setEditingEvent(null);
-                      setIsNewEventOpen(true);
-                    }}
-                  >
-                    New event type
-                  </Button>
+                <div className="grid grid-cols-2 sm:flex sm:items-center gap-2.5 w-full sm:w-auto">
+                  <div data-tour="copy-link-btn" className="w-full sm:w-auto">
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      leadingIcon={copiedId === "profile" ? HugeCheck : HugeCopy}
+                      onClick={() => handleCopy("profile", "")}
+                    >
+                      {copiedId === "profile" ? "Link copied" : "Copy link"}
+                    </Button>
+                  </div>
+
+                  <div data-tour="new-event-btn" className="w-full sm:w-auto">
+                    <Button
+                      variant="primary"
+                      className="w-full"
+                      leadingIcon={HugeAdd}
+                      onClick={() => {
+                        setEditingEvent(null);
+                        setIsNewEventOpen(true);
+                      }}
+                    >
+                      New event
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* KPI Stat Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-1 shadow-2xs">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col gap-1 shadow-2xs">
                 <span className="text-body-2-regular text-text-secondary">Bookings this month</span>
                 <div className="flex items-baseline gap-2">
                   <span className="text-title-1-medium text-text-primary">{bookings.length}</span>
@@ -1072,7 +1091,7 @@ export function DashboardView({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-1 shadow-2xs">
+              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col gap-1 shadow-2xs">
                 <span className="text-body-2-regular text-text-secondary">Scheduled hours</span>
                 <div className="flex items-baseline gap-2">
                   <span className="text-title-1-medium text-text-primary">
@@ -1082,7 +1101,7 @@ export function DashboardView({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-5 flex flex-col gap-1 shadow-2xs">
+              <div className="rounded-2xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col gap-1 shadow-2xs">
                 <span className="text-body-2-regular text-text-secondary">Completion rate</span>
                 <div className="flex items-baseline gap-2">
                   <span className="text-title-1-medium text-text-primary">100%</span>
@@ -1228,52 +1247,54 @@ export function DashboardView({
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-border-button-default/40">
                         <Badge color={b.status === "Cancelled" ? "neutral" : "primary"}>
                           {b.status}
                         </Badge>
 
-                        {b.meetLink && b.status !== "Cancelled" && (
-                          <Button
-                            variant="primary"
-                            size="xs"
-                            leadingIcon={HugeVideo}
-                            onClick={() => window.open(b.meetLink, "_blank")}
-                          >
-                            {b.meetLink.includes("zoom.us")
-                              ? "Join Zoom"
-                              : b.meetLink.includes("teams.live.com") || b.meetLink.includes("teams.microsoft.com")
-                              ? "Join Teams"
-                              : "Join Meet"}
-                          </Button>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {b.meetLink && b.status !== "Cancelled" && (
+                            <Button
+                              variant="primary"
+                              size="xs"
+                              leadingIcon={HugeVideo}
+                              onClick={() => window.open(b.meetLink, "_blank")}
+                            >
+                              {b.meetLink.includes("zoom.us")
+                                ? "Join Zoom"
+                                : b.meetLink.includes("teams.live.com") || b.meetLink.includes("teams.microsoft.com")
+                                ? "Join Teams"
+                                : "Join Meet"}
+                            </Button>
+                          )}
 
-                        {!b.meetLink && b.status !== "Cancelled" && (
-                          <Button
-                            variant="primary"
-                            size="xs"
-                            leadingIcon={HugeVideo}
-                            onClick={() => {
-                              const targetUrl = user?.zoomMeetingUrl || "https://meet.google.com";
-                              window.open(targetUrl, "_blank");
-                            }}
-                          >
-                            Join Call
-                          </Button>
-                        )}
+                          {!b.meetLink && b.status !== "Cancelled" && (
+                            <Button
+                              variant="primary"
+                              size="xs"
+                              leadingIcon={HugeVideo}
+                              onClick={() => {
+                                const targetUrl = user?.zoomMeetingUrl || "https://meet.google.com";
+                                window.open(targetUrl, "_blank");
+                              }}
+                            >
+                              Join Call
+                            </Button>
+                          )}
 
-                        {b.status !== "Cancelled" && (
-                          <Button
-                            variant="secondary"
-                            size="xs"
-                            onClick={() => {
-                              setActiveBooking(b);
-                              setIsRescheduleOpen(true);
-                            }}
-                          >
-                            Manage
-                          </Button>
-                        )}
+                          {b.status !== "Cancelled" && (
+                            <Button
+                              variant="secondary"
+                              size="xs"
+                              onClick={() => {
+                                setActiveBooking(b);
+                                setIsRescheduleOpen(true);
+                              }}
+                            >
+                              Manage
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1309,22 +1330,22 @@ export function DashboardView({
                   {contacts.map((c) => (
                     <div
                       key={c.id}
-                      className="p-5 flex items-center justify-between hover:bg-background-secondary-default/50 transition-colors"
+                      className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-background-secondary-default/50 transition-colors"
                     >
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-3 sm:gap-4">
                         <Avatar size="md" initials={c.name.charAt(0)} color="blue" />
-                        <div className="flex flex-col">
-                          <span className="text-body-medium font-semibold text-text-primary">
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-body-medium font-semibold text-text-primary truncate">
                             {c.name}
                           </span>
-                          <span className="text-body-2-regular text-text-secondary">
+                          <span className="text-body-2-regular text-text-secondary truncate">
                             {c.email}
                           </span>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-4">
-                        <span className="text-body-2-regular text-text-secondary">
+                      <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-border-button-default/40">
+                        <span className="text-body-2-regular text-text-secondary text-caption-1-medium">
                           Last booked: {c.lastBookingAt}
                         </span>
                         <Chip color="soft" variant="caption">
@@ -1498,6 +1519,22 @@ export function DashboardView({
         onAdmit={handleAdmitKnock}
         onDecline={handleDeclineKnock}
         onConclude={handleConcludeKnock}
+      />
+
+      {/* Mobile-First Persistent Bottom Navigation Bar */}
+      <DashboardBottomNav
+        activeTab={activeTab}
+        onSelectTab={(tab) => {
+          if (tab === "settings") {
+            setSettingsTab("profile");
+            setActiveTab("settings");
+          } else {
+            setActiveTab(tab);
+          }
+        }}
+        bookingsCount={bookings.filter((b) => b.status === "Confirmed").length}
+        ringingKnocksCount={activeRingingCount}
+        isOfficeOpen={user.officeStatus === "open"}
       />
     </div>
   );

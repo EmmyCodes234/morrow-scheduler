@@ -189,7 +189,7 @@ export function NewEventModal({
                 <span className="text-body-medium text-text-primary font-medium">
                   Format
                 </span>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setIsGroup(false)}
@@ -255,7 +255,7 @@ export function NewEventModal({
                   Link slug
                 </span>
                 <div className="flex items-center rounded-xl border border-border-button-default bg-background-secondary-default px-3 py-2 text-body-medium text-text-secondary">
-                  <span className="text-text-tertiary select-none">usemorrow.xyz/{userSlug}/</span>
+                  <span className="text-text-tertiary select-none truncate max-w-[140px] sm:max-w-none shrink-0">usemorrow.xyz/{userSlug}/</span>
                   <input
                     type="text"
                     value={slug}
@@ -278,7 +278,7 @@ export function NewEventModal({
                 <span className="text-body-medium text-text-primary font-medium">
                   Meeting Location
                 </span>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setLocationType("google_meet")}
@@ -364,7 +364,7 @@ export function NewEventModal({
           </ModalBody>
 
           <ModalFooter>
-            <div className="w-full flex items-center justify-between">
+            <div className="w-full flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3">
               {isEditing && onDelete ? (
                 <Button
                   variant="danger"
@@ -379,7 +379,7 @@ export function NewEventModal({
                 <div />
               )}
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                 <Button variant="secondary" onClick={close} disabled={isSubmitting || isDeleting}>
                   Cancel
                 </Button>

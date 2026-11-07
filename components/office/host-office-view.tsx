@@ -290,16 +290,16 @@ export function HostOfficeView({
             <p className="text-caption-1-semibold text-text-secondary">
               Morrow automatically warns you at 1 minute remaining to keep sessions brisk.
             </p>
-            <div className="flex items-center gap-2.5 pt-1">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
               {[5, 10, 15, 20].map((mins) => (
                 <button
                   key={mins}
                   type="button"
                   onClick={() => setSpeedChatMins(mins)}
                   className={cx(
-                    "px-4 py-2 rounded-xl text-body-medium font-medium border transition-all cursor-pointer",
+                    "py-2.5 px-3 rounded-xl text-body-medium font-medium border text-center transition-all cursor-pointer min-h-[44px] flex items-center justify-center",
                     speedChatMins === mins
-                      ? "bg-accent-600 text-white border-transparent"
+                      ? "bg-accent-600 text-white border-transparent shadow-xs"
                       : "bg-background-secondary-default text-text-primary border-border-button-default hover:bg-background-secondary-hover"
                   )}
                 >

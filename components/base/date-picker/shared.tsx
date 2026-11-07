@@ -209,38 +209,40 @@ export function MonthPanel({
   );
 
   return (
-    <div className={bare ? "w-[296px] shrink-0" : "w-[326px] shrink-0 rounded-2xl bg-background-primary-default p-[15px] shadow-xs"}>
+    <div className={bare ? "w-full max-w-[296px] shrink-0" : "w-full max-w-[326px] shrink-0 rounded-2xl bg-background-primary-default p-3 sm:p-[15px] shadow-xs"}>
       <div className="flex flex-col gap-5">
         {!hideHeader && (
           <div className="flex items-center justify-between">
             {showPrev ? (
               <RACButton
                 slot="previous"
-                className="flex size-4 cursor-pointer items-center justify-center rounded-[3px] text-text-secondary outline-none transition-colors duration-150 ease hover:bg-background-secondary-hover"
+                aria-label="Previous month"
+                className="flex size-10 cursor-pointer items-center justify-center rounded-xl text-text-secondary outline-none transition-colors duration-150 ease hover:bg-background-secondary-hover"
               >
                 <ChevronLeft16 />
               </RACButton>
             ) : (
-              <span className="size-4" aria-hidden />
+              <span className="size-10" aria-hidden />
             )}
-            <span className="flex-1 text-center text-body-medium text-text-primary">{title}</span>
+            <span className="flex-1 text-center text-body-medium text-text-primary font-medium">{title}</span>
             {showNext ? (
               <RACButton
                 slot="next"
-                className="flex size-4 cursor-pointer items-center justify-center rounded-[3px] text-text-secondary outline-none transition-colors duration-150 ease hover:bg-background-secondary-hover"
+                aria-label="Next month"
+                className="flex size-10 cursor-pointer items-center justify-center rounded-xl text-text-secondary outline-none transition-colors duration-150 ease hover:bg-background-secondary-hover"
               >
                 <ChevronRight16 />
               </RACButton>
             ) : (
-              <span className="size-4" aria-hidden />
+              <span className="size-10" aria-hidden />
             )}
           </div>
         )}
         <CalendarGrid
           offset={{ months: offset }}
           weekdayStyle={latinWeekdays ? "short" : "narrow"}
-          className="-m-3 self-start border-separate outline-none"
-          style={{ borderSpacing: "12px 12px" }}
+          className="-m-3 self-center sm:self-start border-separate outline-none"
+          style={{ borderSpacing: "clamp(4px, 2.5vw, 12px) 12px" }}
         >
           <CalendarGridHeader>
             {(day) => (

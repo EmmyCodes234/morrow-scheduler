@@ -209,13 +209,13 @@ export function DashboardAnalyticsView({
         </div>
 
         {/* Timeframe Filter Pills */}
-        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default self-start sm:self-auto">
+        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default self-start sm:self-auto overflow-x-auto scrollbar-none max-w-full">
           {(
             [
-              { id: "7d", label: "Last 7 days" },
-              { id: "30d", label: "Last 30 days" },
-              { id: "90d", label: "Last 90 days" },
-              { id: "all", label: "All time" },
+              { id: "7d", label: "Last 7 days", shortLabel: "7d" },
+              { id: "30d", label: "Last 30 days", shortLabel: "30d" },
+              { id: "90d", label: "Last 90 days", shortLabel: "90d" },
+              { id: "all", label: "All time", shortLabel: "All" },
             ] as const
           ).map((item) => (
             <button
@@ -223,22 +223,23 @@ export function DashboardAnalyticsView({
               type="button"
               onClick={() => setTimeframe(item.id)}
               className={cx(
-                "px-3 py-1.5 rounded-xl text-caption-1-semibold transition-all cursor-pointer",
+                "px-2.5 sm:px-3 py-1.5 rounded-xl text-caption-1-semibold transition-all cursor-pointer whitespace-nowrap min-h-[36px]",
                 timeframe === item.id
                   ? "bg-background-primary-default text-text-primary shadow-2xs font-semibold"
                   : "text-text-secondary hover:text-text-primary"
               )}
             >
-              {item.label}
+              <span className="hidden sm:inline">{item.label}</span>
+              <span className="sm:hidden">{item.shortLabel}</span>
             </button>
           ))}
         </div>
       </div>
 
       {/* Primary KPI Grid (4 Pillars) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* KPI 1: Total Scheduled Bookings */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col justify-between shadow-2xs gap-4">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col justify-between shadow-2xs gap-4">
           <div className="flex items-center justify-between">
             <span className="text-body-2-medium text-text-secondary font-medium">Scheduled Bookings</span>
             <div className="size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center">
@@ -256,7 +257,7 @@ export function DashboardAnalyticsView({
         </div>
 
         {/* KPI 2: Meeting Hours Hosted */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col justify-between shadow-2xs gap-4">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col justify-between shadow-2xs gap-4">
           <div className="flex items-center justify-between">
             <span className="text-body-2-medium text-text-secondary font-medium">Meeting Time</span>
             <div className="size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center">
@@ -275,7 +276,7 @@ export function DashboardAnalyticsView({
         </div>
 
         {/* KPI 3: Attendance & Reliability Rate */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col justify-between shadow-2xs gap-4">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col justify-between shadow-2xs gap-4">
           <div className="flex items-center justify-between">
             <span className="text-body-2-medium text-text-secondary font-medium">Reliability Rate</span>
             <div className="size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center">
@@ -294,7 +295,7 @@ export function DashboardAnalyticsView({
         </div>
 
         {/* KPI 4: Office Hours Admitted */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-6 flex flex-col justify-between shadow-2xs gap-4">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col justify-between shadow-2xs gap-4">
           <div className="flex items-center justify-between">
             <span className="text-body-2-medium text-text-secondary font-medium">Office Hours Speed-Chats</span>
             <div className="size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center">

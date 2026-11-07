@@ -315,7 +315,7 @@ export function UnifiedSettingsView({
         </div>
 
         {/* Unified Tab Navigation */}
-        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default overflow-x-auto">
+        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-background-secondary-default border border-border-button-default overflow-x-auto scrollbar-none touch-pan-x">
           <button
             type="button"
             onClick={() => setActiveTab("profile")}
@@ -624,30 +624,34 @@ export function UnifiedSettingsView({
                 <label className="text-body-2-medium text-text-secondary">
                   Personal Meeting Room URL (optional fallback)
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <Input
                     value={zoomUrl}
                     onChange={(val) => setZoomUrl(val)}
                     placeholder="https://zoom.us/j/1234567890"
                     className="flex-1"
                   />
-                  <Button
-                    variant="secondary"
-                    size="medium"
-                    disabled={isSavingZoom || zoomUrl === user.zoomMeetingUrl}
-                    onClick={handleSaveZoomLink}
-                  >
-                    {isSavingZoom ? "Saving..." : "Save"}
-                  </Button>
-                  {zoomUrl && (
+                  <div className="flex items-center gap-2">
                     <Button
-                      variant="ghost"
+                      variant="secondary"
                       size="medium"
-                      onClick={() => window.open(zoomUrl, "_blank")}
+                      className="flex-1 sm:flex-initial"
+                      disabled={isSavingZoom || zoomUrl === user.zoomMeetingUrl}
+                      onClick={handleSaveZoomLink}
                     >
-                      Test Room
+                      {isSavingZoom ? "Saving..." : "Save"}
                     </Button>
-                  )}
+                    {zoomUrl && (
+                      <Button
+                        variant="ghost"
+                        size="medium"
+                        className="flex-1 sm:flex-initial"
+                        onClick={() => window.open(zoomUrl, "_blank")}
+                      >
+                        Test Room
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -677,30 +681,34 @@ export function UnifiedSettingsView({
                 <label className="text-body-2-medium text-text-secondary">
                   Teams Meeting URL
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <Input
                     value={teamsUrl}
                     onChange={(val) => setTeamsUrl(val)}
                     placeholder="https://teams.microsoft.com/l/meetup-join/..."
                     className="flex-1"
                   />
-                  <Button
-                    variant="secondary"
-                    size="medium"
-                    disabled={isSavingTeams || teamsUrl === user.teamsMeetingUrl}
-                    onClick={handleSaveTeamsLink}
-                  >
-                    {isSavingTeams ? "Saving..." : "Save"}
-                  </Button>
-                  {teamsUrl && (
+                  <div className="flex items-center gap-2">
                     <Button
-                      variant="ghost"
+                      variant="secondary"
                       size="medium"
-                      onClick={() => window.open(teamsUrl, "_blank")}
+                      className="flex-1 sm:flex-initial"
+                      disabled={isSavingTeams || teamsUrl === user.teamsMeetingUrl}
+                      onClick={handleSaveTeamsLink}
                     >
-                      Test Room
+                      {isSavingTeams ? "Saving..." : "Save"}
                     </Button>
-                  )}
+                    {teamsUrl && (
+                      <Button
+                        variant="ghost"
+                        size="medium"
+                        className="flex-1 sm:flex-initial"
+                        onClick={() => window.open(teamsUrl, "_blank")}
+                      >
+                        Test Room
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -897,7 +905,7 @@ export function UnifiedSettingsView({
                 </p>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {PRESET_COLORS.map((preset) => (
                   <button
                     key={preset.hex}

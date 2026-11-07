@@ -138,14 +138,14 @@ export function InputOtp({
       aria-label={ariaLabel}
       // No `aria-invalid` here: `group` does not support it. Each box carries
       // its own, which is where a screen reader looks anyway.
-      className={cx("flex items-center gap-2", className)}
+      className={cx("flex items-center gap-1.5 sm:gap-2", className)}
     >
       {Array.from({ length }, (_, index) => {
         const filled = code[index] ?? "";
         const gapBefore = groupEvery !== undefined && index > 0 && index % groupEvery === 0;
 
         return (
-          <div key={index} className={cx("flex items-center", gapBefore && "ms-3")}>
+          <div key={index} className={cx("flex items-center", gapBefore && "ms-2 sm:ms-3")}>
             <input
               ref={(node) => {
                 inputsRef.current[index] = node;
@@ -168,7 +168,7 @@ export function InputOtp({
               onPaste={(event) => onPaste(event, index)}
               onFocus={(event) => event.target.select()}
               className={cx(
-                "size-12 rounded-2lg text-center font-mono text-title-3-medium tabular-nums",
+                "size-10 sm:size-12 rounded-xl text-center font-mono text-title-3-medium tabular-nums",
                 "bg-background-primary-default text-text-primary",
                 "border border-border-button-default shadow-xs",
                 "transition-[background-color,border-color,box-shadow] duration-150 ease outline-none",

@@ -283,7 +283,7 @@ export function DoorbellAlertModal({
             </div>
 
             {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row items-center gap-3 pt-1">
+            <div className="flex flex-col-reverse sm:flex-row items-center gap-3 pt-1">
               <Button
                 variant="secondary"
                 className="w-full sm:w-1/3"
@@ -317,7 +317,7 @@ export function DoorbellAlertModal({
       {admittedKnock && (
         <aside
           aria-label="Active drop-in speed chat session"
-          className="fixed bottom-6 right-6 z-40 rounded-2xl border border-border-button-default bg-background-primary-default p-4 shadow-2xl flex flex-col sm:flex-row items-start sm:items-center gap-4 animate-in slide-in-from-bottom-5 duration-300 max-w-md w-full"
+          className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] left-3 right-3 sm:left-auto sm:right-6 sm:bottom-6 z-40 rounded-2xl border border-border-button-default bg-background-primary-default p-4 shadow-2xl flex flex-col sm:flex-row items-start sm:items-center gap-4 animate-in slide-in-from-bottom-5 duration-300 sm:max-w-md"
         >
           {/* Guest and Status */}
           <div className="flex items-center gap-3 min-w-0 flex-1">

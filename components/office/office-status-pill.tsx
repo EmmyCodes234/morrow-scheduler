@@ -25,6 +25,7 @@ interface OfficeStatusPillProps {
   speedChatMins?: number;
   onUpdateStatus: (newStatus: "open" | "busy" | "closed") => Promise<void>;
   onUpdateSpeedChatMins?: (mins: number) => Promise<void>;
+  compact?: boolean;
 }
 
 export function OfficeStatusPill({
@@ -33,6 +34,7 @@ export function OfficeStatusPill({
   speedChatMins = 10,
   onUpdateStatus,
   onUpdateSpeedChatMins,
+  compact = false,
 }: OfficeStatusPillProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -81,11 +83,13 @@ export function OfficeStatusPill({
           <span className={cx("relative inline-flex rounded-full size-2.5", statusConfig.dotClass)} />
         </span>
         <span className="text-body-medium font-medium text-text-primary">
-          {statusConfig.label}
+          {compact ? (status === "open" ? "Open" : status === "busy" ? "Busy" : "Closed") : statusConfig.label}
         </span>
-        <Chip color={statusConfig.chipColor} variant="caption">
-          {speedChatMins}m chat
-        </Chip>
+        {!compact && (
+          <Chip color={statusConfig.chipColor} variant="caption">
+            {speedChatMins}m chat
+          </Chip>
+        )}
       </DropdownTrigger>
 
       <DropdownPopover aria-label="Office status menu" placement="bottom end" className="w-[280px]">
