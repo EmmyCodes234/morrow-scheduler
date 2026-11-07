@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { users, officeKnocks } from "@/db/schema";
-import { eq, and, or, inArray, count } from "drizzle-orm";
+import { eq, and, inArray, count } from "drizzle-orm";
+import { isHostWithinOfficeSchedule } from "@/lib/office/office-service";
 
 export async function GET(
   req: NextRequest,
@@ -18,14 +19,16 @@ export async function GET(
       return NextResponse.json({ error: "Host not found" }, { status: 404 });
     }
 
-    // Count people currently in queue (ringing or admitted)
+    const { inSchedule, effectiveStatus } = isHostWithinOfficeSchedule(host);
+
+    // Count people currently in queue (ringing, admitted, or queued)
     const activeKnocks = await db
       .select({ count: count() })
       .from(officeKnocks)
       .where(
         and(
           eq(officeKnocks.hostId, host.id),
-          inArray(officeKnocks.status, ["ringing", "admitted"])
+          inArray(officeKnocks.status, ["ringing", "admitted", "queued"])
         )
       );
 
@@ -38,14 +41,14 @@ export async function GET(
         slug: host.slug,
         avatarUrl: host.avatarUrl,
         timezone: host.timezone,
-        officeStatus: host.officeStatus || "closed",
+        officeStatus: effectiveStatus,
         officeTopic: host.officeTopic || null,
         officeSpeedChatMins: host.officeSpeedChatMins || 10,
       },
       queueLength,
-      isOpen: host.officeStatus === "open",
-      isBusy: host.officeStatus === "busy",
-      isClosed: host.officeStatus === "closed",
+      isOpen: effectiveStatus === "open",
+      isBusy: effectiveStatus === "busy",
+      isClosed: effectiveStatus === "closed",
     });
   } catch (err) {
     console.error("Error fetching office status:", err);

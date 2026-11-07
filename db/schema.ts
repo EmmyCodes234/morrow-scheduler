@@ -41,6 +41,10 @@ export const users = pgTable(
     officeTopic: text("office_topic"),
     officeSpeedChatMins: integer("office_speed_chat_mins").notNull().default(10),
     officeNotifyEmail: boolean("office_notify_email").notNull().default(true),
+    officeAutoSchedule: boolean("office_auto_schedule").notNull().default(false),
+    officeScheduleDays: jsonb("office_schedule_days").$type<number[]>().default([1, 2, 3, 4, 5]),
+    officeScheduleStart: text("office_schedule_start").default("14:00"),
+    officeScheduleEnd: text("office_schedule_end").default("16:00"),
     officeWebPushSubscriptions: jsonb("office_web_push_subscriptions").$type<Array<{ endpoint: string; keys: { p256dh: string; auth: string } }>>().default([]),
     onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -214,8 +218,10 @@ export const officeKnocks = pgTable(
     guestEmail: text("guest_email").notNull(),
     guestAvatarUrl: text("guest_avatar_url"),
     topic: text("topic").notNull(), // "What's on your mind?"
-    status: text("status").notNull().default("ringing"), // "ringing", "admitted", "declined", "missed", "cancelled"
+    status: text("status").notNull().default("ringing"), // "ringing", "admitted", "declined", "missed", "cancelled", "queued", "concluded"
     meetLink: text("meet_link"),
+    googleCalendarEventId: text("google_calendar_event_id"),
+    queuePosition: integer("queue_position").default(0),
     admittedAt: timestamp("admitted_at", { withTimezone: true }),
     concludedAt: timestamp("concluded_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

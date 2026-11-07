@@ -31,6 +31,10 @@ interface HostOfficeViewProps {
     officeTopic?: string | null;
     officeSpeedChatMins?: number;
     officeNotifyEmail?: boolean;
+    officeAutoSchedule?: boolean;
+    officeScheduleDays?: number[] | null;
+    officeScheduleStart?: string | null;
+    officeScheduleEnd?: string | null;
     defaultLocationType?: string;
     zoomMeetingUrl?: string;
     teamsMeetingUrl?: string;
@@ -41,6 +45,10 @@ interface HostOfficeViewProps {
     officeTopic?: string;
     officeSpeedChatMins?: number;
     officeNotifyEmail?: boolean;
+    officeAutoSchedule?: boolean;
+    officeScheduleDays?: number[];
+    officeScheduleStart?: string;
+    officeScheduleEnd?: string;
   }) => Promise<void>;
   onAdmitKnock: (knockId: string) => Promise<string | null>;
   onDeclineKnock: (knockId: string) => Promise<void>;
@@ -62,6 +70,18 @@ export function HostOfficeView({
   const [topic, setTopic] = useState<string>(user.officeTopic || "");
   const [notifyEmail, setNotifyEmail] = useState<boolean>(
     user.officeNotifyEmail !== false
+  );
+  const [autoSchedule, setAutoSchedule] = useState<boolean>(
+    user.officeAutoSchedule || false
+  );
+  const [scheduleDays, setScheduleDays] = useState<number[]>(
+    user.officeScheduleDays || [1, 2, 3, 4, 5]
+  );
+  const [scheduleStart, setScheduleStart] = useState<string>(
+    user.officeScheduleStart || "14:00"
+  );
+  const [scheduleEnd, setScheduleEnd] = useState<string>(
+    user.officeScheduleEnd || "16:00"
   );
 
   const [isSaving, setIsSaving] = useState(false);
@@ -94,6 +114,10 @@ export function HostOfficeView({
         officeTopic: topic.trim(),
         officeSpeedChatMins: speedChatMins,
         officeNotifyEmail: notifyEmail,
+        officeAutoSchedule: autoSchedule,
+        officeScheduleDays: scheduleDays,
+        officeScheduleStart: scheduleStart,
+        officeScheduleEnd: scheduleEnd,
       });
     } finally {
       setIsSaving(false);
@@ -321,6 +345,86 @@ export function HostOfficeView({
               aria-label="Email Doorbell Alerts"
             />
           </div>
+
+          {/* Automated Recurring Schedule */}
+          <div className="pt-4 border-t border-border-button-default flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-body-medium font-medium text-text-primary">
+                  Automate Office Hours Schedule
+                </span>
+                <span className="text-caption-1-semibold text-text-secondary">
+                  Automatically open your door during scheduled hours and close it afterwards.
+                </span>
+              </div>
+              <Switch
+                isSelected={autoSchedule}
+                onChange={setAutoSchedule}
+                aria-label="Automate Office Hours Schedule"
+              />
+            </div>
+
+            {autoSchedule && (
+              <div className="p-4 rounded-2xl bg-background-secondary-default border border-border-button-default flex flex-col gap-4 animate-in fade-in slide-in-from-top-1">
+                {/* Days of week selector */}
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-caption-1-semibold text-text-primary">Active Days</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {[
+                      { day: 1, label: "Mon" },
+                      { day: 2, label: "Tue" },
+                      { day: 3, label: "Wed" },
+                      { day: 4, label: "Thu" },
+                      { day: 5, label: "Fri" },
+                      { day: 6, label: "Sat" },
+                      { day: 0, label: "Sun" },
+                    ].map(({ day, label }) => {
+                      const isSelected = scheduleDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => {
+                            setScheduleDays((prev) =>
+                              isSelected ? prev.filter((d) => d !== day) : [...prev, day]
+                            );
+                          }}
+                          className={cx(
+                            "px-3 py-1.5 rounded-xl text-caption-1-semibold border transition-all cursor-pointer",
+                            isSelected
+                              ? "bg-accent-600 text-white border-transparent"
+                              : "bg-background-primary-default text-text-secondary border-border-button-default hover:bg-background-secondary-hover"
+                          )}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Hours selector */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-caption-1-semibold text-text-secondary">Opens at</span>
+                    <Input
+                      type="time"
+                      value={scheduleStart}
+                      onChange={(val) => setScheduleStart(val)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-caption-1-semibold text-text-secondary">Closes at</span>
+                    <Input
+                      type="time"
+                      value={scheduleEnd}
+                      onChange={(val) => setScheduleEnd(val)}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right Column: Tips & Active Destination */}
@@ -395,6 +499,7 @@ export function HostOfficeView({
 
               const statusColorMap: Record<string, ChipColor> = {
                 ringing: "yellow",
+                queued: "yellow",
                 admitted: "lime",
                 concluded: "soft",
                 missed: "orange",
@@ -426,7 +531,7 @@ export function HostOfficeView({
                           color={statusColorMap[k.status] || "soft"}
                           variant="caption"
                         >
-                          {k.status}
+                          {k.status === "queued" ? `In queue (#${k.queuePosition || 1})` : k.status}
                         </Chip>
                       </div>
                       <span className="text-caption-1-semibold text-text-secondary truncate">

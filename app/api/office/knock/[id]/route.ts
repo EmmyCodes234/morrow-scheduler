@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/db";
 import { users, officeKnocks } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
+import {
+  createOfficeHoursCalendarEvent,
+  promoteNextQueuedKnock,
+  isHostWithinOfficeSchedule,
+} from "@/lib/office/office-service";
 
 export async function GET(
   req: NextRequest,
@@ -22,7 +27,7 @@ export async function GET(
       return NextResponse.json({ error: "Knock not found" }, { status: 404 });
     }
 
-    // Auto-timeout after 60 seconds
+    // Auto-timeout after 60 seconds (for ringing knocks only)
     const createdAtMs = new Date(knock.createdAt).getTime();
     const elapsedMs = Date.now() - createdAtMs;
 
@@ -36,6 +41,9 @@ export async function GET(
         .where(eq(officeKnocks.id, knock.id))
         .returning();
 
+      // Check if another knock is queued to promote
+      await promoteNextQueuedKnock(knock.hostId);
+
       return NextResponse.json({
         knock: {
           id: updated.id,
@@ -46,10 +54,25 @@ export async function GET(
       });
     }
 
+    // Calculate queue position if visitor is currently queued in waiting room
+    let queuePosition = knock.queuePosition || 0;
+    if (knock.status === "queued") {
+      const queueItems = await db.query.officeKnocks.findMany({
+        where: and(
+          eq(officeKnocks.hostId, knock.hostId),
+          inArray(officeKnocks.status, ["ringing", "queued"])
+        ),
+        orderBy: [asc(officeKnocks.createdAt)],
+      });
+      const idx = queueItems.findIndex((k) => k.id === knock.id);
+      queuePosition = idx >= 0 ? idx + 1 : 1;
+    }
+
     return NextResponse.json({
       knock: {
         id: knock.id,
         status: knock.status,
+        queuePosition,
         createdAt: knock.createdAt,
         meetLink: knock.meetLink,
         admittedAt: knock.admittedAt,
@@ -142,6 +165,26 @@ export async function PATCH(
         })
         .where(eq(users.id, host.id));
 
+      // Automatically create a calendar event hold on Google Calendar (Feature 2)
+      createOfficeHoursCalendarEvent({
+        host: {
+          id: host.id,
+          name: host.name,
+          email: host.email,
+          timezone: host.timezone,
+          googleAccessToken: host.googleAccessToken,
+          googleRefreshToken: host.googleRefreshToken,
+        },
+        knock: {
+          id: updatedKnock.id,
+          guestName: updatedKnock.guestName,
+          guestEmail: updatedKnock.guestEmail,
+          topic: updatedKnock.topic,
+          meetLink,
+        },
+        speedChatMins: host.officeSpeedChatMins || 10,
+      }).catch((err) => console.error("[Google Calendar] Failed to create speed-chat hold:", err));
+
       return NextResponse.json({
         success: true,
         knock: updatedKnock,
@@ -159,6 +202,9 @@ export async function PATCH(
         .where(eq(officeKnocks.id, knock.id))
         .returning();
 
+      // Check if another visitor is in queue and promote them
+      await promoteNextQueuedKnock(host.id);
+
       return NextResponse.json({ success: true, knock: updatedKnock });
     }
 
@@ -173,25 +219,26 @@ export async function PATCH(
         .where(eq(officeKnocks.id, knock.id))
         .returning();
 
-      // Check if other knocks are ringing: if not, revert host to open
-      const remainingKnocks = await db.query.officeKnocks.findMany({
-        where: and(
-          eq(officeKnocks.hostId, host.id),
-          eq(officeKnocks.status, "ringing")
-        ),
-      });
+      // Check if a queued knock is waiting: promote the next visitor (Feature 4)
+      const nextPromoted = await promoteNextQueuedKnock(host.id);
 
-      if (remainingKnocks.length === 0) {
+      if (!nextPromoted) {
+        // If no one is queued or ringing, evaluate host's schedule
+        const { effectiveStatus } = isHostWithinOfficeSchedule(host);
         await db
           .update(users)
           .set({
-            officeStatus: "open",
+            officeStatus: effectiveStatus,
             updatedAt: new Date(),
           })
           .where(eq(users.id, host.id));
       }
 
-      return NextResponse.json({ success: true, knock: updatedKnock });
+      return NextResponse.json({
+        success: true,
+        knock: updatedKnock,
+        promotedNext: Boolean(nextPromoted),
+      });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });

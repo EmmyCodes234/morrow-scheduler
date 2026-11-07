@@ -3,8 +3,7 @@ import { db } from "@/db";
 import { users, eventTypes } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { PublicBookingView } from "@/components/scheduling/public-booking";
-
-
+import { isHostWithinOfficeSchedule } from "@/lib/office/office-service";
 
 export default async function PublicBookingPage({
   params,
@@ -21,6 +20,9 @@ export default async function PublicBookingPage({
   if (!host) {
     notFound();
   }
+
+  // Calculate effective office hours status (manual or scheduled)
+  const { effectiveStatus } = isHostWithinOfficeSchedule(host);
 
   // Dynamically load host's event types from Neon DB
   const hostEventTypes = await db.query.eventTypes.findMany({
@@ -39,6 +41,9 @@ export default async function PublicBookingPage({
           avatarUrl: host.avatarUrl,
           brandColor: host.brandColor || "#2563EB",
           welcomeMessage: host.welcomeMessage || "Pick a time that works for you.",
+          officeStatus: effectiveStatus,
+          officeTopic: host.officeTopic,
+          officeSpeedChatMins: host.officeSpeedChatMins || 10,
         }}
         initialEventTypes={hostEventTypes.map((et) => ({
           id: et.id,

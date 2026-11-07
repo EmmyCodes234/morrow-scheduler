@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { isHostWithinOfficeSchedule } from "@/lib/office/office-service";
 
 describe("Virtual Office Hours Engine", () => {
   const EMAIL_REGEX =
@@ -39,10 +40,14 @@ describe("Virtual Office Hours Engine", () => {
   }
 
   function computeKnockStatus(knock: {
-    status: "ringing" | "admitted" | "declined" | "missed" | "cancelled" | "concluded";
+    status: "ringing" | "admitted" | "declined" | "missed" | "cancelled" | "concluded" | "queued";
     createdAt: Date;
     now: Date;
   }): { status: string; isExpired: boolean; secondsRemaining: number } {
+    if (knock.status === "queued") {
+      return { status: "queued", isExpired: false, secondsRemaining: 60 };
+    }
+
     const elapsedMs = knock.now.getTime() - knock.createdAt.getTime();
     const elapsedSeconds = Math.floor(elapsedMs / 1000);
     const secondsRemaining = Math.max(0, 60 - elapsedSeconds);
@@ -56,6 +61,10 @@ describe("Virtual Office Hours Engine", () => {
       isExpired: knock.status === "ringing" && elapsedMs > 60000,
       secondsRemaining,
     };
+  }
+
+  function computeEstimatedWait(position: number, speedChatMins: number): number {
+    return Math.max(1, position) * speedChatMins;
   }
 
   describe("Knock Input Validation", () => {
@@ -112,8 +121,6 @@ describe("Virtual Office Hours Engine", () => {
   });
 
   describe("60-Second Ringing Window & Timeout Transition", () => {
-    const baseTime = new Date("2026-11-07T12:00:00Z");
-
     it("keeps status as ringing when under 60 seconds have elapsed", () => {
       const createdAt = new Date("2026-11-07T12:00:00Z");
       const checkTime = new Date("2026-11-07T12:00:35Z"); // 35s later
@@ -142,6 +149,20 @@ describe("Virtual Office Hours Engine", () => {
       expect(res.status).toBe("missed");
       expect(res.isExpired).toBe(true);
       expect(res.secondsRemaining).toBe(0);
+    });
+
+    it("does not expire queued knocks", () => {
+      const createdAt = new Date("2026-11-07T12:00:00Z");
+      const checkTime = new Date("2026-11-07T12:05:00Z"); // 5 mins later
+
+      const res = computeKnockStatus({
+        status: "queued",
+        createdAt,
+        now: checkTime,
+      });
+
+      expect(res.status).toBe("queued");
+      expect(res.isExpired).toBe(false);
     });
   });
 
@@ -181,6 +202,157 @@ describe("Virtual Office Hours Engine", () => {
       // Host concludes meeting
       hostStatus = "open";
       expect(hostStatus).toBe("open");
+    });
+  });
+
+  describe("Scheduled Recurring Office Hours Windows", () => {
+    it("respects manual officeStatus when auto-schedule is disabled", () => {
+      const res = isHostWithinOfficeSchedule({
+        officeAutoSchedule: false,
+        officeStatus: "open",
+      });
+      expect(res.inSchedule).toBe(true);
+      expect(res.effectiveStatus).toBe("open");
+
+      const closedRes = isHostWithinOfficeSchedule({
+        officeAutoSchedule: false,
+        officeStatus: "closed",
+      });
+      expect(closedRes.inSchedule).toBe(false);
+      expect(closedRes.effectiveStatus).toBe("closed");
+    });
+
+    it("always preserves busy status even when auto-schedule is enabled", () => {
+      // Monday 15:00 UTC (inside 14:00-16:00 window)
+      const mondayMid = new Date("2026-11-09T15:00:00Z");
+      const res = isHostWithinOfficeSchedule(
+        {
+          officeAutoSchedule: true,
+          officeStatus: "busy",
+          officeScheduleDays: [1, 2, 3, 4, 5],
+          officeScheduleStart: "14:00",
+          officeScheduleEnd: "16:00",
+          timezone: "UTC",
+        },
+        mondayMid
+      );
+      expect(res.effectiveStatus).toBe("busy");
+      expect(res.inSchedule).toBe(false);
+    });
+
+    it("opens door automatically during configured recurring window on active day", () => {
+      // Monday 2026-11-09 at 14:30 UTC
+      const mondayInWindow = new Date("2026-11-09T14:30:00Z");
+      const res = isHostWithinOfficeSchedule(
+        {
+          officeAutoSchedule: true,
+          officeStatus: "closed",
+          officeScheduleDays: [1, 2, 3, 4, 5],
+          officeScheduleStart: "14:00",
+          officeScheduleEnd: "16:00",
+          timezone: "UTC",
+        },
+        mondayInWindow
+      );
+      expect(res.inSchedule).toBe(true);
+      expect(res.effectiveStatus).toBe("open");
+    });
+
+    it("keeps door closed before or after configured time window", () => {
+      // Monday 2026-11-09 at 13:59 UTC (before)
+      const beforeWindow = new Date("2026-11-09T13:59:00Z");
+      const beforeRes = isHostWithinOfficeSchedule(
+        {
+          officeAutoSchedule: true,
+          officeStatus: "closed",
+          officeScheduleDays: [1, 2, 3, 4, 5],
+          officeScheduleStart: "14:00",
+          officeScheduleEnd: "16:00",
+          timezone: "UTC",
+        },
+        beforeWindow
+      );
+      expect(beforeRes.inSchedule).toBe(false);
+      expect(beforeRes.effectiveStatus).toBe("closed");
+
+      // Monday 2026-11-09 at 16:01 UTC (after)
+      const afterWindow = new Date("2026-11-09T16:01:00Z");
+      const afterRes = isHostWithinOfficeSchedule(
+        {
+          officeAutoSchedule: true,
+          officeStatus: "closed",
+          officeScheduleDays: [1, 2, 3, 4, 5],
+          officeScheduleStart: "14:00",
+          officeScheduleEnd: "16:00",
+          timezone: "UTC",
+        },
+        afterWindow
+      );
+      expect(afterRes.inSchedule).toBe(false);
+      expect(afterRes.effectiveStatus).toBe("closed");
+    });
+
+    it("keeps door closed on non-scheduled days (e.g. Sunday)", () => {
+      // Sunday 2026-11-08 at 15:00 UTC
+      const sundayTime = new Date("2026-11-08T15:00:00Z");
+      const res = isHostWithinOfficeSchedule(
+        {
+          officeAutoSchedule: true,
+          officeStatus: "closed",
+          officeScheduleDays: [1, 2, 3, 4, 5], // Mon-Fri only
+          officeScheduleStart: "14:00",
+          officeScheduleEnd: "16:00",
+          timezone: "UTC",
+        },
+        sundayTime
+      );
+      expect(res.inSchedule).toBe(false);
+      expect(res.effectiveStatus).toBe("closed");
+    });
+
+    it("accurately accounts for host local timezone offset", () => {
+      // America/New_York is UTC-5 in November (EST)
+      // 19:30 UTC is 14:30 in New York
+      const utcTime = new Date("2026-11-09T19:30:00Z");
+      const res = isHostWithinOfficeSchedule(
+        {
+          officeAutoSchedule: true,
+          officeStatus: "closed",
+          officeScheduleDays: [1, 2, 3, 4, 5],
+          officeScheduleStart: "14:00",
+          officeScheduleEnd: "16:00",
+          timezone: "America/New_York",
+        },
+        utcTime
+      );
+      expect(res.inSchedule).toBe(true);
+      expect(res.effectiveStatus).toBe("open");
+    });
+  });
+
+  describe("Concurrent Visitor Queue & Waiting Room", () => {
+    it("calculates estimated wait time based on position and speed chat duration", () => {
+      expect(computeEstimatedWait(1, 10)).toBe(10);
+      expect(computeEstimatedWait(2, 10)).toBe(20);
+      expect(computeEstimatedWait(3, 15)).toBe(45);
+    });
+
+    it("assigns sequential positions to multiple concurrent queued knocks", () => {
+      const activeKnock = { id: "k1", status: "ringing" };
+      const knocks = [
+        { id: "k2", status: "queued", createdAt: new Date("2026-11-07T10:00:00Z") },
+        { id: "k3", status: "queued", createdAt: new Date("2026-11-07T10:01:00Z") },
+        { id: "k4", status: "queued", createdAt: new Date("2026-11-07T10:02:00Z") },
+      ];
+
+      const queuedKnocks = knocks.filter((k) => k.status === "queued");
+      const positionK2 = queuedKnocks.findIndex((k) => k.id === "k2") + 1;
+      const positionK3 = queuedKnocks.findIndex((k) => k.id === "k3") + 1;
+      const positionK4 = queuedKnocks.findIndex((k) => k.id === "k4") + 1;
+
+      expect(positionK2).toBe(1);
+      expect(positionK3).toBe(2);
+      expect(positionK4).toBe(3);
     });
   });
 });

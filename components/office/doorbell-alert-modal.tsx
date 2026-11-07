@@ -22,7 +22,8 @@ export interface OfficeKnock {
   guestEmail: string;
   guestAvatarUrl?: string | null;
   topic: string;
-  status: "ringing" | "admitted" | "declined" | "missed" | "cancelled" | "concluded";
+  status: "ringing" | "admitted" | "declined" | "missed" | "cancelled" | "concluded" | "queued";
+  queuePosition?: number | null;
   meetLink?: string | null;
   admittedAt?: string | null;
   createdAt: string;
@@ -52,6 +53,9 @@ export function DoorbellAlertModal({
 
   // Find currently active admitted knock
   const admittedKnock = knocks.find((k) => k.status === "admitted");
+
+  // Count knocks waiting in queue
+  const queuedKnocksCount = knocks.filter((k) => k.status === "queued").length;
 
   // Countdown timer for ringing knock (60s)
   const [secondsRemaining, setSecondsRemaining] = useState<number>(60);
@@ -339,6 +343,11 @@ export function DoorbellAlertModal({
                     ? "Overtime"
                     : `${chatMinsLeft}:${chatSecsLeft.toString().padStart(2, "0")} left`}
                 </Chip>
+                {queuedKnocksCount > 0 && (
+                  <Chip color="yellow" variant="caption">
+                    +{queuedKnocksCount} in queue
+                  </Chip>
+                )}
               </div>
               <div className="text-caption-1-semibold text-text-secondary truncate">
                 {admittedKnock.topic}
@@ -365,7 +374,11 @@ export function DoorbellAlertModal({
               disabled={isConcluding}
               onClick={handleConclude}
             >
-              {isConcluding ? "Wrapping up..." : "Conclude chat"}
+              {isConcluding
+                ? "Wrapping up..."
+                : queuedKnocksCount > 0
+                ? "Conclude & Call Next"
+                : "Conclude chat"}
             </Button>
           </div>
         </aside>

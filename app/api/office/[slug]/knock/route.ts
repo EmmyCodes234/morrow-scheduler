@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { users, officeKnocks } from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { sendDoorbellKnockEmail } from "@/lib/email";
+import { isHostWithinOfficeSchedule } from "@/lib/office/office-service";
 
 const EMAIL_REGEX =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
@@ -41,35 +42,54 @@ export async function POST(
       return NextResponse.json({ error: "Host not found" }, { status: 404 });
     }
 
-    if (host.officeStatus === "closed") {
+    const { inSchedule, effectiveStatus } = isHostWithinOfficeSchedule(host);
+
+    if (effectiveStatus === "closed") {
       return NextResponse.json(
         { error: "Office hours are currently closed. Please schedule a time on the calendar.", isClosed: true },
         { status: 400 }
       );
     }
 
-    // Check if this guest already has an active ringing knock within the last 60 seconds
+    // Check if this guest already has an active ringing or queued knock
     const cutoff = new Date(Date.now() - 60000);
     const existingActiveKnock = await db.query.officeKnocks.findFirst({
       where: and(
         eq(officeKnocks.hostId, host.id),
         eq(officeKnocks.guestEmail, guestEmail),
-        eq(officeKnocks.status, "ringing")
+        inArray(officeKnocks.status, ["ringing", "queued"])
       ),
       orderBy: [desc(officeKnocks.createdAt)],
     });
 
-    if (existingActiveKnock && new Date(existingActiveKnock.createdAt).getTime() > cutoff.getTime()) {
-      return NextResponse.json({
-        success: true,
-        knock: {
-          id: existingActiveKnock.id,
-          status: existingActiveKnock.status,
-          createdAt: existingActiveKnock.createdAt,
-          expiresAt: new Date(new Date(existingActiveKnock.createdAt).getTime() + 60000).toISOString(),
-        },
-      });
+    if (existingActiveKnock) {
+      if (existingActiveKnock.status === "queued" || new Date(existingActiveKnock.createdAt).getTime() > cutoff.getTime()) {
+        return NextResponse.json({
+          success: true,
+          knock: {
+            id: existingActiveKnock.id,
+            status: existingActiveKnock.status,
+            createdAt: existingActiveKnock.createdAt,
+            queuePosition: existingActiveKnock.queuePosition || 1,
+            expiresAt: existingActiveKnock.status === "ringing"
+              ? new Date(new Date(existingActiveKnock.createdAt).getTime() + 60000).toISOString()
+              : undefined,
+          },
+        });
+      }
     }
+
+    // Determine if visitor joins waiting room queue (if host is busy in another call or someone else is ringing)
+    const activeKnocks = await db.query.officeKnocks.findMany({
+      where: and(
+        eq(officeKnocks.hostId, host.id),
+        inArray(officeKnocks.status, ["ringing", "admitted", "queued"])
+      ),
+    });
+
+    const isBusy = effectiveStatus === "busy" || activeKnocks.length > 0;
+    const initialStatus = isBusy ? "queued" : "ringing";
+    const queuePosition = isBusy ? activeKnocks.length + 1 : 0;
 
     // Create new knock
     const [created] = await db
@@ -80,12 +100,13 @@ export async function POST(
         guestEmail,
         guestAvatarUrl,
         topic,
-        status: "ringing",
+        status: initialStatus,
+        queuePosition,
       })
       .returning();
 
-    // Fire instant email notification via Resend if enabled
-    if (host.officeNotifyEmail !== false) {
+    // Fire instant email notification if immediately ringing and notifications enabled
+    if (initialStatus === "ringing" && host.officeNotifyEmail !== false) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://usemorrow.xyz";
       const admitUrl = `${appUrl}/dashboard?tab=office&admitKnock=${created.id}`;
       sendDoorbellKnockEmail({
@@ -103,8 +124,11 @@ export async function POST(
       knock: {
         id: created.id,
         status: created.status,
+        queuePosition: created.queuePosition || 0,
         createdAt: created.createdAt,
-        expiresAt: new Date(new Date(created.createdAt).getTime() + 60000).toISOString(),
+        expiresAt: created.status === "ringing"
+          ? new Date(new Date(created.createdAt).getTime() + 60000).toISOString()
+          : undefined,
       },
     }, { status: 201 });
   } catch (err) {

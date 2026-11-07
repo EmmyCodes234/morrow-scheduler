@@ -32,6 +32,10 @@ export async function GET(req: NextRequest) {
       officeTopic: host.officeTopic || "",
       officeSpeedChatMins: host.officeSpeedChatMins || 10,
       officeNotifyEmail: host.officeNotifyEmail !== false,
+      officeAutoSchedule: host.officeAutoSchedule || false,
+      officeScheduleDays: host.officeScheduleDays || [1, 2, 3, 4, 5],
+      officeScheduleStart: host.officeScheduleStart || "14:00",
+      officeScheduleEnd: host.officeScheduleEnd || "16:00",
       knocks: knocks.map((k) => ({
         id: k.id,
         guestName: k.guestName,
@@ -39,6 +43,7 @@ export async function GET(req: NextRequest) {
         guestAvatarUrl: k.guestAvatarUrl,
         topic: k.topic,
         status: k.status,
+        queuePosition: k.queuePosition || 0,
         meetLink: k.meetLink,
         admittedAt: k.admittedAt,
         createdAt: k.createdAt,
@@ -95,6 +100,24 @@ export async function PATCH(req: NextRequest) {
       updateData.officeNotifyEmail = Boolean(body.officeNotifyEmail);
     }
 
+    if (body.officeAutoSchedule !== undefined) {
+      updateData.officeAutoSchedule = Boolean(body.officeAutoSchedule);
+    }
+
+    if (body.officeScheduleDays !== undefined && Array.isArray(body.officeScheduleDays)) {
+      updateData.officeScheduleDays = (body.officeScheduleDays as unknown[]).filter(
+        (d): d is number => typeof d === "number" && d >= 0 && d <= 6
+      );
+    }
+
+    if (body.officeScheduleStart !== undefined && typeof body.officeScheduleStart === "string") {
+      updateData.officeScheduleStart = body.officeScheduleStart;
+    }
+
+    if (body.officeScheduleEnd !== undefined && typeof body.officeScheduleEnd === "string") {
+      updateData.officeScheduleEnd = body.officeScheduleEnd;
+    }
+
     const [updated] = await db
       .update(users)
       .set(updateData)
@@ -108,6 +131,10 @@ export async function PATCH(req: NextRequest) {
         officeTopic: updated.officeTopic,
         officeSpeedChatMins: updated.officeSpeedChatMins,
         officeNotifyEmail: updated.officeNotifyEmail,
+        officeAutoSchedule: updated.officeAutoSchedule,
+        officeScheduleDays: updated.officeScheduleDays,
+        officeScheduleStart: updated.officeScheduleStart,
+        officeScheduleEnd: updated.officeScheduleEnd,
       },
     });
   } catch (err) {

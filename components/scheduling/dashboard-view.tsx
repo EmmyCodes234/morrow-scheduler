@@ -151,6 +151,10 @@ export interface HostUser {
   officeTopic?: string | null;
   officeSpeedChatMins?: number;
   officeNotifyEmail?: boolean;
+  officeAutoSchedule?: boolean;
+  officeScheduleDays?: number[] | null;
+  officeScheduleStart?: string | null;
+  officeScheduleEnd?: string | null;
 }
 
 export function DashboardView({
@@ -255,6 +259,10 @@ export function DashboardView({
             officeTopic: data.user.officeTopic || null,
             officeSpeedChatMins: data.user.officeSpeedChatMins || 10,
             officeNotifyEmail: data.user.officeNotifyEmail !== false,
+            officeAutoSchedule: Boolean(data.user.officeAutoSchedule),
+            officeScheduleDays: data.user.officeScheduleDays || [1, 2, 3, 4, 5],
+            officeScheduleStart: data.user.officeScheduleStart || "14:00",
+            officeScheduleEnd: data.user.officeScheduleEnd || "16:00",
           });
         }
         setIsLoading(false);
@@ -357,6 +365,10 @@ export function DashboardView({
                 officeTopic: data.officeTopic ?? prev.officeTopic,
                 officeSpeedChatMins: data.officeSpeedChatMins ?? prev.officeSpeedChatMins,
                 officeNotifyEmail: data.officeNotifyEmail ?? prev.officeNotifyEmail,
+                officeAutoSchedule: data.officeAutoSchedule ?? prev.officeAutoSchedule,
+                officeScheduleDays: data.officeScheduleDays ?? prev.officeScheduleDays,
+                officeScheduleStart: data.officeScheduleStart ?? prev.officeScheduleStart,
+                officeScheduleEnd: data.officeScheduleEnd ?? prev.officeScheduleEnd,
               }
             : null
         );
@@ -445,6 +457,10 @@ export function DashboardView({
     officeTopic?: string;
     officeSpeedChatMins?: number;
     officeNotifyEmail?: boolean;
+    officeAutoSchedule?: boolean;
+    officeScheduleDays?: number[];
+    officeScheduleStart?: string;
+    officeScheduleEnd?: string;
   }): Promise<void> => {
     try {
       const res = await fetch("/api/user/office", {
@@ -463,6 +479,10 @@ export function DashboardView({
                 officeTopic: data.user.officeTopic,
                 officeSpeedChatMins: data.user.officeSpeedChatMins,
                 officeNotifyEmail: data.user.officeNotifyEmail,
+                officeAutoSchedule: data.user.officeAutoSchedule,
+                officeScheduleDays: data.user.officeScheduleDays,
+                officeScheduleStart: data.user.officeScheduleStart,
+                officeScheduleEnd: data.user.officeScheduleEnd,
               }
             : null
         );
@@ -1572,6 +1592,10 @@ export function DashboardView({
               officeTopic: user.officeTopic,
               officeSpeedChatMins: user.officeSpeedChatMins || 10,
               officeNotifyEmail: user.officeNotifyEmail !== false,
+              officeAutoSchedule: user.officeAutoSchedule,
+              officeScheduleDays: user.officeScheduleDays,
+              officeScheduleStart: user.officeScheduleStart,
+              officeScheduleEnd: user.officeScheduleEnd,
               defaultLocationType: user.defaultLocationType,
               zoomMeetingUrl: user.zoomMeetingUrl,
               teamsMeetingUrl: user.teamsMeetingUrl,

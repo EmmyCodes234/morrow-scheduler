@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { users, eventTypes } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { PublicOfficeView } from "@/components/office/public-office-view";
+import { isHostWithinOfficeSchedule } from "@/lib/office/office-service";
 import type { Metadata } from "next";
 
 export async function generateMetadata({
@@ -43,6 +44,9 @@ export default async function PublicOfficePage({
     notFound();
   }
 
+  // Calculate effective office hours status
+  const { effectiveStatus } = isHostWithinOfficeSchedule(host);
+
   // Dynamically load host's event types from Neon DB for fallback scheduler
   const hostEventTypes = await db.query.eventTypes.findMany({
     where: eq(eventTypes.userId, host.id),
@@ -60,7 +64,7 @@ export default async function PublicOfficePage({
           avatarUrl: host.avatarUrl,
           brandColor: host.brandColor || "#2563EB",
           welcomeMessage: host.welcomeMessage || "Knock to drop in for a quick chat.",
-          officeStatus: host.officeStatus || "closed",
+          officeStatus: effectiveStatus,
           officeTopic: host.officeTopic,
           officeSpeedChatMins: host.officeSpeedChatMins || 10,
         }}

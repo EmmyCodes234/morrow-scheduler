@@ -31,7 +31,7 @@ export interface PublicOfficeViewProps {
 }
 
 export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProps) {
-  const [officeState, setOfficeState] = useState<"idle" | "ringing" | "admitted" | "fallback">(
+  const [officeState, setOfficeState] = useState<"idle" | "queued" | "ringing" | "admitted" | "fallback">(
     host.officeStatus === "closed" ? "fallback" : "idle"
   );
   const [guestName, setGuestName] = useState("");
@@ -41,6 +41,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [activeKnockId, setActiveKnockId] = useState<string | null>(null);
+  const [queuePosition, setQueuePosition] = useState<number>(1);
   const [secondsRemaining, setSecondsRemaining] = useState<number>(60);
   const [meetLink, setMeetLink] = useState<string | null>(null);
 
@@ -67,21 +68,25 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
     };
   }, []);
 
-  // Ringing countdown & status polling
+  // Status polling for queued and ringing knocks
   useEffect(() => {
-    if (officeState !== "ringing" || !activeKnockId) return;
+    if ((officeState !== "ringing" && officeState !== "queued") || !activeKnockId) return;
 
-    // Countdown ticker
-    const timerInterval = setInterval(() => {
-      setSecondsRemaining((prev) => {
-        if (prev <= 1) {
-          clearInterval(timerInterval);
-          setOfficeState("fallback");
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    let timerInterval: NodeJS.Timeout | null = null;
+
+    // Countdown ticker only when ringing
+    if (officeState === "ringing") {
+      timerInterval = setInterval(() => {
+        setSecondsRemaining((prev) => {
+          if (prev <= 1) {
+            if (timerInterval) clearInterval(timerInterval);
+            setOfficeState("fallback");
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
 
     // Poll status from server
     const pollStatus = async () => {
@@ -91,15 +96,22 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
         const data = await res.json();
         if (data.knock) {
           if (data.knock.status === "admitted" && data.knock.meetLink) {
-            clearInterval(timerInterval);
+            if (timerInterval) clearInterval(timerInterval);
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
             setMeetLink(data.knock.meetLink);
             setOfficeState("admitted");
             playDoorbellChime();
+          } else if (data.knock.status === "ringing" && officeState === "queued") {
+            // Promoted from queue to ringing!
+            setSecondsRemaining(60);
+            setOfficeState("ringing");
+            playDoorbellChime();
           } else if (data.knock.status === "declined" || data.knock.status === "missed") {
-            clearInterval(timerInterval);
+            if (timerInterval) clearInterval(timerInterval);
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
             setOfficeState("fallback");
+          } else if (data.knock.status === "queued" && data.knock.queuePosition) {
+            setQueuePosition(data.knock.queuePosition);
           }
         }
       } catch (err) {
@@ -111,7 +123,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
     pollIntervalRef.current = setInterval(pollStatus, 2000);
 
     return () => {
-      clearInterval(timerInterval);
+      if (timerInterval) clearInterval(timerInterval);
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, [officeState, activeKnockId]);
@@ -123,7 +135,7 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
     setIsSubmitting(true);
     setErrorMsg(null);
 
-    // Tactile sound effect on click
+    // Sound effect on click
     playDoorKnock();
 
     try {
@@ -149,8 +161,13 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
 
       if (data.knock?.id) {
         setActiveKnockId(data.knock.id);
-        setSecondsRemaining(60);
-        setOfficeState("ringing");
+        if (data.knock.status === "queued") {
+          setQueuePosition(data.knock.queuePosition || 1);
+          setOfficeState("queued");
+        } else {
+          setSecondsRemaining(60);
+          setOfficeState("ringing");
+        }
       }
     } catch (err) {
       console.error("Failed to submit knock:", err);
@@ -298,6 +315,37 @@ export function PublicOfficeView({ host, eventTypes = [] }: PublicOfficeViewProp
                 )}
               </Button>
             </form>
+          </div>
+        )}
+
+        {/* STATE: WAITING ROOM QUEUE */}
+        {officeState === "queued" && (
+          <div className="flex flex-col items-center justify-center py-10 px-4 text-center gap-6 max-w-md mx-auto w-full animate-in fade-in duration-300">
+            <div className="relative flex items-center justify-center size-20 rounded-full bg-status-yellow-background border border-border-button-default text-status-yellow-text">
+              <HugeClock className="size-10" />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-center gap-2">
+                <Chip color="yellow" variant="bold">
+                  Queue Position #{queuePosition}
+                </Chip>
+              </div>
+              <h2 className="text-title-2-medium text-text-primary">
+                You&apos;re next in line
+              </h2>
+              <p className="text-body-regular text-text-secondary">
+                {host.name} is currently speaking with a visitor. Your spot is held and your knock will ring automatically as soon as their call wraps up.
+              </p>
+            </div>
+
+            <div className="py-2 px-4 rounded-xl bg-background-secondary-default border border-border-button-default text-caption-1-semibold text-text-secondary">
+              Est. wait: ~{Math.max(1, queuePosition) * (host.officeSpeedChatMins || 10)} mins • Please keep this tab open
+            </div>
+
+            <Button variant="secondary" size="small" onClick={handleCancelKnock}>
+              Leave Queue
+            </Button>
           </div>
         )}
 

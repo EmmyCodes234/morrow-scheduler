@@ -38,6 +38,9 @@ export interface PublicHost {
   brandColor?: string | null;
   welcomeMessage?: string | null;
   defaultLocationType?: string | null;
+  officeStatus?: "open" | "busy" | "closed" | string | null;
+  officeTopic?: string | null;
+  officeSpeedChatMins?: number | null;
 }
 
 export interface PublicEventType {
@@ -301,7 +304,49 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
       : "Google Meet";
 
   return (
-    <div className="w-full max-w-5xl mx-auto rounded-3xl border border-border-button-default bg-background-primary-default shadow-sm overflow-hidden">
+    <div className="w-full max-w-5xl mx-auto flex flex-col gap-4">
+      {/* Live Virtual Office Drop-in Banner */}
+      {host?.officeStatus && host.officeStatus !== "closed" && (
+        <div className="p-4 rounded-3xl border border-border-button-default bg-background-primary-default shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <span className="relative flex size-3 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-status-lime-text opacity-75" />
+              <span className="relative inline-flex rounded-full size-3 bg-status-lime-text" />
+            </span>
+            <div className="flex flex-col min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-body-medium font-semibold text-text-primary truncate">
+                  {host.name} is available for office hours right now
+                </span>
+                <Chip color={host.officeStatus === "open" ? "lime" : "yellow"} variant="caption">
+                  {host.officeStatus === "open" ? "Door Open" : "In Meeting"}
+                </Chip>
+              </div>
+              <p className="text-caption-1-semibold text-text-secondary truncate">
+                {host.officeTopic
+                  ? `Topic: "${host.officeTopic}"`
+                  : `Knock on their virtual door for a quick ${host.officeSpeedChatMins || 10}-minute chat`}
+              </p>
+            </div>
+          </div>
+
+          <Button
+            variant="primary"
+            size="small"
+            leadingIcon={HugeVideo}
+            onClick={() => {
+              if (typeof window !== "undefined") {
+                window.location.href = `/${host.slug}/office`;
+              }
+            }}
+            className="shrink-0"
+          >
+            Knock on door
+          </Button>
+        </div>
+      )}
+
+      <div className="w-full rounded-3xl border border-border-button-default bg-background-primary-default shadow-sm overflow-hidden">
       {step === "confirmed" ? (
         /* CONFIRMATION / SUBMISSION VIEW */
         <div className="p-8 sm:p-14 flex flex-col items-center text-center max-w-lg mx-auto">
@@ -765,6 +810,7 @@ export function PublicBookingView({ host, initialEventTypes = [] }: PublicBookin
           <MorrowLogo size={16} variant="full" />
         </a>
       </div>
+    </div>
     </div>
   );
 }
