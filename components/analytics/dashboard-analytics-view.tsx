@@ -2,26 +2,10 @@
 
 import { useState, useMemo } from "react";
 import { Avatar } from "@/components/base/avatar/avatar";
-import { Badge } from "@/components/base/badges/badge";
 import { Chip } from "@/components/base/badges/chip";
-import { Button } from "@/components/base/buttons/button";
-import {
-  HugeCalendar,
-  HugeClock,
-  HugeVideo,
-  HugeCheck,
-  HugeCheckIn,
-  HugeAnalytics,
-  HugeSparkles,
-  HugeGlobe,
-  HugeArrowRight,
-} from "@/components/icons/hugeicons";
 import {
   RiCalendarCheckLine,
   RiTimeLine,
-  RiUserSharedLine,
-  RiGroupLine,
-  RiSparklingLine,
   RiDoorOpenLine,
   RiPercentLine,
 } from "@remixicon/react";
@@ -108,14 +92,8 @@ export function DashboardAnalyticsView({
   const completedCount = filteredBookings.filter((b) => b.status === "Completed").length;
   const cancelledCount = filteredBookings.filter((b) => b.status === "Cancelled").length;
 
-  const validBookings = totalBookings > 0 ? totalBookings : 1;
   const cancellationRate = totalBookings > 0 ? Math.round((cancelledCount / totalBookings) * 100) : 0;
   const attendanceRate = totalBookings > 0 ? 100 - cancellationRate : 100;
-
-  const groupBookingsCount = filteredBookings.filter(
-    (b) => b.isGroup || (b.maxAttendees && b.maxAttendees > 1)
-  ).length;
-  const oneOnOneCount = totalBookings - groupBookingsCount;
 
   // Calculate meeting hours
   const totalMinutes = filteredBookings.reduce((acc, curr) => {
@@ -132,8 +110,6 @@ export function DashboardAnalyticsView({
     (k) => k.status === "admitted" || k.status === "concluded"
   ).length;
   const admissionRate = totalKnocks > 0 ? Math.round((admittedKnocks / totalKnocks) * 100) : 0;
-  const officeHoursMinutes = admittedKnocks * defaultSpeedChatMins;
-  const officeHoursHosted = (officeHoursMinutes / 60).toFixed(1);
 
   // Day of Week Distribution
   const dayDistribution = useMemo(() => {
@@ -189,15 +165,10 @@ export function DashboardAnalyticsView({
       }));
   }, [filteredBookings, eventTypes, totalBookings]);
 
-  // Actionable Insights based on calculated data
-  const peakDay = useMemo(() => {
-    return [...dayDistribution].sort((a, b) => b.count - a.count)[0];
-  }, [dayDistribution]);
-
   return (
-    <div className="flex flex-col gap-6 sm:gap-8 w-full max-w-6xl">
+    <div className="flex flex-col gap-5 sm:gap-8 w-full max-w-6xl">
       {/* Header & Timeframe Selector */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 sm:pb-6 border-b border-border-button-default">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 pb-4 sm:pb-6 border-b border-border-button-default">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <h1 className="text-title-1-medium text-text-primary tracking-tight">Analytics</h1>
@@ -223,7 +194,7 @@ export function DashboardAnalyticsView({
               type="button"
               onClick={() => setTimeframe(item.id)}
               className={cx(
-                "py-2 sm:py-1.5 sm:px-3 rounded-xl text-caption-1-semibold transition-all cursor-pointer text-center min-h-[44px] flex items-center justify-center",
+                "py-2 sm:py-1.5 sm:px-3 rounded-xl text-caption-1-semibold transition-all cursor-pointer text-center min-h-[40px] sm:min-h-[36px] flex items-center justify-center",
                 timeframe === item.id
                   ? "bg-background-primary-default text-text-primary shadow-2xs font-bold ring-1 ring-border-button-default"
                   : "text-text-secondary hover:text-text-primary"
@@ -237,132 +208,74 @@ export function DashboardAnalyticsView({
       </div>
 
       {/* Primary KPI Grid (4 Pillars) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
         {/* KPI 1: Total Scheduled Bookings */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col justify-between shadow-2xs gap-3">
+        <div className="rounded-2xl sm:rounded-3xl border border-border-button-default bg-background-primary-default p-3.5 sm:p-5 flex flex-col justify-between shadow-2xs gap-2 sm:gap-3">
           <div className="flex items-center justify-between">
             <span className="text-caption-1-semibold text-text-secondary truncate">Bookings</span>
             <div className="size-7 sm:size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center shrink-0">
               <RiCalendarCheckLine className="size-4" />
             </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-title-1-medium text-text-primary">{totalBookings}</span>
-            <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary truncate">
-              <span>{confirmedCount} conf</span>
-              <span>&bull;</span>
-              <span>{completedCount} done</span>
-            </div>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-title-1-medium text-text-primary leading-none">{totalBookings}</span>
+            <p className="text-caption-2-medium text-text-secondary truncate pt-1">
+              {confirmedCount} conf &bull; {completedCount} done
+            </p>
           </div>
         </div>
 
         {/* KPI 2: Meeting Hours Hosted */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col justify-between shadow-2xs gap-3">
+        <div className="rounded-2xl sm:rounded-3xl border border-border-button-default bg-background-primary-default p-3.5 sm:p-5 flex flex-col justify-between shadow-2xs gap-2 sm:gap-3">
           <div className="flex items-center justify-between">
             <span className="text-caption-1-semibold text-text-secondary truncate">Meeting Time</span>
             <div className="size-7 sm:size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center shrink-0">
               <RiTimeLine className="size-4" />
             </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <div className="flex items-baseline gap-1">
-              <span className="text-title-1-medium text-text-primary">{totalHours}</span>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-baseline gap-1 leading-none">
+              <span className="text-title-1-medium text-text-primary leading-none">{totalHours}</span>
               <span className="text-body-2-medium text-text-tertiary">hrs</span>
             </div>
-            <span className="text-[11px] font-medium text-text-secondary truncate">
+            <p className="text-caption-2-medium text-text-secondary truncate pt-1">
               Across all calls
-            </span>
+            </p>
           </div>
         </div>
 
         {/* KPI 3: Attendance & Reliability Rate */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col justify-between shadow-2xs gap-3">
+        <div className="rounded-2xl sm:rounded-3xl border border-border-button-default bg-background-primary-default p-3.5 sm:p-5 flex flex-col justify-between shadow-2xs gap-2 sm:gap-3">
           <div className="flex items-center justify-between">
             <span className="text-caption-1-semibold text-text-secondary truncate">Reliability</span>
             <div className="size-7 sm:size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center shrink-0">
               <RiPercentLine className="size-4" />
             </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <div className="flex items-baseline gap-1">
-              <span className="text-title-1-medium text-text-primary">{attendanceRate}%</span>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-baseline gap-1 leading-none">
+              <span className="text-title-1-medium text-text-primary leading-none">{attendanceRate}%</span>
             </div>
-            <span className="text-[11px] font-medium text-status-lime-text truncate">
-              {cancellationRate === 0 ? "100% Attended" : `${cancelledCount} cancelled`}
-            </span>
+            <p className="text-caption-2-medium text-text-secondary truncate pt-1">
+              {cancellationRate === 0 ? "100% attended" : `${cancelledCount} cancelled`}
+            </p>
           </div>
         </div>
 
         {/* KPI 4: Office Hours Admitted */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-5 flex flex-col justify-between shadow-2xs gap-3">
+        <div className="rounded-2xl sm:rounded-3xl border border-border-button-default bg-background-primary-default p-3.5 sm:p-5 flex flex-col justify-between shadow-2xs gap-2 sm:gap-3">
           <div className="flex items-center justify-between">
             <span className="text-caption-1-semibold text-text-secondary truncate">Speed-Chats</span>
             <div className="size-7 sm:size-8 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 flex items-center justify-center shrink-0">
               <RiDoorOpenLine className="size-4" />
             </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <div className="flex items-baseline gap-1">
-              <span className="text-title-1-medium text-text-primary">{admittedKnocks}</span>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-baseline gap-1 leading-none">
+              <span className="text-title-1-medium text-text-primary leading-none">{admittedKnocks}</span>
             </div>
-            <span className="text-[11px] font-medium text-accent-600 truncate">
+            <p className="text-caption-2-medium text-text-secondary truncate pt-1">
               {admissionRate}% admitted
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Helpful Smart Insights Card */}
-      <div className="rounded-3xl border border-accent-200 dark:border-accent-900 bg-accent-50/50 dark:bg-accent-950/20 p-4 sm:p-6 flex flex-col gap-4">
-        <div className="flex items-center gap-2.5">
-          <div className="size-7 rounded-lg bg-accent-500 text-white flex items-center justify-center">
-            <HugeSparkles className="size-4" />
-          </div>
-          <span className="text-body-medium font-semibold text-text-primary">
-            Schedule Intelligence & Recommendations
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Recommendation 1 */}
-          <div className="p-4 rounded-2xl bg-background-primary-default border border-border-button-default flex flex-col gap-1.5 shadow-2xs">
-            <span className="text-caption-1-semibold text-accent-600 uppercase">Peak Demand</span>
-            <p className="text-body-2-regular text-text-secondary leading-relaxed">
-              {peakDay && peakDay.count > 0 ? (
-                <>
-                  <strong className="text-text-primary font-semibold">{peakDay.day}</strong> is your highest demand day ({peakDay.percent}% of bookings). Consider expanding available slots on {peakDay.day}.
-                </>
-              ) : (
-                "Your bookings are distributed evenly throughout the week. Keep your current schedule active."
-              )}
-            </p>
-          </div>
-
-          {/* Recommendation 2 */}
-          <div className="p-4 rounded-2xl bg-background-primary-default border border-border-button-default flex flex-col gap-1.5 shadow-2xs">
-            <span className="text-caption-1-semibold text-accent-600 uppercase">Meeting Formats</span>
-            <p className="text-body-2-regular text-text-secondary leading-relaxed">
-              {groupBookingsCount > 0 ? (
-                <>
-                  <strong className="text-text-primary font-semibold">{groupBookingsCount} group sessions</strong> hosted alongside {oneOnOneCount} 1-on-1 strategy sessions.
-                </>
-              ) : (
-                "All sessions are 1-on-1. Creating a Group Event Type (e.g. Workshop or Office Hours) lets multiple participants join a single slot."
-              )}
-            </p>
-          </div>
-
-          {/* Recommendation 3 */}
-          <div className="p-4 rounded-2xl bg-background-primary-default border border-border-button-default flex flex-col gap-1.5 shadow-2xs">
-            <span className="text-caption-1-semibold text-accent-600 uppercase">Drop-in Velocity</span>
-            <p className="text-body-2-regular text-text-secondary leading-relaxed">
-              {admittedKnocks > 0 ? (
-                <>
-                  You&apos;ve served <strong className="text-text-primary font-semibold">{admittedKnocks} drop-in visitors</strong> in speed chats ({officeHoursHosted} hrs). These fast interactions build strong rapport.
-                </>
-              ) : (
-                "Turn on your recurring Office Hours schedule to allow visitors to knock for spontaneous speed-chats without calendar back-and-forth."
-              )}
             </p>
           </div>
         </div>
@@ -371,8 +284,8 @@ export function DashboardAnalyticsView({
       {/* Two Column Section: Peak Day Distribution & Event Type Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Left Card: Weekly Demand Distribution */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 sm:gap-6 shadow-2xs">
-          <div className="flex flex-col gap-1">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 shadow-2xs">
+          <div className="flex flex-col gap-0.5">
             <span className="text-title-3-semibold text-text-primary">Weekly Booking Distribution</span>
             <span className="text-caption-1-medium text-text-secondary">
               Number of appointments scheduled per day of the week
@@ -381,19 +294,19 @@ export function DashboardAnalyticsView({
 
           <div className="flex flex-col gap-3">
             {dayDistribution.map((item) => (
-              <div key={item.day} className="flex items-center gap-3">
-                <span className="w-9 text-caption-1-semibold text-text-secondary text-start">
+              <div key={item.day} className="flex items-center gap-2.5 sm:gap-3">
+                <span className="w-8 sm:w-9 text-caption-1-semibold text-text-secondary text-start shrink-0">
                   {item.day}
                 </span>
 
-                <div className="flex-1 h-3 rounded-full bg-background-secondary-default overflow-hidden relative">
+                <div className="flex-1 h-2.5 sm:h-3 rounded-full bg-background-secondary-default overflow-hidden relative">
                   <div
                     className="h-full rounded-full bg-accent-500 transition-all duration-500"
                     style={{ width: `${item.percent}%` }}
                   />
                 </div>
 
-                <div className="w-16 flex items-center justify-end gap-1 text-caption-1-medium text-text-primary">
+                <div className="w-14 sm:w-16 flex items-center justify-end gap-1 text-caption-2-medium sm:text-caption-1-medium text-text-primary shrink-0">
                   <span className="font-semibold">{item.count}</span>
                   <span className="text-text-tertiary">({item.percent}%)</span>
                 </div>
@@ -403,8 +316,8 @@ export function DashboardAnalyticsView({
         </div>
 
         {/* Right Card: Event Type Popularity */}
-        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 sm:gap-6 shadow-2xs">
-          <div className="flex flex-col gap-1">
+        <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 shadow-2xs">
+          <div className="flex flex-col gap-0.5">
             <span className="text-title-3-semibold text-text-primary">Event Type Performance</span>
             <span className="text-caption-1-medium text-text-secondary">
               Bookings volume and total hours delivered per event type
@@ -418,17 +331,27 @@ export function DashboardAnalyticsView({
           ) : (
             <div className="flex flex-col divide-y divide-border-button-default">
               {eventPopularity.map((item) => (
-                <div key={item.title} className="py-3 flex items-center justify-between gap-4 first:pt-0 last:pb-0">
+                <div
+                  key={item.title}
+                  className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 first:pt-0 last:pb-0"
+                >
                   <div className="flex flex-col min-w-0">
-                    <span className="text-body-2-medium font-semibold text-text-primary truncate">
-                      {item.title}
-                    </span>
-                    <span className="text-caption-2-medium text-text-secondary">
-                      {item.hours} hours total &bull; {item.sharePercent}% of appointments
+                    <div className="flex items-center justify-between sm:justify-start gap-2">
+                      <span className="text-body-2-medium font-semibold text-text-primary truncate">
+                        {item.title}
+                      </span>
+                      <div className="sm:hidden shrink-0">
+                        <Chip color="neutral" variant="bold">
+                          {item.count} {item.count === 1 ? "booking" : "bookings"}
+                        </Chip>
+                      </div>
+                    </div>
+                    <span className="text-caption-2-medium text-text-secondary truncate">
+                      {item.hours} hrs total &bull; {item.sharePercent}% share
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="hidden sm:flex items-center gap-2 shrink-0">
                     <Chip color="neutral" variant="bold">
                       {item.count} {item.count === 1 ? "booking" : "bookings"}
                     </Chip>
@@ -441,10 +364,10 @@ export function DashboardAnalyticsView({
       </div>
 
       {/* Virtual Office Hours Recent Topics & Activity Section */}
-      <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-5 shadow-2xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 sm:pb-0 border-b sm:border-b-0 border-border-button-default">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
+      <div className="rounded-3xl border border-border-button-default bg-background-primary-default p-4 sm:p-6 flex flex-col gap-4 sm:gap-5 shadow-2xs">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:items-center justify-between gap-2 pb-2 sm:pb-0 border-b sm:border-b-0 border-border-button-default">
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-title-3-semibold text-text-primary">Virtual Office Drop-in Feed</span>
               <Chip color="lime" variant="bold">Doorbell Telemetry</Chip>
             </div>
@@ -453,7 +376,7 @@ export function DashboardAnalyticsView({
             </span>
           </div>
 
-          <div className="text-caption-1-medium text-text-secondary">
+          <div className="text-caption-1-medium text-text-secondary shrink-0">
             {admittedKnocks} admitted of {totalKnocks} total knocks
           </div>
         </div>
@@ -467,7 +390,7 @@ export function DashboardAnalyticsView({
             {filteredKnocks.slice(0, 6).map((knock) => (
               <div
                 key={knock.id}
-                className="p-4 rounded-2xl bg-background-secondary-default/50 border border-border-button-default flex flex-col justify-between gap-3 shadow-2xs"
+                className="p-3.5 sm:p-4 rounded-2xl bg-background-secondary-default/50 border border-border-button-default flex flex-col justify-between gap-3 shadow-2xs"
               >
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">

@@ -95,9 +95,13 @@ export function HostOfficeView({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleTestAudio = () => {
-    playDoorbellChime();
+  const handleTestAudio = async () => {
     setTestedAudio(true);
+    try {
+      await playDoorbellChime();
+    } catch (err) {
+      console.error("Test audio error:", err);
+    }
     setTimeout(() => setTestedAudio(false), 2000);
   };
 
